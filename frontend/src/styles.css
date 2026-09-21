@@ -1,0 +1,344 @@
+/* ===== 色板唯一数据源 =====
+   组件里一律写 var(--x)，不要再落具体 hex：此前 15 个视图/组件里散着 116 处硬编码，
+   其中 8 个是"比面板深/亮一档"的近似蓝黑（#0f1728 #131c30 #152038 #16203a #17203a
+   #1a2740 #1d2b4a #1d3a63），语义完全重叠却各有微调，改一处观感要满仓库找。
+   需要带透明度的主色用 --accent-rgb 配 rgb(... / .35) 组合，不要另写 rgba 字面量。 */
+:root {
+  --bg: #0b1220;
+  --panel: #121a2b;
+  --line: #243049;
+  --text: #e8eefc;
+  --muted: #8ea0c0;
+  --accent: #3d8bfd;
+  --ok: #3dd68c;
+  --warn: #f5c84c;
+  --err: #ff6b6b;
+
+  /* 表面层级：由暗到亮四档，卡片之外不再引入第五种蓝黑 */
+  --sunken: #0e1626; /* 输入框、侧栏、流程画布等"凹进去"的区域 */
+  --raised: #16203a; /* 表头、工艺节点、控制条等"浮起一档"的元素 */
+  --hover: #1a2540; /* 行悬停、按钮悬停 */
+  --tint: #1b2b4d; /* 主色低饱和底：选中项、当前写入行 */
+
+  /* 文字层级：正文与主文字的中间档，表格/菜单/节点名共用 */
+  --text-body: #c9d7f2;
+
+  /* 图形与状态辅助色 */
+  --accent-bright: #7eb6ff; /* 选中态文字，比 --accent 亮一档以保证小字可读 */
+  --idle: #6d81a6; /* 未激活连线、默认状态点：≥3:1 且能当 11px 小字用 */
+  --cool: #6ec8ff; /* 冷却类工步 / 图表次系列 */
+  --violet: #c792ea; /* 加压、混合类工步 */
+  /* 空格分隔：斜杠透明度写法（rgb(... / .35)）不接受逗号 */
+  --accent-rgb: 61 139 253;
+  --scrollbar: #2b364f;
+  --scrollbar-hover: #3a4767;
+
+  /* ===== 间距唯一数据源 =====
+     此前同一语义（卡片堆叠、提示条下边距）在 8/10/12/16/18/20px 之间随机取值，
+     光靠行内 style 各写一遍。约定：4 的倍数六级，语义就近取档，不要再出现 10/14/18 这种孤立值。
+     --space-2 8px    卡片内部：说明文字、标签与数值
+     --space-3 12px   同级区块：卡片之间、提示条与下方内容、栅格换行行距
+     --space-4 16px   层级切换：页标题与正文、卡片内边距
+     --space-5 20px   主区左右留白
+     --space-6 24px   大块呼吸：空态、抽屉/弹框外边距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+
+/* ===== Element Plus 暗色主题 × 项目色板对齐 =====
+   main.ts 中先加载官方 dark/css-vars.css，此处再按项目色板覆盖。
+   注意：与 index.css 同优先级，靠 styles.css 后置加载取胜。
+   凡是与 :root 令牌同值的字面量一律改写 var()，让 :root 成为唯一取色点；
+   仅保留 EP 独有的中间档（项目里没有对应语义）为字面量。 */
+html.dark {
+  /* 主色用 --accent；light-N / dark-2 必须一并重写，
+     否则 hover / active 态会跳回 Element Plus 默认蓝 #409eff 系。
+     注意色阶方向：暗色主题下 light-N 是"往 #141414 混"（越暗），不是浅色主题那种往白混。
+     此前误用了浅色主题的取值，light-9 = #ecf5ff 几乎纯白，
+     而 el-table 的当前行底色正是 primary-light-9 → 审核页选中行变成浅底压浅字，实测 1.32:1。 */
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: #3167b7;
+  --el-color-primary-light-5: #295089;
+  --el-color-primary-light-7: #20385a;
+  --el-color-primary-light-8: #1c2c43;
+  --el-color-primary-light-9: #18202b;
+  --el-color-primary-dark-2: #64a2fd;
+
+  /* 状态色同样整条色阶都要覆盖。此前只改了项目自己的 --ok/--warn/--err，
+     EP 内置的 success(#67c23a)/warning(#e6a23c)/danger(#f56c6c) 没动，
+     导致同一页上 el-tag 的绿和自绘状态点的绿是两种颜色。
+     light-N = 与 #141414 按 N*10% 混合，dark-2 = 与白色按 20% 混合（EP 暗色主题公式）。 */
+  --el-color-success: var(--ok);
+  --el-color-success-light-3: #319c68;
+  --el-color-success-light-5: #297550;
+  --el-color-success-light-7: #204e38;
+  --el-color-success-light-8: #1c3b2c;
+  --el-color-success-light-9: #182720;
+  --el-color-success-dark-2: #64dea3;
+
+  --el-color-warning: var(--warn);
+  --el-color-warning-light-3: #b2923b;
+  --el-color-warning-light-5: #856e30;
+  --el-color-warning-light-7: #584a25;
+  --el-color-warning-light-8: #41381f;
+  --el-color-warning-light-9: #2a261a;
+  --el-color-warning-dark-2: #f7d370;
+
+  --el-color-danger: var(--err);
+  --el-color-danger-light-3: #b95151;
+  --el-color-danger-light-5: #8a4040;
+  --el-color-danger-light-7: #5b2e2e;
+  --el-color-danger-light-8: #432525;
+  --el-color-danger-light-9: #2b1d1d;
+  --el-color-danger-dark-2: #ff8989;
+  /* EP 里 error 是 danger 的同义别名，漏掉它会让部分组件仍取默认红 */
+  --el-color-error: var(--err);
+  --el-color-error-light-3: #b95151;
+  --el-color-error-light-5: #8a4040;
+  --el-color-error-light-7: #5b2e2e;
+  --el-color-error-light-8: #432525;
+  --el-color-error-light-9: #2b1d1d;
+  --el-color-error-dark-2: #ff8989;
+
+  /* info 承载"无倾向/中性"标签（草稿、已消耗、历史），取次要文字色而非 EP 的中性灰 */
+  --el-color-info: var(--muted);
+  --el-color-info-light-3: #69768c;
+  --el-color-info-light-5: #515a6a;
+  --el-color-info-light-7: #393e48;
+  --el-color-info-light-8: #2c3036;
+  --el-color-info-light-9: #202225;
+  --el-color-info-dark-2: #a5b3cd;
+
+  --el-bg-color: var(--panel);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--panel);
+
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-body);
+  --el-text-color-secondary: var(--muted);
+  /* 原 #6b7fa3 在凹陷底色上只有 4.47:1，占位文字普遍是 12-14px 正文尺寸，补到 5.6:1 */
+  --el-text-color-placeholder: #7c90b4;
+  --el-text-color-disabled: var(--idle);
+
+  --el-border-color: var(--line);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: #1e2a44;
+  --el-border-color-extra-light: #1a2438;
+
+  --el-fill-color: var(--hover);
+  --el-fill-color-light: var(--raised);
+  --el-fill-color-lighter: #141c2f;
+  /* 输入框比卡片略深，形成凹陷感 */
+  --el-fill-color-blank: var(--sunken);
+
+  /* 表头与数据行做微差，避免整片同色糊在一起 */
+  --el-table-bg-color: var(--panel);
+  --el-table-tr-bg-color: var(--panel);
+  --el-table-header-bg-color: var(--raised);
+  --el-table-header-text-color: var(--text-body);
+  --el-table-text-color: var(--text-body);
+  --el-table-border-color: var(--line);
+  --el-table-row-hover-bg-color: var(--hover);
+
+  --el-card-bg-color: var(--panel);
+  --el-mask-color: rgba(4, 8, 16, 0.72);
+}
+
+/* 去掉浏览器默认标题外边距，统一垂直节奏（页标题 h2、KPI 数值 h1） */
+h1, h2, h3, h4 { margin: 0; font-weight: 600; }
+h2 { font-size: 18px; }
+/* 段落同样不用浏览器默认的 1em 上下边距：卡片里的说明文字与裸 <p> 统一 8px 下边距，
+   末段不留白，否则卡片底部会比顶部多出一截。 */
+p { margin: 0 0 var(--space-2); }
+p:last-child { margin-bottom: 0; }
+
+.page-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+
+/* ===== 区块垂直节奏：视图里唯一的堆叠间距来源 =====
+   此前每张卡片自带 style="margin-top:12px / 16px"，同一语义三种写法。
+   现在视图只挂类，取值集中在上面那组令牌里。 */
+.gap-before { margin-top: var(--space-3); }
+.gap-before-sm { margin-top: var(--space-2); }
+.gap-after { margin-bottom: var(--space-3); }
+.gap-after-sm { margin-bottom: var(--space-2); }
+/* 取数失败 / 首次加载的整页状态块 */
+.page-state { padding: var(--space-2) 0 var(--space-4); }
+
+/* 整行可点击进入详情的表格：Element Plus 默认不给指针，用户看不出能点。
+   加 class="clickable-rows" 开启。写在全局而非 scoped——scoped 选择器穿透不到 el-table 内部行元素 */
+.clickable-rows .el-table__body tr { cursor: pointer; }
+
+/* effect="dark" 的状态标签把文字硬设成白色，压在本项目偏亮的状态色上只有 1.6~3.3:1，
+   而标签文字普遍 12px、需要 4.5:1。换成深色墨水印后同样的底色能到 5.6~11.8:1。
+   前缀 html.dark 抬到 (0,2,1)，压过 EP 的 .el-tag--dark.el-tag--xx (0,2,0)，不必用 !important。 */
+html.dark .el-tag--dark { --el-tag-text-color: var(--bg); }
+/* 同一问题的另一处：筛选用的单选按钮组选中态也是白字压主色蓝（12px、3.33:1）。
+   EP 把这个文字色收在 --el-radio-button-checked-text-color 里，改令牌即可，不必选到按钮内部。 */
+html.dark .el-radio-button { --el-radio-button-checked-text-color: var(--bg); }
+/* 实色按钮（非 plain/text/link）同样走 EP 的变量而不是直接改 color，一行覆盖五种 type。
+   --el-button-bg-color 在五种 type 下分别是 --el-color-success / --el-color-warning 等，
+   引用它就不用为每种颜色各写一遍；hover 用 color-mix 提亮 15%（不是 EP 默认的混暗一档），
+   这样墨水印在 base/hover/active 三档上都 ≥5.6:1。
+   :not 链是必需的：plain/text/link 的文字色本就应该等于主色，被上面的规则覆盖会隐形。 */
+html.dark .el-button--primary:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--success:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--warning:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--danger:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--info:not(.is-plain):not(.is-text):not(.is-link) {
+  --el-button-text-color: var(--bg);
+  --el-button-hover-text-color: var(--bg);
+  --el-button-active-text-color: var(--bg);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--el-button-bg-color) 85%, white);
+  --el-button-hover-border-color: var(--el-button-hover-bg-color);
+  --el-button-active-bg-color: var(--el-button-bg-color);
+  --el-button-active-border-color: var(--el-button-bg-color);
+}
+
+/* ===== 版式细节统一 =====
+   此前各视图靠一堆裸 style="margin-top:12px" / 16px 各写一套，同一层级间距不一致；
+   以下把容器、卡片、表格、滚动条的观感集中收口，视图里不再需要逐处调 1-2px。 */
+
+/* 主内容区统一留白 */
+.el-main { padding: var(--space-4) var(--space-5); }
+
+/* 卡片：统一圆角与内外边距，抹平 Element Plus 默认的紧窄观感。
+   header 与 body 用同一组内边距，标题与正文左缘必须严格对齐。 */
+.el-card { border-radius: 10px; }
+.el-card__header { padding: var(--space-4) var(--space-5); font-weight: 600; }
+.el-card__body { padding: var(--space-4) var(--space-5); }
+/* 卡片自带边框与底色，堆叠时不需要额外间隔；只有紧跟其后的兄弟卡片才留一档区块间距 */
+.el-card + .el-card { margin-top: var(--space-3); }
+
+/* KPI 卡内容很少，收紧留白使其更像数值磁贴而非普通卡片 */
+.kpi .el-card__body { padding: var(--space-3) var(--space-4); }
+
+/* 栅格只给横向 gutter 时，换行后的两排会上下贴死（窄屏 KPI 磁贴即如此） */
+.el-row { row-gap: var(--space-3); }
+
+/* 空态默认 40px 上下留白，在卡片里比正文段落松得多，收到大块呼吸档 */
+.el-empty { padding: var(--space-6) 0; }
+
+/* 表单行距：EP 默认 18px 不在尺度上，统一到 16px；弹层里最后一项不留尾部空白，
+   页面内联筛选表单保持原样（它下面直接接表格，需要这一档留白）。 */
+.el-form-item { margin-bottom: var(--space-4); }
+.el-dialog .el-form-item:last-child { margin-bottom: 0; }
+
+/* 表格：表头降字号 + 降饱和，让它退到「列名」层级，
+   不再和表体文字抢视觉重量（此前表头与正文同色同字号，只靠底色微差区分）。 */
+.el-table th.el-table__cell {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: var(--muted);
+}
+/* 长列表逐行扫读容易串行，给表体加斑马纹；数值列统一等宽数字，
+   避免 530 / 53 这类位数不同的数值左右跳动。 */
+.el-table { font-variant-numeric: tabular-nums; }
+/* 表头锁单行：中文列名（如「设备占用」「四步握手」）在窄列里会逐字竖排，
+   宁可让表格横向滚动，也不要出现一列一个字。 */
+.el-table th.el-table__cell .cell { white-space: nowrap; }
+.el-table__body tr:nth-child(even) > .el-table__cell { background: var(--sunken); }
+/* 斑马纹与 hover 特异性相同，必须在其后显式重写 hover，否则偶数行悬停无反馈 */
+.el-table__body tr:hover > .el-table__cell { background: var(--el-table-row-hover-bg-color); }
+
+/* 暗色下浏览器默认焦点环几乎不可见，键盘操作时看不到落点。
+   只给「自身没有焦点态」的元素补环：输入框已有 Element Plus 的聚焦描边，再叠一圈会显脏。
+   用 :where() 保持零特异性，组件自己的样式仍可覆盖。 */
+:where(a, button, [role="button"], .el-menu-item, .el-checkbox, .el-radio):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 顶部说明性提示条：几乎每页都有，收紧留白，避免整片色块把内容压过去 */
+.el-alert.is-light { padding: var(--space-2) var(--space-3); }
+
+/* 暗色滚动条：系统默认浅色滚动条与深色面板强烈割裂 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--sunken); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+html.dark { scrollbar-color: var(--scrollbar) var(--sunken); }
+/* 表头 sticky 时也需要同样的滚动条观感 */
+.el-table__body-wrapper::-webkit-scrollbar { width: 10px; height: 10px; }
+
+/* 跨页面导航的顶部进度条（App.vue）。不确定进度，只表示"系统收到了这次点击"。
+   轨道铺满整条、由 ::after 的滑块横向扫过，比位移百分比背景更好控制。 */
+.route-progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 3000;
+  overflow: hidden; background: rgb(var(--accent-rgb) / 0.18);
+}
+.route-progress::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 35%;
+  background: var(--accent); animation: route-progress-slide 1s ease-in-out infinite;
+}
+@keyframes route-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(330%); }
+}
+
+/* 术语提示气泡（HelpTip）。glossary 用 \n\n 分隔「定义」与「补充」，
+   el-tooltip 的气泡默认不保留换行，故用 pre-line 呈现。
+   气泡被渲染到 body 下，样式必须全局定义，scoped 无效。 */
+.help-tip-pop { max-width: 340px; line-height: 1.65; white-space: pre-line; }
+.handshake-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); }
+.handshake-card {
+  background: var(--sunken); border: 1px solid var(--line); border-radius: 10px; padding: var(--space-3);
+}
+.handshake-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.handshake-card.done { border-color: var(--ok); }
+.handshake-card.fault { border-color: var(--err); }
+.signal { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+/* 默认（无状态）点原为 #445，在面板上只有 1.82:1，色觉正常者也几乎看不见 */
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--idle); }
+.dot.on { background: var(--ok); }
+.dot.run { background: var(--accent); }
+.dot.err { background: var(--err); }
+
+/* ===== ≤768px 手机适配 =====
+   与 AppShell 的抽屉断点保持一致（utils/useMedia.ts 用的也是 768px）。
+   这里只收全站共用的留白、触摸目标和组件库浮层宽度；各页面自己的多栏栅格
+   与宽表首列冻结在视图内用 :xs / fixed 处理。 */
+@media (max-width: 768px) {
+  /* 主区留白与卡片内边距整体收紧一档，给内容让出宽度 */
+  .el-main { padding: var(--space-3) var(--space-3) var(--space-5); }
+  .el-card__header { padding: var(--space-3); }
+  .el-card__body { padding: var(--space-3); }
+  /* 页标题行普遍是「标题 + 一组操作按钮」，窄屏必须允许换行，否则按钮把标题挤扁 */
+  .page-title { flex-wrap: wrap; gap: var(--space-3); }
+  .page-title h2 { flex: 1 1 100%; }
+
+  /* 四步握手卡：4 列在手机上每格不到 90px，中文会逐字竖排 */
+  .handshake-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* 表格：字号收一档并把表头锁成单行，撑出去的部分交给表格自身横向滚动 */
+  .el-table { font-size: 13px; }
+  .el-table th.el-table__cell { font-size: 12px; }
+  /* 行内操作按钮是链接态，触控下点击面积太小 */
+  .el-table .el-button.is-link { min-height: 30px; }
+
+  /* 浮层：弹窗与消息框的 width 由组件以行内样式写死（如 560px），只能在此覆盖 */
+  .el-dialog { width: 92vw !important; max-width: 92vw; margin-top: 6vh !important; }
+  .el-message-box { width: 90vw !important; max-width: 420px; }
+  .el-drawer { width: 88vw !important; }
+  .help-tip-pop { max-width: 86vw; }
+  /* 弹窗内表单普遍写死 label-width 90~120px，在 92vw 的弹窗里会吃掉三分之一宽度，
+     窄屏统一改为标签置顶（EP 用行内样式写标签宽度，只能 !important 覆盖） */
+  .el-dialog .el-form-item { display: block; }
+  .el-dialog .el-form-item__label { width: auto !important; display: block; text-align: left; padding: 0 0 var(--space-1); }
+  .el-dialog .el-form-item__content { margin-left: 0 !important; }
+  /* 提示条在窄屏会盖住大半内容，缩短其最大高度并允许滚动 */
+  .el-message { max-width: 92vw; }
+}
+
+@media (max-width: 420px) {
+  .handshake-grid { grid-template-columns: minmax(0, 1fr); }
+}
