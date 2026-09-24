@@ -54,6 +54,7 @@
           <span>{{ $t("数据库每日备份") }}</span>
           <div>
             <el-button size="small" :loading="busy === 'backup'" @click="runBackup">{{ $t("立即备份一份") }}</el-button>
+            <el-button size="small" :loading="busy === 'maint'" @click="runMaintenance">{{ $t("立即维护") }}</el-button>
             <el-button size="small" :loading="backupLoading" @click="loadBackupStatus">{{ $t("刷新") }}</el-button>
           </div>
         </div>
@@ -114,7 +115,7 @@ import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import http from "../../api/http";
-import type { BackupFileDto, BackupStatusDto, UserDto, UserRole } from "../../api/types";
+import type { BackupFileDto, BackupStatusDto, MaintenanceResultDto, UserDto, UserRole } from "../../api/types";
 import { userRoleLabel, userRoleOrder, esignMeaning } from "../../utils/labels";
 import { esignPassword } from "../../utils/esign";
 import { formatDateTime, formatFileDate, matchesQuery } from "../../utils/format";
@@ -209,6 +210,25 @@ async function runBackup() {
     const { data } = await http.post<BackupFileDto>("/system/backups");
     ElMessage.success(t("已落一份备份：{0}", data.name));
     await loadBackupStatus();
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    busy.value = "";
+  }
+}
+
+/**
+ * 手工跑一轮维护。"没做 VACUUM"是正常结果（批次在跑、或空闲页不值得重写整个文件），
+ * 所以这里按 vacuumed 分支说话，不能一律报成功，否则用户以为按钮没反应。
+ */
+async function runMaintenance() {
+  if (busy.value) return;
+  busy.value = "maint";
+  try {
+    const { data } = await http.post<MaintenanceResultDto>("/system/maintenance");
+    ElMessage.success(data.vacuumed
+      ? t("已更新统计信息，VACUUM 回收 {0}。", formatBytes(data.reclaimedBytes))
+      : t("已更新统计信息；本轮未做 VACUUM（{0}）。", data.skippedReason ?? t("未启用")));
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {

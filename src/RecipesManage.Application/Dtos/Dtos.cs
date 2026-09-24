@@ -319,6 +319,12 @@ public sealed record EquipmentOccupancyDto(
     string? BatchStatus,
     string? HandshakePhase);
 
+/// <summary>
+/// 运行总览的计数。三条口径写死在这里，因为磁贴点进去就是对应的列表，数字不等就等于界面在说谎：
+/// <paramref name="DraftRecipes"/> / <paramref name="ApprovedRecipes"/> / <paramref name="PendingApprovals"/>
+/// 数的都是<strong>配方</strong>（不是版本行），<paramref name="PendingLabBatches"/> 数的是<strong>批次</strong>
+/// （不是待判样品行，一个批次可能挂着多个）。
+/// </summary>
 public sealed record DashboardDto(
     int RunningBatches,
     int QueuedBatches,
@@ -330,7 +336,7 @@ public sealed record DashboardDto(
     IReadOnlyList<BatchListItemDto> LiveBatches,
     IReadOnlyList<EquipmentOccupancyDto> EquipmentOccupancy,
     int PendingReleaseBatches = 0,
-    int PendingLabSamples = 0,
+    int PendingLabBatches = 0,
     int HeldBatches = 0);
 
 public sealed record MaterialLotDto(
@@ -434,20 +440,29 @@ public sealed record ProcessAlarmPageDto(
     IReadOnlyList<ProcessAlarmDto> Items);
 
 /// <summary>
-/// 趋势样本：降采样后的点集 + 原始规模。
+/// 趋势样本：整批覆盖的取样结果。
 ///
 /// 为什么不整表返回：样本是每约 400ms 每个测点一行，一个长跑批次能到几十万行，
-/// 全量推给浏览器既慢又画不出来。这里只读回最近 <see cref="SampleSeriesDto.ReadRows"/> 行，
-/// 再按 <paramref name="step"/> 等间隔抽稀到 <paramref name="maxPoints"/> 以内；
-/// <paramref name="Total"/> 仍是原始行数，界面据此写明"每 N 点取 1、且只覆盖最近 M 条"。
-/// 原始样本一行都不删：批记录要留到留存期，抽稀与开窗都只发生在读的一侧。
+/// 全量推给浏览器既慢又画不出来。取样在 SQL 侧按 <paramref name="step"/> 等间隔做，
+/// 所以返回的行数只由 <paramref name="MaxPoints"/> 决定，与批次跑多久无关，
+/// 而且<strong>覆盖整批</strong>（早期实现是"读最近 5 万行再抽稀"，那会把趋势截成最近两三小时）。
+/// <paramref name="Total"/> 仍是原始行数，界面据此写明"每 N 条取 1 点"。
+/// 原始样本一行都不删：抽稀只发生在读的一侧，电子批记录仍用全量数据。
 /// </summary>
 public sealed record SampleSeriesDto(
     IReadOnlyList<SampleDto> Points,
     int Total,
-    int ReadRows,
     int Step,
     int MaxPoints);
+
+/// <summary>
+/// 握手履历的一页。<paramref name="Total"/> 是该批次的全部条数——
+/// 监控页只回最近若干条，必须说清楚，否则用户会以为履历就这么多。
+/// 完整履历在电子批记录里，那里不截。
+/// </summary>
+public sealed record HandshakeLogPageDto(
+    int Total,
+    IReadOnlyList<HandshakeLogDto> Items);
 
 /// <summary>一份备份文件。<paramref name="CreatedAt"/> 是写入时刻（UTC），不是文件系统的修改时间。</summary>
 public sealed record BackupFileDto(string Name, long Bytes, DateTimeOffset CreatedAt);
@@ -466,6 +481,19 @@ public sealed record BackupStatusDto(
     DateTimeOffset? LastRunAtUtc,
     string? LastFile,
     string? LastError);
+
+/// <summary>
+/// 一轮 SQLite 维护的结果。<paramref name="SkippedReason"/> 非空表示 VACUUM 没做以及为什么——
+/// 那是安全判断（批次在跑 / 空闲页不值得重写整个文件），不是错误。
+/// </summary>
+public sealed record MaintenanceResultDto(
+    bool Optimized,
+    bool Vacuumed,
+    long BytesBefore,
+    long BytesAfter,
+    long ReclaimedBytes,
+    string? SkippedReason,
+    string Detail);
 
 public sealed record RecipeVersionDiffDto(
     int FromVersion,

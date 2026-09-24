@@ -26,11 +26,34 @@ export function reportSessionExpired(fn: (from: string) => void): void {
 // 任意一次成功响应即代表会话有效，届时复位。
 let expiredHandled = false;
 
+/**
+ * 带 HTTP 状态码的 Error。
+ *
+ * 视图要按"连不上后端"和"后端返回 503"给不同文案时，不该去正则 axios 的英文原文
+ * （"Request failed with status code 503" 直接贴到中文界面上就是这里修掉的）。
+ */
+export class HttpError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+/** 存活探针：它 200 只代表进程还在，不代表屏幕上的数字拿到了新数据。 */
+function isLivenessProbe(url?: string): boolean {
+  return !!url && url.split("?")[0].endsWith("/health");
+}
+
 http.interceptors.response.use(
   (r) => {
     expiredHandled = false;
     // 只有成功的读请求才算"页面又拿到一次新数据"；写请求不算（它不刷新屏幕上的数字）。
-    if (r.config?.method === "get") lastSyncAt.value = Date.now();
+    // /health 也不算：数据接口整片挂掉时它照样 200，把它计入新鲜度就会让顶栏
+    // 在屏幕上全是最后一帧的时候仍然显示「实时」——监控系统里最危险的失效模式之一。
+    if (r.config?.method === "get" && !isLivenessProbe(r.config?.url)) lastSyncAt.value = Date.now();
     return r;
   },
   (err) => {
@@ -45,8 +68,9 @@ http.interceptors.response.use(
       // 回调未注册（理论上只在 main.ts 完成装配前）时退回整页跳转，至少不会卡在失效页面上。
       if (!onExpired) location.assign("/login");
     }
+    const status = typeof err.response?.status === "number" ? (err.response.status as number) : undefined;
     const message = err.response?.data?.message ?? err.message ?? "请求失败";
-    return Promise.reject(new Error(message));
+    return Promise.reject(new HttpError(message, status));
   }
 );
 

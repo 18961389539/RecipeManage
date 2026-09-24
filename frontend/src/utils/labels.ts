@@ -294,6 +294,7 @@ const auditActionDict: Dict = {
   // 定时任务的作者是 system，不是某个账号——审计里要能分清"人取走了一份"和"机器落了一份"。
   "system.backup": "数据库备份",
   "system.backup.failed": "数据库备份失败",
+  "system.maintenance": "数据库维护",
   "lot.receive": "来料登记",
   "lot.split": "拆分子批",
   "lab.sample.create": "登记样品",

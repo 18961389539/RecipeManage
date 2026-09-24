@@ -23,7 +23,10 @@ const rt = useRealtimeStore();
 // 步长取轮询间隔：显示出来的"最后同步"最多滞后一个轮询周期，不会看着像卡住的表。
 const tick = ref(0);
 const timer = ref<number | undefined>(undefined);
+// 顶栏只在登录后挂载，所以"挂载至今"就是"这个页面应该开始拿数据了"的起点。
+const mountedAt = ref(Date.now());
 onMounted(() => {
+  mountedAt.value = Date.now();
   timer.value = window.setInterval(() => tick.value++, POLL_INTERVAL_MS);
 });
 onUnmounted(() => {
@@ -35,8 +38,16 @@ const syncedFor = computed(() => {
   return lastSyncAt.value ? Date.now() - lastSyncAt.value : null;
 });
 
-/** 连丢三个轮询周期还没拿到成功的读请求 = 屏幕上的数字已经不新鲜了。 */
-const syncStale = computed(() => syncedFor.value !== null && syncedFor.value > POLL_INTERVAL_MS * 3);
+/**
+ * 连丢三个轮询周期还没拿到成功的读请求 = 屏幕上的数字已经不新鲜了。
+ * 「一次都没成功过」也算停滞：冷启动就断供的页面，lastSyncAt 一直是 0，
+ * 只看 syncedFor 会把它判成"不陈旧"，于是顶栏在什么都没拿到的时候写着「实时」。
+ */
+const syncStale = computed(() => {
+  void tick.value;
+  const limit = POLL_INTERVAL_MS * 3;
+  return syncedFor.value !== null ? syncedFor.value > limit : Date.now() - mountedAt.value > limit;
+});
 
 // 徽标文字在每一页顶栏都可见，所以这几个短词也要过 t()（脚本里的字面量，视图扫不到）。
 const text = computed(() => {
@@ -69,8 +80,11 @@ const tip = computed(() => {
   switch (rt.status) {
     case "online":
       return syncStale.value
-        ? t("推送连接正常，但已经 {0} 秒没有取到数据——接口在报错或后端不可达，屏幕上的数字可能不是最新。{1}",
-          Math.round((syncedFor.value ?? 0) / 1000), base)
+        // 「一次都没取到」和「取到过但停了 N 秒」是两句话：后者能给秒数，前者报 0 秒就是假信息。
+        ? syncedFor.value === null
+          ? t("推送连接正常，但还没有取到过一次数据——接口在报错或后端不可达，屏幕上的数字不可信。{0}", base)
+          : t("推送连接正常，但已经 {0} 秒没有取到数据——接口在报错或后端不可达，屏幕上的数字可能不是最新。{1}",
+            Math.round(syncedFor.value / 1000), base)
         : t("实时推送已连接：握手阶段变化、报警、设备占用即时到达；数据仍每 {0} 秒轮询兜底。{1}{2}",
           pollSecs, rt.stale ? t("（30 秒内没有执行事件，多半是当下没有批次在跑。）") : "", base);
     case "reconnecting":

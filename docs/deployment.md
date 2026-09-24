@@ -96,4 +96,8 @@ taskkill /im RecipesManage.Api.exe /f             # 4) 一分钟内应被看门�
 - **杀毒/同步盘排除**：把 `C:\brmes\App_Data` 排除在实时扫描与 OneDrive 同步之外，否则 SQLite 会撞 `BUSY` 甚至撕裂。
 - **备份离盘**：`App_Data/backups` 与库在同一块盘上，盘坏了 7 份快照一起没。把该目录纳入机器自己的复制/备份计划，或把 `Backup:Directory` 指到第二块盘。
 - **磁盘余量**：过程样本约 2.16 万行/小时（3 测点、400ms 节流），加上每天一份全库快照。
+  库自己的维护已经自动化了：每天备份之后跑一轮 `PRAGMA optimize`，并且**只在没有批次在跑、
+  且空闲页够多**时才 `VACUUM`（SQLite 删行只把页挂到 freelist，文件永不自缩）。
+  阈值在 `Maintenance:MinFreeRatio` / `MinFreeMegabytes`；管理员也能在「用户与备份」页点「立即维护」当场跑一轮。
+  顺序是刻意的：VACUUM 要重写整个库文件，所以手里必须已有当天刚验过的快照。
 - **恢复演练**：停应用 → 把 `recipes.db` 改名保留 → 复制一份 `brmes-<utc>.db` 过去命名为 `recipes.db` → 起应用 → `/health` + 打开一个历史批记录。**没演过的备份不算备份。**

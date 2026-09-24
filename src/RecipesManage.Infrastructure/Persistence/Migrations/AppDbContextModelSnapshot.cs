@@ -163,7 +163,7 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BatchId");
+                    b.HasIndex("BatchId", "CreatedAt");
 
                     b.ToTable("handshake_events", (string)null);
                 });

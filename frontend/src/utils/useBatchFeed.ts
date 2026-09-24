@@ -35,14 +35,16 @@ export function useBatchFeed(options: {
   const remainingSeconds = ref<number | null>(null);
   const livePlc = ref("");
   const handshakeLog = ref<HandshakeLogDto[]>([]);
+  /** 履历只回最近若干条：total 是全量条数，被截时界面要说明。 */
+  const handshakeLogTotal = ref(0);
   const alarms = ref<ProcessAlarmDto[]>([]);
   /** 报警只取最近 200 条：total 大于它时界面要说明，不能让用户以为这一批就报过这么几次。 */
   const alarmTotal = ref(0);
   const drifts = ref<SnapshotDriftDto[]>([]);
   const equipmentIndex = ref<Record<string, string>>({});
   const series: Record<string, [number, number][]> = { Temperature: [], Pressure: [] };
-  /** 趋势抽稀口径（每 step 个点取 1），step > 1 时要在图上标注。 */
-  const sampleMeta = ref({ total: 0, readRows: 0, step: 1, loaded: 0 });
+  /** 趋势取样口径（整批按 step 等间隔取点），step > 1 时要在图上标注。 */
+  const sampleMeta = ref({ total: 0, step: 1, loaded: 0 });
   const loading = ref(true);
   const error = ref("");
 
@@ -94,7 +96,8 @@ export function useBatchFeed(options: {
       lanes.value = detail.lanes ?? [];
       if (!selectedLaneCode.value && lanes.value[0]) selectedLaneCode.value = lanes.value[0].equipmentCode;
       if (selectedLane.value?.phase) phase.value = selectedLane.value.phase;
-      handshakeLog.value = log;
+      handshakeLog.value = log.items;
+      handshakeLogTotal.value = log.total;
       alarms.value = alarmPage.items;
       alarmTotal.value = alarmPage.total;
       drifts.value = driftRows;
@@ -105,12 +108,7 @@ export function useBatchFeed(options: {
       for (const s of samples.points) (next[s.tag] ??= []).push([new Date(s.sampledAt).getTime(), s.value]);
       for (const key of Object.keys(series)) delete series[key];
       Object.assign(series, next);
-      sampleMeta.value = {
-        total: samples.total,
-        readRows: samples.readRows,
-        step: samples.step,
-        loaded: samples.points.length
-      };
+      sampleMeta.value = { total: samples.total, step: samples.step, loaded: samples.points.length };
 
       error.value = "";
       options.paint?.();
@@ -230,7 +228,7 @@ export function useBatchFeed(options: {
 
   return {
     batch, phase, lanes, selectedLaneCode, signals, remainingSeconds, livePlc,
-    handshakeLog, alarms, alarmTotal, drifts, equipmentIndex, series, sampleMeta, loading, error,
+    handshakeLog, handshakeLogTotal, alarms, alarmTotal, drifts, equipmentIndex, series, sampleMeta, loading, error,
     displayLanes, selectedLane, signalsOf, selectLane, load, applyExecution
   };
 }

@@ -30,8 +30,9 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
         batches.SamplesAsync(id, maxPoints, ct);
 
     [HttpGet("{id:guid}/handshake-log")]
-    public Task<IReadOnlyList<HandshakeLogDto>> HandshakeLog(Guid id, CancellationToken ct) =>
-        batches.HandshakeLogAsync(id, ct);
+    public Task<HandshakeLogPageDto> HandshakeLog(
+        Guid id, [FromQuery] int take = 2000, CancellationToken ct = default) =>
+        batches.HandshakeLogAsync(id, take, ct);
 
     [HttpGet("{id:guid}/snapshot-drift")]
     public Task<IReadOnlyList<SnapshotDriftDto>> SnapshotDrift(Guid id, CancellationToken ct) =>

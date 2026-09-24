@@ -218,7 +218,11 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<HandshakeEvent>(e =>
         {
             e.ToTable("handshake_events");
-            e.HasIndex(x => x.BatchId);
+            // 只留复合索引：最左前缀就是 BatchId，单独那条是冗余（与 process_samples 同一形状）。
+            // 履历要"只取最近 N 条"，就得能在 SQL 里按时间倒序 + LIMIT；没这个定宽 UTC 文本映射，
+            // SQLite 提供器会直接拒绝 ORDER BY 原生 DateTimeOffset，只能整表读进内存。
+            e.HasIndex(x => new { x.BatchId, x.CreatedAt });
+            e.Property(x => x.CreatedAt).HasConversion(AuditTimestamp.Converter);
         });
 
         modelBuilder.Entity<ProcessAlarm>(e =>

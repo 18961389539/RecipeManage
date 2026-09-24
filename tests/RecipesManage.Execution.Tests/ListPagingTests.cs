@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using RecipesManage.Application.Services;
 using RecipesManage.Domain.Batches;
@@ -41,7 +42,7 @@ public sealed class ListPagingTests
         var index = 0;
         foreach (var status in statuses)
         {
-            var batch = BatchFactory.Batch($"BLP{index++:D2}", equipmentId);
+            var batch = ServiceHarness.Batch($"BLP{index++:D2}", equipmentId);
             Advance(batch, status);
             db.Batches.Add(batch);
             made.Add(batch);
@@ -176,10 +177,10 @@ public sealed class ListPagingTests
     }
 
     [Fact]
-    public async Task TrendSamplesAreDecimatedButStillReportTheRawSize()
+    public async Task TrendSamplesAreStridedAcrossTheWholeBatch()
     {
         await using var db = ServiceHarness.OpenDb();
-        var batch = BatchFactory.Batch("BLPSAMP");
+        var batch = ServiceHarness.Batch("BLPSAMP");
         db.Batches.Add(batch);
         await db.SaveChangesAsync();
 
@@ -194,17 +195,20 @@ public sealed class ListPagingTests
 
         var full = await batches.SamplesAsync(batch.Id, 5_000, CancellationToken.None);
         Assert.Equal(1_200, full.Total);
-        Assert.Equal(1_200, full.ReadRows);
-        Assert.Equal(1, full.Step);                       // 上限内就不抽稀
+        Assert.Equal(1, full.Step);                       // 上限内就不取样
         Assert.Equal(1_200, full.Points.Count);
 
         var thin = await batches.SamplesAsync(batch.Id, 50, CancellationToken.None);
         Assert.Equal(1_200, thin.Total);                  // 原始行数一个不少，只是没全发给浏览器
-        Assert.Equal(1_200, thin.ReadRows);
-        Assert.True(thin.Step > 1, "50 点上限下必须抽稀，否则这次读法没有意义");
-        // 抽稀按测点各自算：每个点集都不该超过上限太多，且整体仍按时间正序（乱序会画出回折的线）。
-        Assert.All(thin.Points.GroupBy(p => p.Tag), g => Assert.True(g.Count() <= 50, $"{g.Key} 抽稀后仍有 {g.Count()} 点"));
+        Assert.Equal(12, thin.Step);                      // ceil(600 / 50)
+        Assert.True(thin.Points.Count <= 50 * 2, $"每个测点各不超过上限：实际 {thin.Points.Count}");
+
+        // 关键：取样必须覆盖整批。旧实现是"读最近 5 万行再抽稀"，长跑批次的开头会被整段丢掉。
+        Assert.Equal(start, thin.Points.Min(p => p.SampledAt));
+        Assert.InRange(thin.Points.Max(p => p.SampledAt), start.AddSeconds(600 - thin.Step), start.AddSeconds(599));
+        // 抽稀后仍要按时间正序，画布拿到乱序会画出回折的线。
         Assert.Equal(thin.Points.OrderBy(p => p.SampledAt).ToList(), thin.Points);
+        Assert.All(thin.Points.GroupBy(p => p.Tag), g => Assert.True(g.Count() <= 50, $"{g.Key} 取样后仍有 {g.Count()} 点"));
 
         var empty = await batches.SamplesAsync(Guid.NewGuid(), 50, CancellationToken.None);
         Assert.Equal(0, empty.Total);
@@ -215,7 +219,7 @@ public sealed class ListPagingTests
     public async Task AlarmListPagesAndFiltersToUnacknowledged()
     {
         await using var db = ServiceHarness.OpenDb();
-        var batch = BatchFactory.Batch("BLPALM");
+        var batch = ServiceHarness.Batch("BLPALM");
         db.Batches.Add(batch);
         var now = DateTimeOffset.UtcNow;
         for (var i = 0; i < 5; i++)
@@ -263,34 +267,60 @@ public sealed class ListPagingTests
         Assert.Equal(["LOT-OPEN", "LOT-REL", "LOT-CON"], ordered.Items.Select(l => l.LotNumber));
     }
 
-    private static class BatchFactory
+    [Fact]
+    public async Task TrendStrideSqlAlsoRunsAgainstAMigratedSchema()
     {
-        /// <summary>最小可用快照：列表测的是查询，不是配方内容。</summary>
-        public static ProductionBatch Batch(string batchNo, Guid? equipmentId = null)
+        // 取样那条 SQL 把列名写死了，所以必须在"迁移建出来的库"上跑一次：
+        // 其余测试走 EnsureCreated，列名漂移（改属性名但忘了改迁移）只有这条会红。
+        var path = Path.Combine(Path.GetTempPath(), $"brmes-stride-{Guid.NewGuid():N}.db");
+        try
         {
-            var stepId = Guid.NewGuid();
-            var snapshot = new ControlRecipeSnapshot
-            {
-                MasterRecipeId = Guid.NewGuid(),
-                RecipeVersionId = Guid.NewGuid(),
-                RecipeCode = "LP",
-                RecipeName = "分页测试配方",
-                ProductCode = "P",
-                ProductName = "part",
-                FrozenAt = DateTimeOffset.UtcNow,
-                Steps =
-                [
-                    new SnapshotStep
-                    {
-                        StepId = stepId, Code = "S10", Name = "升温", Type = StepType.Heat,
-                        Ordinal = 0, WatchdogSeconds = 60
-                    }
-                ],
-                Edges = []
-            };
-            var batch = ProductionBatch.Create(batchNo, equipmentId ?? Guid.NewGuid(), snapshot, "{}", OperatorId);
-            batch.StepExecutions.Add(new BatchStepExecution(batch.Id, stepId, "S10", "升温", StepType.Heat, 0));
-            return batch;
+            var builder = new DbContextOptionsBuilder<AppDbContext>();
+            RecipesDatabase.Apply(builder, $"Data Source={path}");
+            await using var db = new AppDbContext(builder.Options);
+            await SchemaBootstrap.ApplyAsync(db);
+
+            var batch = ServiceHarness.Batch("BSTRIDE");
+            db.Batches.Add(batch);
+            await db.SaveChangesAsync();
+            var start = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+            for (var i = 0; i < 120; i++)
+                db.ProcessSamples.Add(new ProcessSample(batch.Id, null, start.AddSeconds(i), "Temperature", 500 + i, "℃"));
+            await db.SaveChangesAsync();
+
+            var series = await Batches(db).SamplesAsync(batch.Id, 50, CancellationToken.None);
+
+            Assert.Equal(120, series.Total);
+            Assert.Equal(3, series.Step);                     // ceil(120 / 50)
+            Assert.Equal(40, series.Points.Count);            // rn = 1,4,7,…,118
+            Assert.Equal(start, series.Points.First().SampledAt);          // 整批开头在
+            Assert.Equal(start.AddSeconds(117), series.Points.Last().SampledAt);   // 末尾只差一步长，没被截掉
         }
+        finally
+        {
+            try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(path); } catch (IOException) { /* 临时文件 */ }
+        }
+    }
+
+    [Fact]
+    public async Task HandshakeLogIsWindowedAndSaysSo()
+    {
+        await using var db = ServiceHarness.OpenDb();
+        var batch = ServiceHarness.Batch("BLHLOG");
+        db.Batches.Add(batch);
+        await db.SaveChangesAsync();
+        for (var i = 0; i < 25; i++)
+        {
+            db.HandshakeEvents.Add(new HandshakeEvent(
+                batch.Id, batch.CurrentStepId, "S10", $"Phase{i:D2}", "phase", null, null));
+            await db.SaveChangesAsync();   // 逐条落库：CreatedAt 在构造时取，同一批里要能分出先后
+        }
+
+        var page = await Batches(db).HandshakeLogAsync(batch.Id, 10, CancellationToken.None);
+
+        Assert.Equal(25, page.Total);                     // 全量条数要报出来，否则用户以为履历就 10 条
+        Assert.Equal(10, page.Items.Count);
+        Assert.Contains("Phase24", page.Items.Select(i => i.Phase));   // 取的是最近 10 条，不是最老的
+        Assert.Equal(page.Items.Select(i => i.At).OrderBy(x => x), page.Items.Select(i => i.At));
     }
 }

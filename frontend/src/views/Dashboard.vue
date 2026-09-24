@@ -2,11 +2,12 @@
   <div class="dash-page">
     <div class="page-title">
       <h2>{{ $t("运行总览") }}</h2>
-      <div class="health-pill" :class="{ bad: !healthOk }">
-        <i class="dot" :class="healthOk ? 'on' : 'err'" />
-        <HelpTip v-if="healthOk" term="服务健康" :extra="databaseLabel(health?.database)" plain>
+      <div class="health-pill" :class="pillClass">
+        <i class="dot" :class="pillDot" />
+        <HelpTip v-if="pillState === 'ok'" term="服务健康" :extra="databaseLabel(health?.database)" plain>
           <span>{{ $t("服务正常") }}</span>
         </HelpTip>
+        <span v-else-if="pillState === 'stale'">{{ $t("数据中断") }}</span>
         <span v-else>{{ $t("服务异常") }}</span>
       </div>
     </div>
@@ -23,7 +24,9 @@
         @keyup.enter="openKpi(k)"
       >
         <div class="kpi-label">{{ k.label }}</div>
-        <div class="kpi-value">{{ k.value }}</div>
+        <!-- 没有数据就画一个破折号，绝不画 0：0 是"确认没有故障"，— 是"不知道"。
+             把不知道显示成零，等于在故障时给出一块全绿的面板。 -->
+        <div class="kpi-value" :class="{ unknown: !hasData }">{{ hasData ? k.value : "—" }}</div>
       </el-card>
     </div>
     <!-- 参考组压成一行窄条：这四个数不需要动手，之前用 4 张 150px 高的卡，
@@ -35,23 +38,26 @@
         :key="k.key"
         type="button"
         class="ref-item"
-        :class="{ zero: k.value === 0 }"
+        :class="{ zero: hasData && k.value === 0 }"
         :disabled="!kpiClickable(k)"
         @click="openKpi(k)"
-      ><span>{{ $t(k.label) }}</span><b>{{ k.value }}</b></button>
+      ><span>{{ $t(k.label) }}</span><b>{{ hasData ? k.value : "—" }}</b></button>
     </div>
     <el-alert class="gap-before"
       v-if="loadError"
       :closable="false"
       type="error"
-      :title="$t('数据加载失败：{0}', [loadError])"
-      :description="$t('页面会每 4 秒自动重试；若持续失败请检查后端 API 是否已启动。')"
+      :title="$t('运行数据取数失败：{0}', [loadError])"
+      :description="hasData
+        ? $t('下面的数字是最后一次成功取数的结果，已经不代表当前状态；页面每 4 秒自动重试。')
+        : $t('还没有取到任何数据，所有计数显示为「—」而不是 0；页面每 4 秒自动重试。')
+        "
       show-icon
      
     />
     <!-- 健康只在异常时占版面；正常态由 KPI 区那枚徽标表达，避免绿色提示条常年占位。 -->
     <el-alert class="gap-before"
-      v-if="!healthOk"
+      v-if="pillState === 'down'"
       :closable="false"
       type="error"
       show-icon
@@ -68,7 +74,7 @@
           ref="occupancyTableRef"
           :data="dash?.equipmentOccupancy ?? []"
           v-loading="initialLoading"
-          :empty-text="$t('暂无设备数据')"
+          :empty-text="hasData ? $t('暂无设备数据') : $t('数据不可用')"
           class="clickable-rows"
           @row-click="openOccupant"
         >
@@ -103,12 +109,12 @@
         </el-table>
       </el-card>
     </div>
-    <el-card class="gap-before" :header="$t('实时批次')">
+    <el-card class="gap-before" :header="$t('在途批次（运行 / 排队 / 保持 / 故障）')">
         <el-table
           ref="liveTableRef"
           :data="dash?.liveBatches ?? []"
           v-loading="initialLoading"
-          :empty-text="$t('当前没有执行中的批次')"
+          :empty-text="hasData ? $t('当前没有在途批次') : $t('数据不可用')"
           class="clickable-rows"
           @row-click="(row: BatchListItemDto) => $router.push(`/batches/${row.id}`)"
         >
@@ -136,7 +142,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { TableInstance } from "element-plus";
 import echarts, { type EChartsType } from "../utils/echarts";
-import http from "../api/http";
+import http, { HttpError } from "../api/http";
 import type { BatchListItemDto, DashboardDto, EquipmentOccupancyDto, ExecutionEvent, HealthDto } from "../api/types";
 import { occupancyFromEvent, useExecutionHub } from "../realtime/executionHub";
 import { useCoalescedReload } from "../utils/useCoalescedReload";
@@ -202,6 +208,32 @@ interface KpiItem {
 
 const healthOk = computed(() => health.value?.status === "ok");
 
+/** 有没有拿到过一次数据。没有的时候计数一律画「—」，不能画 0。 */
+const hasData = computed(() => dash.value !== null);
+
+/**
+ * 徽标的三态。之前它只看 /health：数据接口整片 503 时进程还活着、探针还是 200，
+ * 于是页面同时挂着「服务正常」的绿点和「数据加载失败」的红条——自相矛盾的两句话。
+ * 取数失败优先于探针结论，因为操作员要处置的是屏幕上的数字，不是进程。
+ */
+const pillState = computed<"ok" | "stale" | "down">(() => {
+  if (!healthOk.value) return "down";
+  return loadError.value ? "stale" : "ok";
+});
+const pillClass = computed(() => (pillState.value === "ok" ? "" : pillState.value === "stale" ? "warn" : "bad"));
+const pillDot = computed(() => (pillState.value === "ok" ? "on" : pillState.value === "stale" ? "warn" : "err"));
+
+/** 取数失败时给人话，不要把 axios 的 "Request failed with status code 503" 贴到界面上。 */
+function failureReason(e: unknown): string {
+  const err = e as HttpError;
+  if (typeof err?.status === "number") return t("后端返回 {0}", err.status);
+  const message = err?.message ?? "";
+  // 拦截器会把后端 data.message 透出来，那是已经按 Accept-Language 译过的校验/权限提示，直接用；
+  // 剩下的（"Network Error"、"Request failed with status code …"）是 axios 的英文原文，换成中文说法。
+  if (message && !/^(Request failed|Network Error|timeout of)/i.test(message)) return message;
+  return t("无法连接后端");
+}
+
 /** 需人工处置的计数。tone 只在非零时生效 —— 0 故障不该用红色抢视线。 */
 const todoKpis = computed<KpiItem[]>(() => {
   const d = dash.value;
@@ -211,7 +243,7 @@ const todoKpis = computed<KpiItem[]>(() => {
     { key: "held", label: t("保持中批次"), value: d?.heldBatches ?? 0, tone: "warn", status: "Held" },
     { key: "release", label: t("待质量放行"), value: d?.pendingReleaseBatches ?? 0, tone: "warn", status: "Completed" },
     { key: "approvals", label: t("待审核配方"), value: d?.pendingApprovals ?? 0, tone: "warn", path: "/approvals", allowed: canApprovals.value },
-    { key: "labs", label: t("待检终样"), value: d?.pendingLabSamples ?? 0, tone: "warn", query: { lab: "pending" } }
+    { key: "labs", label: t("待检终样"), value: d?.pendingLabBatches ?? 0, tone: "warn", query: { lab: "pending" } }
   ];
 });
 
@@ -222,7 +254,7 @@ const refKpis = computed<KpiItem[]>(() => {
     { key: "running", label: t("执行中批次"), value: d?.runningBatches ?? 0, status: "Running" },
     { key: "queued", label: t("排队批次"), value: d?.queuedBatches ?? 0, status: "Queued" },
     { key: "approved", label: t("已批准配方"), value: d?.approvedRecipes ?? 0, path: "/recipes", allowed: true },
-    { key: "draft", label: t("草稿版本"), value: d?.draftRecipes ?? 0, path: "/recipes", allowed: true }
+    { key: "draft", label: t("草稿配方"), value: d?.draftRecipes ?? 0, path: "/recipes", allowed: true }
   ];
 });
 
@@ -253,8 +285,8 @@ async function load() {
     dash.value = (await http.get<DashboardDto>("/dashboard")).data;
     loadError.value = "";
   } catch (e) {
-    // 原先首屏取数失败会静默留一堆 0，看起来像"真没数据"，这里显式报错。
-    loadError.value = (e as Error).message || t("运行总览数据加载失败");
+    // 不清 dash：已经拿到过的数字是"最后已知状态"，比抹成空白有用，前提是页面同时说明它已经不新鲜。
+    loadError.value = failureReason(e);
   } finally {
     initialLoading.value = false;
   }
@@ -270,6 +302,11 @@ async function load() {
 function renderChart() {
   if (!chartEl.value) return;
   chart ??= echarts.init(chartEl.value);
+  // 一次数据都没拿到时不要画 6 根 0 长条：那和"全部正常"的图长得一模一样。
+  if (!hasData.value) {
+    chart.clear();
+    return;
+  }
   const d = dash.value;
   const data = [
     d?.runningBatches ?? 0,
@@ -437,6 +474,8 @@ onUnmounted(() => {
 .kpi.tone-critical .kpi-value { color: var(--err); }
 .kpi.tone-warn { border-color: var(--warn); }
 .kpi.tone-warn .kpi-value { color: var(--warn); }
+/* 「不知道」要看着像不知道：压到次要色，别用那 30px 的大字抢成"确认过是零"。 */
+.kpi-value.unknown { color: var(--muted); font-weight: 500; }
 .health-pill {
   display: inline-flex;
   align-items: center;
@@ -449,4 +488,6 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .health-pill.bad { border-color: var(--err); color: var(--err); }
+/* 进程活着但数字停在最后一帧：比红轻，比绿诚实。 */
+.health-pill.warn { border-color: var(--warn); color: var(--warn); }
 </style>

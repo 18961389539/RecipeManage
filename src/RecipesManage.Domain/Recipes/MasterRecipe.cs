@@ -48,6 +48,17 @@ public sealed class MasterRecipe : Entity
         return recipe;
     }
 
+    /// <summary>
+    /// 配方"此刻处于什么状态"：有当前草稿就看草稿，没有就退回生效版本。
+    ///
+    /// 这是配方列表 draftStatus 的口径，也是运行总览三个配方类计数的口径。两边必须同一个规则，
+    /// 否则会出现"磁贴写 1、点进去列表 2 条"——只有回退那条分支不一致时才会露出来，所以
+    /// DashboardCountTests 直接拿列表 DTO 对账。
+    /// </summary>
+    public RecipeStatus? LifecycleStatus =>
+        Versions.FirstOrDefault(v => v.Id == CurrentDraftVersionId)?.Status
+        ?? Versions.FirstOrDefault(v => v.Id == CurrentApprovedVersionId)?.Status;
+
     public RecipeVersion RequireDraft()
     {
         var draft = Versions.SingleOrDefault(v => v.Id == CurrentDraftVersionId)

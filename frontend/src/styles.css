@@ -490,6 +490,9 @@ html.dark .vue-flow__background { color: var(--line); }
 .dot.on { background: var(--ok); }
 .dot.run { background: var(--accent); }
 .dot.err { background: var(--err); }
+/* 「取到数据」与「进程还活着」是两件事，所以除了绿/红还要一个琥珀中间态：
+   探针 200 但读请求一直失败时用它的颜色。 */
+.dot.warn { background: var(--warn); }
 
 /* ===== ≤768px 手机适配 =====
    与 AppShell 的抽屉断点保持一致（utils/useMedia.ts 用的也是 768px）。

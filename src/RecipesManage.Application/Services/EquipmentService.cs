@@ -168,18 +168,35 @@ public sealed class EquipmentService
         var occupancy = OccupancyRealtime.Snapshot(
             equipment.Values, live, await _db.EquipmentLeases.AsNoTracking().ToListAsync(ct));
 
+        // 三个配方类计数数的是**配方**，口径 = MasterRecipe.LifecycleStatus（有当前草稿看草稿，否则看生效版本），
+        // 与配方列表 draftStatus / 审核台筛的完全同一条规则——之前各数各的：磁贴按"版本行 + 只看草稿指针"，
+        // 列表还带"没有草稿就退回生效版本状态"那条回退，于是磁贴 1、点进去 2 条。
+        // 规则只在 LifecycleStatus 里写一次；这里做 SQL 投影镜像，一趟查询拿三个数（而不是三个 COUNT 往返）。
+        var recipeStatuses = await _db.Recipes.AsNoTracking()
+            .Select(r => new
+            {
+                Draft = r.Versions.Where(v => v.Id == r.CurrentDraftVersionId)
+                    .Select(v => (RecipeStatus?)v.Status).FirstOrDefault(),
+                Approved = r.Versions.Where(v => v.Id == r.CurrentApprovedVersionId)
+                    .Select(v => (RecipeStatus?)v.Status).FirstOrDefault()
+            })
+            .ToListAsync(ct);
+        var lifecycle = recipeStatuses.Select(x => x.Draft ?? x.Approved).ToList();
+
         return new DashboardDto(
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Running, ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Queued, ct),
-            await _db.RecipeVersions.CountAsync(v => v.Status == RecipeStatusDraft, ct),
-            await _db.RecipeVersions.CountAsync(v => v.Status == RecipeStatusReview, ct),
-            await _db.RecipeVersions.CountAsync(v => v.Status == RecipeStatusApproved, ct),
+            lifecycle.Count(s => s == RecipeStatus.Draft),
+            lifecycle.Count(s => s == RecipeStatus.InReview),
+            recipeStatuses.Count(x => x.Approved is not null),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Faulted, ct),
             await _db.ProcessAlarms.CountAsync(a => a.AcknowledgedAt == null, ct),
             items,
             occupancy,
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Completed, ct),
-            await _db.LabSamples.CountAsync(s => s.SampleType == LabSampleType.Final && s.Disposition == LabSampleDisposition.Pending, ct),
+            // 数批次而不是待判样品行：一个批次可能挂 2 个待判终样，磁贴写 2、点进去列表只有 1 条。
+            // 谓词与 BatchService.ListAsync 的 onlyLabPending 共用 LabSampleQuery.PendingFinal。
+            await _db.Batches.CountAsync(b => _db.LabSamples.PendingFinal().Any(s => s.BatchId == b.Id), ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Held, ct));
     }
 
@@ -206,10 +223,6 @@ public sealed class EquipmentService
             OccupyingBatchId = occupant.BatchId
         };
     }
-
-    private static readonly Domain.Recipes.RecipeStatus RecipeStatusDraft = Domain.Recipes.RecipeStatus.Draft;
-    private static readonly Domain.Recipes.RecipeStatus RecipeStatusReview = Domain.Recipes.RecipeStatus.InReview;
-    private static readonly Domain.Recipes.RecipeStatus RecipeStatusApproved = Domain.Recipes.RecipeStatus.Approved;
 
     public async Task<IReadOnlyList<EquipmentClassDto>> ClassesAsync(CancellationToken ct)
     {

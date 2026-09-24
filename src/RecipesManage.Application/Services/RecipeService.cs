@@ -43,7 +43,7 @@ public sealed class RecipeService
                     (review ?? approved ?? draft)?.Steps ?? []).ToList();
                 return new RecipeListItemDto(
                     r.Id, r.Code, r.Name, r.ProductCode, r.ProductName, r.Lifecycle,
-                    approved?.VersionNumber, draft?.Status ?? approved?.Status,
+                    approved?.VersionNumber, r.LifecycleStatus,
                     r.UpdatedAt ?? r.CreatedAt, units,
                     pending?.Title,
                     pending?.Meaning,

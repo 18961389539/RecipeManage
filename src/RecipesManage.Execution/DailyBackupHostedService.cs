@@ -1,7 +1,9 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
+using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Identity;
 using RecipesManage.Infrastructure.Persistence;
 
@@ -23,15 +25,18 @@ public sealed class DailyBackupHostedService : BackgroundService
     public const string SystemActor = "system";
 
     private readonly DatabaseBackup _backup;
+    private readonly DatabaseMaintenance _maintenance;
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<DailyBackupHostedService> _log;
 
     public DailyBackupHostedService(
         DatabaseBackup backup,
+        DatabaseMaintenance maintenance,
         IServiceScopeFactory scopes,
         ILogger<DailyBackupHostedService> log)
     {
         _backup = backup;
+        _maintenance = maintenance;
         _scopes = scopes;
         _log = log;
     }
@@ -90,6 +95,50 @@ public sealed class DailyBackupHostedService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// 跑一轮维护并留痕。定时与手工共用，区别只在审计行上的操作者。
+    /// 不做异常吞没：手工触发时管理员要看到真实结果（包括"因为批次在跑所以没 VACUUM"）。
+    /// </summary>
+    public async Task<MaintenanceResult> RunMaintenanceAsync(
+        string actor = SystemActor, Guid? actorId = null, CancellationToken ct = default)
+    {
+        var idle = await IsIdleAsync(ct);
+        var result = await Task.Run(() => _maintenance.Run(idle), ct);
+        await RecordAsync(actor, actorId, "system.maintenance", "", result.Describe(), ct);
+        _log.LogInformation("数据库维护：{Detail}", result.Describe());
+        return result;
+    }
+
+    /// <summary>
+    /// 每天一轮 SQLite 维护，**排在当天备份之后**。
+    ///
+    /// 顺序不是讲究而是安全：VACUUM 要把整个库文件重写一遍，中途断电或磁盘写满时，
+    /// 手里必须已经有一份当天刚验过的快照。所以备份抛异常时这里根本不会被调用。
+    /// 维护本身失败也绝不能把已经成功的备份结果带坏 —— 只记日志与审计。
+    /// </summary>
+    private async Task MaintainAsync(CancellationToken ct)
+    {
+        if (!_maintenance.Settings.Enabled) return;
+        try
+        {
+            await RunMaintenanceAsync(SystemActor, null, ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _log.LogWarning(e, "数据库维护本轮跳过（备份结果不受影响）");
+        }
+    }
+
+    /// <summary>有没有批次在跑。VACUUM 期间引擎每秒两次的事务会被挡住，而那在现在的实现里会把批次置成故障。</summary>
+    private async Task<bool> IsIdleAsync(CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
+        return !await db.Batches.AsNoTracking().AnyAsync(b =>
+            b.Status == BatchStatus.Running || b.Status == BatchStatus.Queued
+            || b.Status == BatchStatus.Held || b.Status == BatchStatus.Faulted, ct);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!_backup.Settings.Enabled)
@@ -99,8 +148,9 @@ public sealed class DailyBackupHostedService : BackgroundService
         }
 
         _log.LogInformation(
-            "每日数据库备份已启用：每天 {At} UTC 落到 {Dir}，保留 {Keep} 份",
-            _backup.Settings.AtUtc.ToString("HH:mm"), _backup.DirectoryPath, _backup.Settings.Keep);
+            "每日数据库备份已启用：每天 {At} UTC 落到 {Dir}，保留 {Keep} 份；维护 {Maintenance}",
+            _backup.Settings.AtUtc.ToString("HH:mm"), _backup.DirectoryPath, _backup.Settings.Keep,
+            _maintenance.Settings.Enabled ? "随后执行" : "已禁用");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -111,6 +161,7 @@ public sealed class DailyBackupHostedService : BackgroundService
                 // 醒来可能差几毫秒：不足 1 秒就补睡 1 秒，避免空转。
                 await Task.Delay(delay <= TimeSpan.Zero ? TimeSpan.FromSeconds(1) : delay, stoppingToken);
                 await RunOnceAsync(stoppingToken);
+                await MaintainAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {

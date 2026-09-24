@@ -374,6 +374,10 @@ export interface EquipmentOccupancyDto {
   handshakePhase?: string | null;
 }
 
+/**
+ * 运行总览的计数。三个配方类计数与 pendingLabBatches 的口径都写在后端 DashboardDto 的注释里，
+ * 一句话版本：磁贴数的是"点进去那个列表会有多少条"，所以配方类数配方、待检终样数批次。
+ */
 export interface DashboardDto {
   runningBatches: number;
   queuedBatches: number;
@@ -385,7 +389,7 @@ export interface DashboardDto {
   liveBatches: BatchListItemDto[];
   equipmentOccupancy?: EquipmentOccupancyDto[];
   pendingReleaseBatches?: number;
-  pendingLabSamples?: number;
+  pendingLabBatches?: number;
   heldBatches?: number;
 }
 
@@ -443,15 +447,34 @@ export interface BackupStatusDto {
 }
 
 /**
- * 趋势样本：points 是按 step 等间隔抽稀后的点集，total 是原始行数，readRows 是本次真正读回的最近行数。
- * step > 1 或 readRows < total 时界面必须写明口径——抽稀与开窗只能发生在读的一侧，原始样本一行都不删。
+ * 一轮 SQLite 维护的结果。skippedReason 非空表示 VACUUM 没做以及为什么——
+ * 那是安全判断（批次在跑、或空闲页不值得重写整个文件），不是错误。
+ */
+export interface MaintenanceResultDto {
+  optimized: boolean;
+  vacuumed: boolean;
+  bytesBefore: number;
+  bytesAfter: number;
+  reclaimedBytes: number;
+  skippedReason?: string | null;
+  detail: string;
+}
+
+/**
+ * 趋势样本：points 是覆盖**整批**的等间隔取样结果，total 是原始行数，step 是取样步长。
+ * step > 1 时界面必须写明口径——取样只发生在读的一侧，原始样本一行都不删，批记录仍用全量。
  */
 export interface SampleSeriesDto {
   points: SampleDto[];
   total: number;
-  readRows: number;
   step: number;
   maxPoints: number;
+}
+
+/** 握手履历的一页：total 是该批次的全量条数，被截时界面必须说明。 */
+export interface HandshakeLogPageDto {
+  total: number;
+  items: HandshakeLogDto[];
 }
 
 export interface RecipeFieldChangeDto {

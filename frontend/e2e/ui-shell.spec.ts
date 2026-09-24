@@ -318,6 +318,67 @@ test.describe("职责分离（只读断言）", () => {
   });
 });
 
+test.describe("运行总览的失败态（只读断言）", () => {
+  test.beforeEach(async ({ page }) => { await loginAs(page, "管理员"); });
+
+  /**
+   * 这一组用 page.route 把 GET /api/dashboard 打成 503：只拦读请求，不写库，
+   * 所以仍然符合本套件的只读约定。它守的是最危险的一种失效——数据断供却长得像"一切正常"。
+   */
+  const killDashboard = (page: Page) =>
+    page.route("**/api/dashboard", (r) =>
+      r.fulfill({ status: 503, contentType: "text/plain", body: "down" }));
+
+  test("一次都没取到数据时：计数画「—」而不是 0，空态不谎报「没有设备」", async ({ page }) => {
+    await killDashboard(page);
+    await page.goto("/dashboard");
+
+    const tiles = page.locator(".kpi-grid .kpi-value");
+    await expect(tiles).toHaveCount(6);
+    await expect(tiles).toHaveText(["—", "—", "—", "—", "—", "—"]);
+    await expect(page.locator(".ref-strip .ref-item b")).toHaveText(["—", "—", "—", "—"]);
+
+    await expect(page.getByText("运行数据取数失败：后端返回 503")).toBeVisible();
+    await expect(page.getByText("还没有取到任何数据")).toBeVisible();
+    // 探针 /api/health 仍然 200，但屏幕上一个数都没有：徽标必须跟着数据改口，不能说"服务正常"。
+    await expect(page.locator(".health-pill")).toContainText("数据中断");
+    // 设备其实有 6 台，写"暂无设备数据"就是把故障说成空库。
+    await expect(page.locator(".el-table__empty-text")).toHaveText(["数据不可用", "数据不可用"]);
+    // 冷启动就断供时顶栏也不能写「实时」：lastSyncAt 一直是 0，旧逻辑把"从未同步"当成"不陈旧"。
+    await expect(page.locator(".rt")).toContainText("刷新停滞", { timeout: 20000 });
+  });
+
+  test("取数成功时数字照常显示，且与接口一致（防止「—」变成常态）", async ({ page }) => {
+    const dash = await apiGet<{ pendingReleaseBatches: number; faultedBatches: number; pendingLabBatches: number }>(page, "/api/dashboard");
+    await page.goto("/dashboard");
+    const tile = (label: string) =>
+      page.locator(".kpi").filter({ hasText: label }).locator(".kpi-value");
+    await expect(tile("待质量放行")).toHaveText(String(dash.pendingReleaseBatches));
+    await expect(tile("握手故障批次")).toHaveText(String(dash.faultedBatches));
+    // 磁贴点进去就是这条筛选后的列表，两个数必须相等：一个批次可能挂多个待判终样，
+    // 磁贴若数样品行就会比列表条数大（DashboardCountTests 在服务端钉同一件事，这里是界面侧的出口）。
+    const labList = await apiGet<{ total: number }>(page, "/api/batches?take=200&onlyLabPending=true");
+    await expect(tile("待检终样")).toHaveText(String(labList.total));
+    await expect(page.locator(".health-pill")).toContainText("服务正常");
+    await expect(page.locator(".el-table__body tr").first()).toBeVisible();
+  });
+
+  test("中途断供：保留最后已知数字，同时顶栏与徽标都要说「已经不新鲜」", async ({ page }) => {
+    await page.goto("/dashboard");
+    await expect(page.locator(".kpi-grid .kpi-value").first()).toHaveText(/\d/);
+
+    await killDashboard(page);
+    // 下一个轮询周期（4 秒）内徽标就该改口。
+    await expect(page.locator(".health-pill")).toContainText("数据中断", { timeout: 15000 });
+    // 根因断言：/health 一直 200，顶栏的"实时"必须由**数据**新鲜度决定而不是由探针决定。
+    // 连丢三个轮询周期才转黄，所以这里给到 20 秒。
+    await expect(page.locator(".rt")).toContainText("刷新停滞", { timeout: 20000 });
+    // 已经拿到过的数字不能被抹成 0 或「—」：那是最后已知状态，配着"不新鲜"的提示才是有用信息。
+    await expect(page.locator(".kpi-grid .kpi-value").first()).toHaveText(/\d/);
+    await expect(page.getByText("下面的数字是最后一次成功取数的结果")).toBeVisible();
+  });
+});
+
 test.describe("取数口径要写在界面上（只读断言）", () => {
   test("趋势卡声明本次是抽稀还是全量，不让人把曲线当履历读", async ({ page }) => {
     await loginAs(page, "管理员");

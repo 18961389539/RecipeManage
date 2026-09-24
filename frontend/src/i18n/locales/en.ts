@@ -283,8 +283,6 @@ const en: Record<string, string> = {
   "服务异常": "Service degraded",
   "需处理": "Needs attention",
   "参考": "Reference",
-  "页面会每 4 秒自动重试；若持续失败请检查后端 API 是否已启动。":
-    "The page retries every 4 seconds; if it keeps failing, check that the backend API is running.",
   "API 健康检查失败": "API health check failed",
   "后端 /health 未返回 ok，运行总览与实时推送可能均已中断。":
     "The backend /health did not return ok; overview and live updates may both be interrupted.",
@@ -293,8 +291,8 @@ const en: Record<string, string> = {
     "Equipment occupancy (one running/queued/held batch per device at a time)",
   "暂无设备数据": "No equipment data",
   "批次状态": "Batch status",
-  "实时批次": "Live batches",
-  "当前没有执行中的批次": "No batches currently running",
+  "在途批次（运行 / 排队 / 保持 / 故障）": "In-flight batches (running / queued / held / faulted)",
+  "当前没有在途批次": "No batches in flight",
   "配方": "Recipe",
 
   // ---- 设备列表 ----
@@ -974,7 +972,6 @@ const en: Record<string, string> = {
   "判定": "Disposition",
   "取样人": "Sampled by",
   "快照设定": "Snapshot setpoint",
-  "数据加载失败：{0}": "Failed to load data: {0}",
   "握手故障批次": "Handshake-faulted batches",
   "未确认报警": "Unacknowledged alarms",
   "保持中批次": "Batches on hold",
@@ -982,8 +979,7 @@ const en: Record<string, string> = {
   "执行中批次": "Running batches",
   "排队批次": "Queued batches",
   "已批准配方": "Approved recipes",
-  "草稿版本": "Draft versions",
-  "运行总览数据加载失败": "Overview data failed to load",
+  "草稿配方": "Draft recipes",
   "搜索设备类 / 相模板": "Search equipment class / phase template",
   "搜索编码 / 名称 / 主机": "Search code / name / host",
   "设备列表加载失败：{0}": "Failed to load equipment: {0}",
@@ -1194,12 +1190,6 @@ const en: Record<string, string> = {
   "PLC_Ready 后写参并回读，再置 Trigger_Write": "After PLC_Ready, write the parameters, read them back, then set Trigger_Write",
   // 趋势与报警的取数口径：抽稀/开窗只发生在读的一侧，界面必须把这件事说出来。
   "共 {0} 条样本，全部绘出。": "{0} samples, all plotted.",
-  "趋势每 {0} 条样本取 1 点绘出（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。":
-    "The trend plots 1 point per {0} samples ({1} samples in this batch). Samples are never deleted; the electronic batch record still uses full-fidelity data.",
-  "趋势仅覆盖最近 {0} 条样本（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。":
-    "The trend covers only the latest {0} samples ({1} in this batch). Samples are never deleted; the electronic batch record still uses full-fidelity data.",
-  "趋势仅覆盖最近 {0} 条样本，并每 {1} 条取 1 点绘出（本批共 {2} 条）。样本不删除，电子批记录仍用全量数据。":
-    "The trend covers only the latest {0} samples, plotting 1 point per {1} ({2} samples in this batch). Samples are never deleted; the electronic batch record still uses full-fidelity data.",
   "仅显示最近 {0} 条，本批共 {1} 条报警；「确认全部」只作用于上面列出的这些。":
     "Showing only the latest {0} of {1} alarms for this batch; \"Acknowledge all\" applies to the listed rows only.",
   "登记时间": "Registered at",
@@ -1224,6 +1214,26 @@ const en: Record<string, string> = {
   "系统": "System",
   "数据库备份": "Database backup",
   "数据库备份失败": "Database backup failed",
+  "数据库维护": "Database maintenance",
+  // 手工维护：没做 VACUUM 是安全判断，界面要按这个口径说话。
+  "立即维护": "Maintain now",
+  "已更新统计信息，VACUUM 回收 {0}。": "Statistics refreshed; VACUUM reclaimed {0}.",
+  "已更新统计信息；本轮未做 VACUUM（{0}）。": "Statistics refreshed; no VACUUM this round ({0}).",
+  // 运行总览的失败态：「不知道」必须和"确认是零"长得不一样，文案两侧都得说清这件事。
+  "运行数据取数失败：{0}": "Overview data failed to load: {0}",
+  "还没有取到任何数据，所有计数显示为「—」而不是 0；页面每 4 秒自动重试。": "No data has been retrieved yet, so every count shows \"—\" rather than 0; the page retries every 4 seconds.",
+  "下面的数字是最后一次成功取数的结果，已经不代表当前状态；页面每 4 秒自动重试。": "The numbers below are from the last successful read and no longer reflect the current state; the page retries every 4 seconds.",
+  "数据中断": "Data feed down",
+  "数据不可用": "Data unavailable",
+  "后端返回 {0}": "Backend returned {0}",
+  "无法连接后端": "Cannot reach the backend",
+  "推送连接正常，但还没有取到过一次数据——接口在报错或后端不可达，屏幕上的数字不可信。{0}":
+    "The push connection is fine, but no read has ever succeeded — the API is erroring or the backend is unreachable, so the numbers on screen cannot be trusted. {0}",
+  // 趋势取样与握手履历的读法说明：取样覆盖整批，履历只是被截了。
+  "趋势覆盖整批，每 {0} 条样本取 1 点绘出（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。":
+    "The trend spans the whole batch, plotting 1 point per {0} samples ({1} samples in this batch). Samples are never deleted; the electronic batch record still uses full-fidelity data.",
+  "仅显示最近 {0} 条，本批共 {1} 条握手事件；完整履历见电子批记录。":
+    "Showing only the latest {0} of {1} handshake events for this batch; the full trail is in the electronic batch record.",
 };
 
 export default en;

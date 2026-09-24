@@ -116,11 +116,9 @@ public sealed class BatchService
         if (Enum.TryParse<BatchStatus>(status, true, out var parsed))
             joined = joined.Where(x => x.Batch.Status == parsed);
         if (onlyLabPending)
-            // 相关子查询：待实验室终审的批次数在服务器上算，翻页后前端只能看到当页标记，拦不住筛选。
-            joined = joined.Where(x => _db.LabSamples.Any(s =>
-                s.BatchId == x.Batch.Id
-                && s.SampleType == LabSampleType.Final
-                && s.Disposition == LabSampleDisposition.Pending));
+            // 谓词收在 LabSampleQuery.PendingFinal：总览磁贴与这里必须是同一批批次，
+            // 否则磁贴写 3、点进去列表 2 条。相关子查询在服务器上算，翻页后前端只能看到当页标记，拦不住筛选。
+            joined = joined.Where(x => _db.LabSamples.PendingFinal().Any(s => s.BatchId == x.Batch.Id));
 
         var ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase);
         // 每一支都带 Id 兜底次级键：同一秒内创建的批次很多，没有它翻页会重复或漏行。
@@ -153,10 +151,7 @@ public sealed class BatchService
         var batchIds = page.Select(x => x.Batch.Id).ToList();
 
         var pendingFinal = (await _db.LabSamples.AsNoTracking()
-            .Where(s => s.SampleType == LabSampleType.Final && s.Disposition == LabSampleDisposition.Pending
-                        && batchIds.Contains(s.BatchId))
-            .Select(s => s.BatchId)
-            .Distinct()
+            .BatchIdsPendingFinal(batchIds)
             .ToListAsync(ct)).ToHashSet();
 
         return new BatchListPageDto(total, page.Select(x =>
@@ -186,19 +181,18 @@ public sealed class BatchService
         var equipmentRows = await _db.Equipment.AsNoTracking()
             .Where(e => boundIds.Contains(e.Id))
             .ToListAsync(ct);
-        var events = await _db.HandshakeEvents.AsNoTracking()
-            .Where(e => e.BatchId == batch.Id)
-            .ToListAsync(ct);
         var persistedLanes = await _db.Lanes.AsNoTracking()
             .Where(l => l.BatchId == batch.Id)
             .ToListAsync(ct);
+        // 车道行的当前相位是真源；只有"从来没有车道行"的历史批次才需要按事件重建，
+        // 那时也只取每个工步的最后一条，不再整批读回（长批次是几十万行）。
         var laneStates = persistedLanes.Count > 0
             ? BatchLanes.FromRows(persistedLanes)
             : BatchLanes.Build(
                 snapshot,
                 batch.EquipmentId,
                 batch.StepExecutions,
-                events,
+                await LastEventPerStepAsync(batch.Id, ct),
                 equipmentRows.ToDictionary(e => e.Id, e => e.Code));
         var lanes = laneStates
             .Select(l => new LaneHandshakeDto(
@@ -237,39 +231,56 @@ public sealed class BatchService
         .Select(MapAlarm).ToList();
 
     /// <summary>
-    /// 趋势样本：只读回最近 <see cref="SampleReadWindow"/> 行，再按测点等间隔抽稀到
-    /// <paramref name="maxPoints"/> 以内返回。原始样本一行都不删——批记录要留到留存期，
-    /// 抽稀只发生在读的一侧，且把 <c>Total</c> 与 <c>Step</c> 一起给前端，
-    /// 让界面能写明"这是每 N 点取 1 的结果"，而不是让用户误以为看到的是全数据。
+    /// 趋势样本：覆盖<strong>整批</strong>，按测点在 SQL 侧等间隔取样，只回 ≤ <paramref name="maxPoints"/> 点/测点。
+    ///
+    /// 为什么不是"读最近 N 行再抽稀"：单设备一个班次就有 ~17 万行样本，按行数开窗等于把趋势截成
+    /// 最近两三小时——而操作员看趋势要的恰恰是"这一批从头到尾的形状"。取样下推之后，
+    /// 传输与物化的行数由 maxPoints 决定，跟批次跑了多久无关。
+    ///
+    /// 步长所有测点共用一个，否则"每 N 条取 1 点"这句话对图上不同的线成立得不一样。
+    /// 原始样本一行不删：电子批记录仍走 <see cref="AllSamplesAsync"/> 的全量。
     /// </summary>
     public async Task<SampleSeriesDto> SamplesAsync(Guid id, int maxPoints, CancellationToken ct)
     {
         maxPoints = Math.Clamp(maxPoints <= 0 ? 1500 : maxPoints, 50, 5000);
-        var total = await _db.ProcessSamples.AsNoTracking().CountAsync(s => s.BatchId == id, ct);
-        if (total == 0) return new SampleSeriesDto([], 0, 0, 1, maxPoints);
-
-        var window = Math.Min(total, SampleReadWindow);
-        var rows = await _db.ProcessSamples.AsNoTracking()
+        var sizes = await _db.ProcessSamples.AsNoTracking()
             .Where(s => s.BatchId == id)
-            .OrderByDescending(s => s.SampledAt).ThenByDescending(s => s.Id)
-            .Take(window)
+            .GroupBy(s => s.Tag)
+            .Select(g => new { Tag = g.Key, Rows = g.Count() })
             .ToListAsync(ct);
-        rows.Reverse();   // 取的是最近 window 行，翻回时间正序给画布
+        var total = sizes.Sum(x => x.Rows);
+        if (total == 0) return new SampleSeriesDto([], 0, 1, maxPoints);
 
-        // 抽稀按测点分组做，并且所有分组用同一个步长：全局抽稀会让某些测点在抽到的时刻上缺值，
-        // 步长不一致则"每 N 点取 1"这句话对不同的线就不成立了。
-        var byTag = rows.GroupBy(s => s.Tag).ToList();
-        var longest = byTag.Max(g => g.Count());
-        var step = Math.Max(1, (int)Math.Ceiling(longest / (double)maxPoints * byTag.Count));
-        if (step <= 1)
-            return new SampleSeriesDto(rows.Select(MapSample).ToList(), total, rows.Count, 1, maxPoints);
+        // 按最大的那个测点定步长：其余测点只会更稀，不会超上限。
+        var step = Math.Max(1, (int)Math.Ceiling(sizes.Max(x => x.Rows) / (double)maxPoints));
+        var rows = step == 1
+            ? await _db.ProcessSamples.AsNoTracking()
+                .Where(s => s.BatchId == id)
+                .OrderBy(s => s.SampledAt).ThenBy(s => s.Id)
+                .ToListAsync(ct)
+            : await _db.ProcessSamples
+                .FromSqlRaw(StridedSamplesSql, id, step)
+                .OrderBy(s => s.SampledAt).ThenBy(s => s.Id)
+                .ToListAsync(ct);
 
-        var points = byTag.SelectMany(g => g.Where((_, i) => i % step == 0)).OrderBy(s => s.SampledAt).ToList();
-        return new SampleSeriesDto(points.Select(MapSample).ToList(), total, rows.Count, step, maxPoints);
+        return new SampleSeriesDto(rows.Select(MapSample).ToList(), total, step, maxPoints);
     }
 
-    /// <summary>单次趋势查询最多读回的行数：再大的批次也只画得下几千个点，读更多只是把库拖空。</summary>
-    private const int SampleReadWindow = 50_000;
+    /// <summary>
+    /// 每个测点各自按时间序编号，再按步长取点。BatchId 与步长都走占位符，不拼字符串。
+    /// 外层必须再排一次：SQLite 不保证子查询里的 ORDER BY 会被保留下来。
+    /// 列名写死在这里，改 <c>process_samples</c> 的模型要同步这条 SQL——
+    /// <c>ListPagingTests.TrendSamplesAreDecimatedButStillReportTheRawSize</c> 会跑通整批覆盖，漏改会红。
+    /// </summary>
+    private const string StridedSamplesSql = """
+        SELECT "Id", "BatchId", "StepId", "SampledAt", "Tag", "Value", "Unit", "CreatedAt", "UpdatedAt"
+        FROM (
+            SELECT "Id", "BatchId", "StepId", "SampledAt", "Tag", "Value", "Unit", "CreatedAt", "UpdatedAt",
+                   ROW_NUMBER() OVER (PARTITION BY "Tag" ORDER BY "SampledAt", "Id") AS _rn
+            FROM "process_samples"
+            WHERE "BatchId" = {0}
+        ) WHERE (_rn - 1) % {1} = 0
+        """;
 
     private static SampleDto MapSample(ProcessSample s) =>
         new(s.SampledAt, s.Tag, s.Value, s.Unit, s.StepId);
@@ -569,15 +580,56 @@ public sealed class BatchService
         return snapshot.Steps[index];
     }
 
-    public async Task<IReadOnlyList<HandshakeLogDto>> HandshakeLogAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// 握手履历：只回最近 <paramref name="take"/> 条（默认 <see cref="HandshakeLogWindow"/>）。
+    ///
+    /// 为什么必须开窗：这条是监控页每 4 秒拉的，而一个长跑批次的握手事件按 100ms 一拍累积，
+    /// 旧写法整表读进内存再排序 —— 页面越到后面越慢，而且慢的是"看履历"这个动作本身。
+    /// 完整履历仍能从电子批记录取（那条路径不截，见 <see cref="RecordAsync"/>）。
+    /// </summary>
+    public async Task<HandshakeLogPageDto> HandshakeLogAsync(Guid id, int take, CancellationToken ct)
     {
         _ = await LoadAsync(id, ct);
-        var rows = await _db.HandshakeEvents.AsNoTracking().Where(e => e.BatchId == id).ToListAsync(ct);
-        return rows
-            .OrderBy(e => e.CreatedAt)
-            .Select(e => new HandshakeLogDto(e.CreatedAt, e.StepCode, e.Phase, e.Kind, e.Detail, e.RemainingSeconds))
-            .ToList();
+        take = Math.Clamp(take <= 0 ? HandshakeLogWindow : take, 1, 20_000);
+        var total = await _db.HandshakeEvents.CountAsync(e => e.BatchId == id, ct);
+        var rows = await _db.HandshakeEvents.AsNoTracking()
+            .Where(e => e.BatchId == id)
+            .OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id)
+            .Take(take)
+            .ToListAsync(ct);
+        rows.Reverse();   // 取的是最近 take 条，翻回时间正序给履历表
+        return new HandshakeLogPageDto(total, rows.Select(MapHandshake).ToList());
     }
+
+    /// <summary>
+    /// 归档件用的全量握手履历：只有监控页开窗，电子批记录一行都不能少。
+    /// 与上面分开写而不是"传个大点的 take"：take 有上限，靠调大上限来满足法务要求迟早会失守。
+    /// </summary>
+    private async Task<IReadOnlyList<HandshakeLogDto>> AllHandshakeLogAsync(Guid id, CancellationToken ct) =>
+        (await _db.HandshakeEvents.AsNoTracking()
+            .Where(e => e.BatchId == id)
+            .OrderBy(e => e.CreatedAt).ThenBy(e => e.Id)
+            .ToListAsync(ct))
+        .Select(MapHandshake).ToList();
+
+    private static HandshakeLogDto MapHandshake(HandshakeEvent e) =>
+        new(e.CreatedAt, e.StepCode, e.Phase, e.Kind, e.Detail, e.RemainingSeconds);
+
+    /// <summary>监控页履历表的默认条数：一屏滚得完，也够看完当前工步的每一次合法动作。</summary>
+    private const int HandshakeLogWindow = 2_000;
+
+    /// <summary>
+    /// 每个工步的最后一条握手事件。
+    ///
+    /// 只为"从来没有车道行"的历史批次重建展示相位（见 <see cref="BatchLanes.Build"/>），
+    /// 所以不能把整批事件读回来——那正是这次要消掉的那次全表读。
+    /// </summary>
+    private async Task<IReadOnlyList<HandshakeEvent>> LastEventPerStepAsync(Guid batchId, CancellationToken ct) =>
+        await _db.HandshakeEvents.AsNoTracking()
+            .Where(e => e.BatchId == batchId && e.StepId != null)
+            .GroupBy(e => e.StepId!.Value)
+            .Select(g => g.OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id).First())
+            .ToListAsync(ct);
 
     public async Task<IReadOnlyList<SnapshotDriftDto>> SnapshotDriftAsync(Guid id, CancellationToken ct)
     {
@@ -614,7 +666,7 @@ public sealed class BatchService
     public async Task<BatchRecordDto> RecordAsync(Guid id, CancellationToken ct)
     {
         var detail = await GetAsync(id, ct);
-        var handshake = await HandshakeLogAsync(id, ct);
+        var handshake = await AllHandshakeLogAsync(id, ct);
         // 归档件用全量样本与全量报警：eBR 是法定记录，不能拿趋势图那套抽稀结果去签。
         var samples = await AllSamplesAsync(id, ct);
         var drift = await SnapshotDriftAsync(id, ct);

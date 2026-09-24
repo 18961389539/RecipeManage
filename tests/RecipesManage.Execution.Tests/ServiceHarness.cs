@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using RecipesManage.Application.Contracts;
+using RecipesManage.Domain.Batches;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Recipes;
@@ -100,5 +101,37 @@ internal static class ServiceHarness
             sink.Add(evt);
             return Task.CompletedTask;
         }
+    }
+
+    /// <summary>
+    /// 最小可用批次：查询/计数类测试关心的是"这一行存在且处于某状态"，不是配方内容。
+    /// 放在这里而不是各测试类里私有一份：快照构造那 20 行抄三遍，改模型时必漏一处。
+    /// </summary>
+    public static ProductionBatch Batch(string batchNo, Guid? equipmentId = null, Guid? createdBy = null)
+    {
+        var stepId = Guid.NewGuid();
+        var snapshot = new ControlRecipeSnapshot
+        {
+            MasterRecipeId = Guid.NewGuid(),
+            RecipeVersionId = Guid.NewGuid(),
+            RecipeCode = "TST",
+            RecipeName = "测试配方",
+            ProductCode = "P",
+            ProductName = "part",
+            FrozenAt = DateTimeOffset.UtcNow,
+            Steps =
+            [
+                new SnapshotStep
+                {
+                    StepId = stepId, Code = "S10", Name = "升温", Type = StepType.Heat,
+                    Ordinal = 0, WatchdogSeconds = 60
+                }
+            ],
+            Edges = []
+        };
+        var batch = ProductionBatch.Create(batchNo, equipmentId ?? Guid.NewGuid(), snapshot, "{}",
+            createdBy ?? Guid.NewGuid());
+        batch.StepExecutions.Add(new BatchStepExecution(batch.Id, stepId, "S10", "升温", StepType.Heat, 0));
+        return batch;
     }
 }

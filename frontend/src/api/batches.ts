@@ -1,6 +1,6 @@
 import http from "./http";
 import type {
-  BatchDetailDto, HandshakeLogDto, ProcessAlarmDto, ProcessAlarmPageDto, SampleSeriesDto, SnapshotDriftDto
+  BatchDetailDto, HandshakeLogPageDto, ProcessAlarmDto, ProcessAlarmPageDto, SampleSeriesDto, SnapshotDriftDto
 } from "./types";
 
 /**
@@ -21,8 +21,10 @@ export async function getBatchSamples(id: string, maxPoints?: number): Promise<S
   })).data;
 }
 
-export async function getHandshakeLog(id: string): Promise<HandshakeLogDto[]> {
-  return (await http.get<HandshakeLogDto[]>(`/batches/${id}/handshake-log`)).data;
+export async function getHandshakeLog(id: string, take?: number): Promise<HandshakeLogPageDto> {
+  return (await http.get<HandshakeLogPageDto>(`/batches/${id}/handshake-log`, {
+    params: take ? { take } : undefined
+  })).data;
 }
 
 export async function getBatchAlarms(id: string): Promise<{ items: ProcessAlarmDto[]; total: number }> {

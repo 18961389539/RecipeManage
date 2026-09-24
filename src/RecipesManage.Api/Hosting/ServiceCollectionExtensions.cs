@@ -55,6 +55,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new DatabaseBackup(
             sp.GetRequiredService<BackupSettings>(),
             RecipesDatabase.ResolveConnectionString(config.GetConnectionString("Sqlite"))));
+        services.AddSingleton(MaintenanceSettingsFrom(config));
+        services.AddSingleton(sp => new DatabaseMaintenance(
+            config.GetConnectionString("Sqlite"),
+            sp.GetRequiredService<MaintenanceSettings>()));
         services.AddSingleton<DailyBackupHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<DailyBackupHostedService>());
         services.AddSignalR();
@@ -112,6 +116,19 @@ public static class ServiceCollectionExtensions
     /// 备份配置：每一项都能缺省，单设备现场常常没人改 appsettings。
     /// AtUtc 只认不变的 "HH:mm" 格式——几点备份是运维事实，不该被服务器区域设置读成另一个时刻。
     /// </summary>
+    /// <summary>
+    /// 维护配置。两个阈值决定"什么时候肯为省磁盘重写整个库文件"：
+    /// 空闲页占比不够就不动手，绝对量太小也不动手（10 MB 的库白忙一场，还要冒一次全文件重写的风险）。
+    /// </summary>
+    private static MaintenanceSettings MaintenanceSettingsFrom(IConfiguration config) => new()
+    {
+        Enabled = config.GetValue("Maintenance:Enabled", true),
+        Vacuum = config.GetValue("Maintenance:Vacuum", true),
+        MinFreeRatio = Math.Clamp(config.GetValue("Maintenance:MinFreeRatio", 0.2), 0.01, 1),
+        MinFreeMegabytes = Math.Max(1, config.GetValue("Maintenance:MinFreeMegabytes", 64)),
+        BusyTimeoutMs = Math.Clamp(config.GetValue("Maintenance:BusyTimeoutMs", 30_000), 0, 300_000)
+    };
+
     private static BackupSettings BackupSettingsFrom(IConfiguration config)
     {
         var at = TimeOnly.TryParseExact(config["Backup:AtUtc"], "HH:mm", CultureInfo.InvariantCulture,

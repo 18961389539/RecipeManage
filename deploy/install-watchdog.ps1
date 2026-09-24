@@ -83,6 +83,15 @@ if ($JwtKey -or $Sqlite) {
                 Keep      = $BackupKeep
                 Directory = 'App_Data/backups'
             }
+            # Runs right after the daily backup: PRAGMA optimize always, VACUUM only when no batch is
+            # in flight and the free pages are worth rewriting the whole file for.
+            Maintenance       = [ordered]@{
+                Enabled          = $true
+                Vacuum           = $true
+                MinFreeRatio     = 0.2
+                MinFreeMegabytes = 64
+                BusyTimeoutMs    = 30000
+            }
             Logging           = [ordered]@{ LogLevel = [ordered]@{ Default = 'Information' } }
         }
         $config | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $PublishTo 'appsettings.Production.json') -Encoding UTF8

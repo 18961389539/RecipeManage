@@ -239,6 +239,9 @@
                 </el-table-column>
               </el-table>
               <div v-if="!handshakeLog.length" class="muted">{{ $t("启动批次后，此处按 PLC_Ready → Trigger_Write → Step_Running → Step_Complete 记录每一次合法动作。") }}</div>
+              <div v-else-if="handshakeLogTotal > handshakeLog.length" class="muted">
+                {{ $t("仅显示最近 {0} 条，本批共 {1} 条握手事件；完整履历见电子批记录。", [handshakeLog.length, handshakeLogTotal]) }}
+              </div>
             </el-card>
           </el-col>
           <el-col :span="10" :xs="24">
@@ -315,6 +318,7 @@ const feed = useBatchFeed({
 const alarms = feed.alarms;
 const drifts = feed.drifts;
 const handshakeLog = feed.handshakeLog;
+const handshakeLogTotal = feed.handshakeLogTotal;
 const displayLanes = feed.displayLanes;
 const selectedLane = feed.selectedLane;
 const view = useBatchSnapshotView(feed.batch, pickedStep, feed.equipmentIndex);
@@ -330,18 +334,14 @@ const {
 } = view;
 
 /**
- * 取数口径要写在图上：长批次一次轮询能拉回几十万行，后端按步长抽稀到 1500 点以内。
- * 不标注的话用户会拿抽稀曲线当全量履历读——批记录用的仍是全量数据。
+ * 取数口径要写在图上：长批次的样本量远超画布能承载的点数，后端按步长在 SQL 侧取样，
+ * 覆盖整批但只回千把点。不标注的话用户会拿取样曲线当全量履历读——批记录用的仍是全量数据。
  */
 const trendNote = computed(() => {
-  const { total, readRows, step } = sampleMeta.value;
+  const { total, step } = sampleMeta.value;
   if (!total) return "";
-  if (step > 1 && readRows < total)
-    return t("趋势仅覆盖最近 {0} 条样本，并每 {1} 条取 1 点绘出（本批共 {2} 条）。样本不删除，电子批记录仍用全量数据。", readRows, step, total);
   if (step > 1)
-    return t("趋势每 {0} 条样本取 1 点绘出（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。", step, total);
-  if (readRows < total)
-    return t("趋势仅覆盖最近 {0} 条样本（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。", readRows, total);
+    return t("趋势覆盖整批，每 {0} 条样本取 1 点绘出（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。", step, total);
   return t("共 {0} 条样本，全部绘出。", total);
 });
 
