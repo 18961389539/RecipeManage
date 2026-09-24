@@ -11,5 +11,7 @@ export {};
 declare module "vue-router" {
   interface RouteMeta {
     roles?: import("./api/types").UserRole[];
+    /** 本页是否订阅执行事件（顶栏实时徽标只在这类页面出现） */
+    realtime?: boolean;
   }
 }

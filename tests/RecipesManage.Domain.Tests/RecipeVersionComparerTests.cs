@@ -45,8 +45,8 @@ public sealed class RecipeVersionComparerTests
 
     private static void Approve(RecipeVersion version, Guid engineer)
     {
-        version.Submit(DateTimeOffset.UtcNow);
-        version.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        version.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        version.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        version.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        version.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
     }
 }

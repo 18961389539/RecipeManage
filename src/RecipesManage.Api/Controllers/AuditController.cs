@@ -16,6 +16,8 @@ public sealed class AuditController(AuditService audit) : ControllerBase
         [FromQuery] string? entityId,
         [FromQuery] int skip = 0,
         [FromQuery] int take = 50,
+        [FromQuery] string? sort = null,
+        [FromQuery] string? dir = null,
         CancellationToken ct = default) =>
-        audit.QueryAsync(entityType, entityId, skip, take, ct);
+        audit.QueryAsync(entityType, entityId, skip, take, sort, dir, ct);
 }

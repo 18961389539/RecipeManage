@@ -18,6 +18,8 @@ using RecipesManage.Infrastructure.Plc;
 using RecipesManage.Infrastructure.Records;
 using Xunit;
 
+using static RecipesManage.Execution.Tests.ServiceHarness;
+
 namespace RecipesManage.Execution.Tests;
 
 /// <summary>
@@ -97,7 +99,7 @@ public sealed class DesignToHandshakeLoopTests
 
                 var afterSupervisor = await new RecipeService(db, new RoleUser(supervisor.Id, UserRole.Supervisor, "supervisor", "工艺主管"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "路径可执行", "Supervisor@123"), CancellationToken.None);
-                Assert.Contains(afterSupervisor.Draft!.Approvals, a => a.Level == ApprovalLevel.Quality && a.Decision == ApprovalDecision.Pending);
+                Assert.Contains(afterSupervisor.Draft!.Approvals, a => a.Node == ApprovalNode.Quality && a.Decision == ApprovalDecision.Pending);
 
                 var approved = await new RecipeService(db, new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "窗口合格", "Quality@123"), CancellationToken.None);
@@ -143,7 +145,7 @@ public sealed class DesignToHandshakeLoopTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using var logScope = host.Services.CreateScope();
             var logDb = logScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -204,14 +206,5 @@ public sealed class DesignToHandshakeLoopTests
             sink.Add(evt);
             return Task.CompletedTask;
         }
-    }
-
-    private sealed class RoleUser(Guid id, UserRole role, string userName, string displayName) : ICurrentUser
-    {
-        public Guid? UserId { get; } = id;
-        public string UserName { get; } = userName;
-        public string DisplayName { get; } = displayName;
-        public UserRole? Role { get; } = role;
-        public bool IsAuthenticated => true;
     }
 }

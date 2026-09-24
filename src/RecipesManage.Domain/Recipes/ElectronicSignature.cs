@@ -6,25 +6,37 @@ public static class ElectronicSignature
     public const string ProcedureSave =
         "我作为工艺工程师确认本次 Procedure / Steps / Parameters 变更准确，并记录变更原因。";
 
-    public static string Meaning(ApprovalLevel level, ApprovalDecision decision) =>
-        (level, decision) switch
-        {
-            (ApprovalLevel.Author, ApprovalDecision.Approved) =>
-                "我作为工艺工程师确认本版本 Procedure / Steps 与 Parameters / Setpoints 准确，提交多级审核。",
-            (ApprovalLevel.Author, _) =>
-                "工艺工程师提交审核。",
-            (ApprovalLevel.Supervisor, ApprovalDecision.Approved) =>
-                "我作为工艺主管确认工艺路径可执行，批准进入质量审核。",
-            (ApprovalLevel.Supervisor, ApprovalDecision.Rejected) =>
-                "我作为工艺主管驳回：工艺路径不可执行或需要返工。",
-            (ApprovalLevel.Supervisor, _) =>
-                "待工艺主管签署：确认工艺路径可执行。",
-            (ApprovalLevel.Quality, ApprovalDecision.Approved) =>
-                "我作为质量审核人确认参数窗口可接受，批准本版本作为生效主配方。",
-            (ApprovalLevel.Quality, ApprovalDecision.Rejected) =>
-                "我作为质量审核人驳回：参数窗口不可接受或需要返工。",
-            (ApprovalLevel.Quality, _) =>
-                "待质量签署：确认参数窗口可接受。",
-            _ => "电子签名。"
-        };
+    // 配方审核节点的签名含义不再由代码按枚举查表：那是审批链配置的一部分，
+    // 提交时随整条链冻结进 approval_records（见 ApprovalChainStep）。
+
+    public static string Batch(string action) => action switch
+    {
+        "batch.start.esign" =>
+            "我作为操作员确认控制配方快照完整有效，启动本批四步握手，禁止盲写。",
+        "batch.retry.esign" =>
+            "我作为操作员确认故障已排除，从当前工步重新排队并恢复握手。",
+        "batch.abort.esign" =>
+            "我作为操作员确认中止本批，停止写参并释放设备占用。",
+        "batch.hold.esign" =>
+            "我作为操作员确认请求保持：写 Host_Hold，等待 PLC_Held，禁止盲写下一步。",
+        "batch.resume.esign" =>
+            "我作为操作员确认解除保持，从当前工步继续四步握手。",
+        "batch.skip.esign" =>
+            "我作为主管确认跳过当前工步：仅在未写参的就绪/等待/确认相位，禁止跨阶段盲写。",
+        "batch.confirm.esign" =>
+            "我作为操作员确认本工步人工确认点已核对，允许继续且本工步不写 PLC。",
+        "batch.release.esign" =>
+            "我作为质量审核人对照归档质检与四步握手，批准本批放行。",
+        "batch.reject.esign" =>
+            "我作为质量审核人对照归档质检与四步握手，拒收本批。",
+        "lab.sample.dispose.esign" =>
+            "我作为质量审核人对照规格判定本样品。",
+        _ => "电子签名。"
+    };
+
+    public static string AuditDetail(string action, string? extra)
+    {
+        var meaning = Batch(action);
+        return string.IsNullOrWhiteSpace(extra) ? meaning : $"{meaning} {extra.Trim()}";
+    }
 }

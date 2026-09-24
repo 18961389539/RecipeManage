@@ -1,12 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { labeledInput, loginAs, uniqueStamp } from "./helpers";
+import {
+  labeledInput,
+  loginAs,
+  uniqueStamp,
+} from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("engineer applies PH-HEAT template onto a draft step", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
 
   const code = `PH${uniqueStamp()}`;
   await loginAs(page, "工艺工程师");

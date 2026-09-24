@@ -7,7 +7,8 @@ import {
   handshakeRows,
   loginAs,
   passwords,
-  uniqueStamp
+  uniqueStamp,
+  esignReasonAndWait,
 } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -45,7 +46,7 @@ async function clearSimulatorFault(request: Page["request"], equipmentCode: stri
 test("supervisor skips ManualConfirm without writing PLC", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
   await abortActiveBatches(page.request);
 
   const batchNo = `BSKP${uniqueStamp()}`;
@@ -60,9 +61,8 @@ test("supervisor skips ManualConfirm without writing PLC", async ({ page }) => {
   await page.goto(batchUrl);
   await expect(page.getByRole("button", { name: "跳过当前工步" })).toBeVisible();
   await page.getByRole("button", { name: "跳过当前工步" }).click();
-  await fillPrompt(page, "跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", "E2E 跳过人工确认");
-  await esignAndWait(page, "/skip", "POST", "跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", passwords["工艺主管"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 30_000 });
+  await esignReasonAndWait(page, "/skip", "POST", "跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", "E2E 跳过人工确认", passwords["工艺主管"]);
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 30_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write")).toBeTruthy();
@@ -80,7 +80,7 @@ test("NoAck handshake fault raises alarm and operator can acknowledge", async ({
     await createBatchFromApproved(page, batchNo, "AL-HT-CFM", "HT-01");
     await page.getByRole("button", { name: "启动执行" }).click();
     await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-    await expect(page.locator(".page-title")).toContainText("· Faulted ·", { timeout: 45_000 });
+    await expect(page.locator(".page-title")).toContainText("· 故障 ·", { timeout: 45_000 });
     const alarmCard = page.locator(".el-card").filter({ has: page.locator(".el-card__header", { hasText: "过程报警" }) });
     await expect(alarmCard).toBeVisible();
     await expect(alarmCard).toContainText(/AckTimeout|未收到 Step_Running/);
@@ -94,7 +94,7 @@ test("NoAck handshake fault raises alarm and operator can acknowledge", async ({
     await expect(alarmCard.locator(".el-table__body")).toContainText("车间操作员");
 
     await page.goto("/alarms");
-    await page.locator(".page-title .el-radio-button").filter({ hasText: "全部" }).click();
+    await page.locator(".filter-bar .el-radio-button").filter({ hasText: "全部" }).click();
     const alarmRow = page.locator(".el-table__body").getByRole("row").filter({ hasText: batchNo });
     await expect(alarmRow).toContainText("车间操作员");
     await expect(alarmRow).toContainText(/AckTimeout/);

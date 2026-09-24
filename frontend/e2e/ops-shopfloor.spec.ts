@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { loginAs } from "./helpers";
+import {
+  loginAs,
+} from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
@@ -7,8 +9,10 @@ test("route roles bounce unauthorized users and keep equipment for operators", a
   await loginAs(page, "工艺工程师");
   await page.goto("/users");
   await expect(page).toHaveURL(/\/dashboard/);
+  // 设备页对工艺工程师是开放的（router 里 roles 含 ProcessEngineer）：
+  // 他要核对点表与相模板，把他弹回总览反而是错的。
   await page.goto("/equipment");
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page.getByRole("heading", { name: "设备与 PLC 驱动" })).toBeVisible();
   await page.goto("/approvals");
   await expect(page).toHaveURL(/\/dashboard/);
 
@@ -27,7 +31,7 @@ test("route roles bounce unauthorized users and keep equipment for operators", a
 
 test("dashboard ECharts and pending-release card filter the batch list", async ({ page }) => {
   await loginAs(page, "质量工程师");
-  await expect(page.getByText("执行态势（ECharts）")).toBeVisible();
+  await expect(page.getByText("执行态势", { exact: true })).toBeVisible();
   await expect(page.locator("[_echarts_instance_]").first()).toBeVisible();
 
   await page.getByText("待质量放行", { exact: true }).click();

@@ -28,8 +28,10 @@ public static class ControlRecipeSnapshotFactory
             Type = step.Type,
             Ordinal = index,
             WatchdogSeconds = step.WatchdogSeconds,
+            PlcProgramId = step.PlcProgramId,
             UnitProcedure = step.UnitProcedure,
             Operation = step.Operation,
+            EquipmentClassCode = step.EquipmentClassCode,
             Parameters = step.Parameters
                 .OrderBy(p => p.SlotIndex)
                 .Select(p => new SnapshotParameter
@@ -42,7 +44,9 @@ public static class ControlRecipeSnapshotFactory
                     Max = p.Max is double max ? Scale(max, p.ScaleWithBatch, scaleFactor) : null,
                     WriteToPlc = p.WriteToPlc,
                     ArchiveAsQuality = p.ArchiveAsQuality,
-                    ScaleWithBatch = p.ScaleWithBatch
+                    ScaleWithBatch = p.ScaleWithBatch,
+                    Semantic = p.Semantic,
+                    MeasuredTag = p.MeasuredTag
                 })
                 .ToList()
         }).ToList();

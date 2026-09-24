@@ -57,4 +57,30 @@ public sealed class QualityDispositionTests
         exec.MarkCompleted(DateTimeOffset.UtcNow, """{"目标温度":150,"PLC:Temperature":999}""");
         Assert.False(QualityDisposition.HasOutOfSpec(snapshot, [exec]));
     }
+
+    [Fact]
+    public void HasOutOfSpec_WhenQualityParamNeverMeasured()
+    {
+        var stepId = Guid.NewGuid();
+        var snapshot = new ControlRecipeSnapshot
+        {
+            Steps =
+            [
+                new SnapshotStep
+                {
+                    StepId = stepId,
+                    Code = "S50",
+                    Name = "qc",
+                    Type = StepType.QualityCheck,
+                    Parameters =
+                    [
+                        new SnapshotParameter { Name = "硬度", EngineeringUnit = "HB", Setpoint = 95, Min = 90, Max = 110, ArchiveAsQuality = true }
+                    ]
+                }
+            ]
+        };
+        var exec = new BatchStepExecution(Guid.NewGuid(), stepId, "S50", "qc", StepType.QualityCheck, 0);
+        exec.MarkCompleted(DateTimeOffset.UtcNow, """{"PLC:Temperature":530}""");
+        Assert.True(QualityDisposition.HasOutOfSpec(snapshot, [exec]));
+    }
 }

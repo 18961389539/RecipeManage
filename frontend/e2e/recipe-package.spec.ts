@@ -2,14 +2,17 @@ import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { loginAs, uniqueStamp } from "./helpers";
+import {
+  loginAs,
+  uniqueStamp,
+} from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("recipe JSON export import clones as draft without covering existing codes", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
 
   const code = `IMP${uniqueStamp()}`;
   await loginAs(page, "工艺工程师");

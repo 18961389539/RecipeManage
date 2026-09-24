@@ -1,12 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { fillPrompt, labeledInput, loginAs, uniqueStamp } from "./helpers";
+import {
+  fillPrompt,
+  labeledInput,
+  loginAs,
+  uniqueStamp,
+} from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("material genealogy split charge binds eBR and lab sample is not a PLC trend tag", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
 
   const stamp = uniqueStamp();
   const parentLot = `INGOT-${stamp}`;

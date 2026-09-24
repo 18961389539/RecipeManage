@@ -17,7 +17,7 @@ public sealed class BatchLane : Entity, IConcurrencyStamped
     public Guid? StepId { get; private set; }
     public string StepCode { get; private set; } = string.Empty;
     public string Phase { get; private set; } = string.Empty;
-    public string Outcome { get; private set; } = "Pending";
+    public StepOutcome Outcome { get; private set; } = StepOutcome.Pending;
     public Guid ConcurrencyStamp { get; private set; } = Guid.NewGuid();
 
     private BatchLane() { }
@@ -35,7 +35,11 @@ public sealed class BatchLane : Entity, IConcurrencyStamped
 
     protected override void OnTouch() => RotateConcurrencyStamp();
 
-    public void Update(string phase, string outcome, Guid? stepId = null, string? stepCode = null)
+    /// <summary>
+    /// <paramref name="phase"/> 只能是 <see cref="RecipesManage.Domain.Handshake.HandshakePhase"/> 的令牌
+    /// 或保持/等待/确认三个叠加态；<paramref name="outcome"/> 是工步结论，与批次列展示串无关。
+    /// </summary>
+    public void Update(string phase, StepOutcome outcome, Guid? stepId = null, string? stepCode = null)
     {
         Phase = phase;
         Outcome = outcome;

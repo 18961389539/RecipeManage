@@ -15,7 +15,23 @@ public enum RecipeStatus
     Obsolete = 4
 }
 
-/// <summary>工步类型，写入 PLC 的 Step_Type 枚举。</summary>
+/// <summary>
+/// 调度只认的四类执行语义。工艺相名称与 PLC 程序号不在本枚举上扩展。
+/// </summary>
+public enum ExecutionKind
+{
+    WritePlc = 0,
+    Wait = 1,
+    QualityCheck = 2,
+    ManualConfirm = 3
+}
+
+/// <summary>
+/// 工步类型：上位机三种执行类，以及写 PLC 时的默认程序号别名。
+/// 写 PLC 时若未指定 <c>PlcProgramId</c>，则把本枚举整型写入点表 Step_Type。
+/// 自定义工艺相（冲洗、气缸等）仍选写 PLC 的一种别名，另填程序号 9–99。
+/// 调度分支请用 <see cref="PlcProgram.Kind"/>，不要再按升温/搅拌分叉。
+/// </summary>
 public enum StepType
 {
     Wait = 0,
@@ -29,11 +45,15 @@ public enum StepType
     ManualConfirm = 8
 }
 
-public enum ApprovalLevel
+/// <summary>
+/// 参数语义。声明后由它决定归档取哪个实测点、哪个参数是工艺时长，
+/// 不再依赖名称里的中文关键词——那是历史数据的回退路径。
+/// </summary>
+public enum ParameterSemantic
 {
-    Author = 0,
-    Supervisor = 1,
-    Quality = 2
+    Unspecified = 0,
+    Duration = 1,
+    Rate = 2
 }
 
 public enum ApprovalDecision

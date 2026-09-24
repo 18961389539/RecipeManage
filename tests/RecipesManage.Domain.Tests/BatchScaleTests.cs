@@ -18,9 +18,9 @@ public sealed class BatchScaleTests
             new RecipeParameter(1, "装炉量", "kg", 100, 50, 200, true, false, scaleWithBatch: true)
         ]);
         draft.ReplaceProcedure([step], []);
-        draft.Submit(DateTimeOffset.UtcNow, engineer, "eng", null);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard, engineer, "eng", null);
+        draft.Decide(Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
 
         var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow, 2, "LOT-A");
@@ -43,9 +43,9 @@ public sealed class BatchScaleTests
         var step = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "temp", "℃", 100, 90, 110, true, true)]);
         draft.ReplaceProcedure([step], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
 
         var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
@@ -62,9 +62,9 @@ public sealed class BatchScaleTests
         var step = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "temp", "℃", 100, null, null, true, false)]);
         draft.ReplaceProcedure([step], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "s", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "q", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
 
         var ex = Assert.Throws<RecipesManage.Domain.Common.DomainException>(() =>

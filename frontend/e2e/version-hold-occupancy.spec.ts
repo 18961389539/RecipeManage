@@ -6,9 +6,11 @@ import {
   fillPrompt,
   handshakeRows,
   labeledInput,
+  addPhaseFromTemplate,
   loginAs,
   passwords,
-  uniqueStamp
+  uniqueStamp,
+  esignReasonAndWait,
 } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -18,21 +20,19 @@ async function approveSubmitted(page: Page, code: string, supervisorNote: string
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：工艺主管", supervisorNote);
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["工艺主管"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：工艺主管", supervisorNote, passwords["工艺主管"]);
 
   await loginAs(page, "质量工程师");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：质量", qaNote);
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["质量工程师"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：质量", qaNote, passwords["质量工程师"]);
 }
 
 test("version bump hold occupancy and resume without blind write", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
   await abortActiveBatches(page.request);
 
   const stamp = uniqueStamp();
@@ -51,14 +51,13 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   await createDlg.getByRole("button", { name: "创建" }).click();
   await page.waitForURL("**/recipes/**");
 
-  await page.getByRole("button", { name: "+ Heat" }).click();
+  await addPhaseFromTemplate(page, "FURNACE", "PH-HEAT");
   await page.locator(".el-table__body tr").filter({ hasText: "升温时长" }).locator(".el-input-number input").first().fill("1");
-  await page.getByRole("button", { name: "+ Wait" }).click();
+  await page.getByRole("button", { name: "+ 等待" }).click();
   await page.locator(".el-table__body tr").filter({ hasText: "等待时长" }).locator(".el-input-number input").first().fill("12");
 
   await page.getByRole("button", { name: "提交审核" }).click();
-  await fillPrompt(page, "保存工艺 · 变更控制", "v1 Heat+Wait");
-  await esignAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", passwords["工艺工程师"]);
+  await esignReasonAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", "v1 Heat+Wait", passwords["工艺工程师"]);
   await esignAndWait(page, "/submit", "POST", "提交审核 · 电子签名", passwords["工艺工程师"]);
   await approveSubmitted(page, code, "v1 路径可执行", "v1 窗口合格");
 
@@ -67,16 +66,14 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.waitForURL("**/recipes/**");
   await page.getByRole("button", { name: "升版" }).click();
-  await fillPrompt(page, "创建新版本", "缩短等待时长并升版");
-  await esignAndWait(page, "/new-version", "POST", "升版 · 电子签名", passwords["工艺工程师"]);
+  await esignReasonAndWait(page, "/new-version", "POST", "升版 · 电子签名", "缩短等待时长并升版", passwords["工艺工程师"]);
   await expect(page.locator(".ver.on")).toContainText("v2");
   await expect(page.getByRole("button", { name: "提交审核" })).toBeVisible();
 
   await page.locator(".step-item").filter({ hasText: "S20" }).click();
   await page.locator(".el-table__body tr").filter({ hasText: "等待时长" }).locator(".el-input-number input").first().fill("8");
   await page.getByRole("button", { name: "提交审核" }).click();
-  await fillPrompt(page, "保存工艺 · 变更控制", "v2 等待 8s");
-  await esignAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", passwords["工艺工程师"]);
+  await esignReasonAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", "v2 等待 8s", passwords["工艺工程师"]);
   await esignAndWait(page, "/submit", "POST", "提交审核 · 电子签名", passwords["工艺工程师"]);
 
   await loginAs(page, "工艺主管");
@@ -87,15 +84,13 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   await expect(page.locator(".diff-block")).toContainText("12");
   await expect(page.locator(".diff-block")).toContainText("8");
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：工艺主管", "升版差异已审阅");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["工艺主管"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：工艺主管", "升版差异已审阅", passwords["工艺主管"]);
 
   await loginAs(page, "质量工程师");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：质量", "v2 放行");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["质量工程师"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：质量", "v2 放行", passwords["质量工程师"]);
 
   await loginAs(page, "工艺工程师");
   await page.goto("/recipes");
@@ -116,12 +111,11 @@ test("version bump hold occupancy and resume without blind write", async ({ page
 
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("HostWait", { timeout: 45_000 });
+  await expect(page.locator(".page-title")).toContainText("等待主控", { timeout: 45_000 });
   const firstUrl = page.url();
 
   await page.getByRole("button", { name: "保持" }).click();
-  await fillPrompt(page, "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "E2E 保持验证剩余时长");
-  await esignAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", passwords["车间操作员"]);
+  await esignReasonAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "E2E 保持验证剩余时长", passwords["车间操作员"]);
   await expect(page.locator(".page-title")).toContainText("· Held ·", { timeout: 30_000 });
 
   await page.goto("/dashboard");
@@ -146,7 +140,7 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   await page.goto(firstUrl);
   await page.getByRole("button", { name: "恢复执行" }).click();
   await esignAndWait(page, "/resume", "POST", "恢复执行", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 45_000 });
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 45_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write")).toBeTruthy();

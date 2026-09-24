@@ -64,11 +64,8 @@ public sealed partial class BatchSchedulerHostedService
         public async ValueTask DisposeAsync() => await Scope.DisposeAsync();
     }
 
-    private static bool IsTerminal(BatchStatus status) =>
-        status is BatchStatus.Completed
-             or BatchStatus.Aborted
-             or BatchStatus.Released
-             or BatchStatus.DispositionRejected;
+    // 终态名单唯一来源在域层，这里只是给按 status 取值的调用点留个简写。
+    private static bool IsTerminal(BatchStatus status) => ProductionBatch.IsTerminalState(status);
 
     private async Task RunUnitWavesAsync(Guid batchId, CancellationToken ct)
     {
@@ -166,6 +163,7 @@ public sealed partial class BatchSchedulerHostedService
             return;
 
         batch.Complete(DateTimeOffset.UtcNow);
+        await RemoveIntentsAsync(db, batchId, ct);
         await db.SaveChangesAsync(ct);
         await ReleaseEquipmentAsync(batchId, ct);
         await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "completed", new { batch.BatchNo }), ct);
@@ -309,6 +307,129 @@ public sealed partial class BatchSchedulerHostedService
 
     private sealed record PhaseOutcome(LaneResult Result, HandshakeStateMachine? Machine, HandshakeWorkContext? Work);
 
+    /// <summary>保持时工步自己标成什么：运行中的相留痕为 Held，还没动 PLC 的回退成 Pending，已经完成的不动。</summary>
+    private enum HoldMark { Held, Pending, Keep }
+
+    /// <summary>
+    /// 一次"保持"的落地参数。引擎里 PLC 握手环、上位机等待环、人工确认环、以及握手环收尾处的
+    /// 四处保持分支，除了这些参数以外做的是同一件事（见 <see cref="HoldPhaseAsync"/>）。
+    /// </summary>
+    private sealed record HoldGate(
+        StepOutcome Outcome,
+        string Detail,
+        bool CommandPlcHold = false,
+        HoldMark Mark = HoldMark.Held,
+        TimeSpan? HoldAckTimeout = null,
+        string? Phase = null,
+        double? RemainingSeconds = null,
+        bool HostHold = false,
+        HandshakeStateMachine? Machine = null,
+        HandshakeWorkContext? Work = null);
+
+    /// <summary>一次"跳步"的落地参数：同上，三处分支只差履历里那个相位与正文。</summary>
+    private sealed record SkipGate(
+        string Reason,
+        string? Phase = null,
+        HandshakeStateMachine? Machine = null,
+        HandshakeWorkContext? Work = null);
+
+    /// <summary>
+    /// 保持的六段式：停 PLC → 标工步 → 车道相位 → 批次保持并消费意图 → 落履历 → 落库 → 通知同批与界面。
+    ///
+    /// 顺序里唯一有语义的是"批次保持"必须在落库之前：FlushAsync 会把整批状态一起写，
+    /// 顺序反了就会出现"车道已 Held 但批次还是 Running"的可见中间态。
+    /// </summary>
+    private async Task<PhaseOutcome> HoldPhaseAsync(
+        LaneScope lane,
+        SnapshotStep step,
+        string reason,
+        WaveBarrier barrier,
+        HoldGate gate,
+        CancellationToken ct)
+    {
+        var batch = lane.Batch;
+        if (gate.CommandPlcHold)
+            await CommandPlcHoldAsync(lane.Plc, gate.HoldAckTimeout ?? TimeSpan.FromSeconds(5), ct);
+        else
+            await IdlePlcAsync(lane.Plc, ct);
+
+        var exec = ExecOf(lane, step);
+        switch (gate.Mark)
+        {
+            case HoldMark.Held:
+                exec.MarkHeld();
+                break;
+            case HoldMark.Pending:
+                exec.RevertToPending();
+                break;
+        }
+
+        await SetLanePhaseAsync(lane, "Held", gate.Outcome, step.StepId, step.Code, ct);
+        batch.Hold(reason);
+        ConsumeHold(batch.Id);
+        RecordGate(lane, step, "hold", gate.Detail, gate.Phase, gate.RemainingSeconds, gate.Machine, gate.Work);
+        await FlushAsync(lane, ct);
+        barrier.Signal(LaneResult.Held);
+        await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "held", new
+        {
+            reason,
+            equipmentCode = lane.Equipment.Code,
+            hostHold = gate.HostHold
+        }), ct);
+        return new PhaseOutcome(LaneResult.Held, gate.Machine, gate.Work);
+    }
+
+    /// <summary>
+    /// 跳步的六段式：停 PLC → 标 Skipped → 车道放行 → 落履历 → 落库 → 广播步进。
+    /// 落库失败（批次被并发改成终态）时返回 Terminated，与保持不同：不通知同批，也不放行。
+    /// </summary>
+    private async Task<PhaseOutcome> SkipPhaseAsync(
+        LaneScope lane,
+        SnapshotStep step,
+        int index,
+        SkipGate gate,
+        CancellationToken ct)
+    {
+        await IdlePlcAsync(lane.Plc, ct);
+        ExecOf(lane, step).MarkSkipped(gate.Reason);
+        await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Skipped, step.StepId, step.Code, ct);
+        RecordGate(lane, step, "skip", gate.Reason, gate.Phase, null, gate.Machine, gate.Work);
+        if (!await FlushAsync(lane, ct))
+            return new PhaseOutcome(LaneResult.Terminated, gate.Machine, gate.Work);
+
+        await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "step", new
+        {
+            stepId = step.StepId,
+            stepIndex = index,
+            outcome = "Skipped"
+        }), ct);
+        return new PhaseOutcome(LaneResult.Completed, gate.Machine, gate.Work);
+    }
+
+    /// <summary>
+    /// 握手履历一行：有状态机时相位与剩余秒数取自它，上位机三类没有状态机，只能由调用方给相位。
+    /// </summary>
+    private void RecordGate(
+        LaneScope lane,
+        SnapshotStep step,
+        string kind,
+        string detail,
+        string? phase,
+        double? remainingSeconds,
+        HandshakeStateMachine? machine,
+        HandshakeWorkContext? work)
+    {
+        if (machine is not null && work is not null)
+        {
+            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, kind, detail);
+            return;
+        }
+
+        lane.Db.HandshakeEvents.Add(new HandshakeEvent(
+            lane.Batch.Id, step.StepId, step.Code, phase ?? "Held", kind,
+            $"[{lane.Equipment.Code}] {detail}", remainingSeconds));
+    }
+
     private async Task<PhaseOutcome> RunPhaseAsync(
         LaneScope lane,
         SnapshotStep step,
@@ -320,12 +441,12 @@ public sealed partial class BatchSchedulerHostedService
         var snapshot = lane.Snapshot;
         var batch = lane.Batch;
         var exec = batch.StepExecutions.Single(s => s.StepId == step.StepId);
-        if (exec.Outcome is "Completed" or "Skipped")
+        if (exec.Outcome is StepOutcome.Completed or StepOutcome.Skipped)
             return new PhaseOutcome(LaneResult.Completed, null, null);
 
         var index = snapshot.Steps.ToList().FindIndex(s => s.StepId == step.StepId);
-        var resumeCrashWait = exec.Outcome == "Running";
-        var resumeHeld = exec.Outcome == "Held";
+        var resumeCrashWait = exec.Outcome == StepOutcome.Running;
+        var resumeHeld = exec.Outcome == StepOutcome.Held;
         var phaseStartedAt = DateTimeOffset.UtcNow;
         void ApplyPhaseStart()
         {
@@ -340,10 +461,10 @@ public sealed partial class BatchSchedulerHostedService
         if (!await FlushAsync(lane, ct, ApplyPhaseStart))
             return new PhaseOutcome(LaneResult.Terminated, null, null);
 
-        if (step.Type == StepType.ManualConfirm)
+        if (PlcProgram.Kind(step.Type) == ExecutionKind.ManualConfirm)
             return await AwaitOperatorConfirmAsync(lane, step, index, barrier, ct);
 
-        if (step.Type is StepType.QualityCheck or StepType.Wait)
+        if (PlcProgram.Kind(step.Type) is ExecutionKind.QualityCheck or ExecutionKind.Wait)
             return await RunHostSideStepAsync(lane, step, index, resumeHeld, resumeCrashWait, barrier, ct);
 
         await PublishIsa88Async(lane, step, index);
@@ -399,7 +520,7 @@ public sealed partial class BatchSchedulerHostedService
                 if (peerStop == LaneResult.Held && machine.Phase == HandshakePhase.StepRunning)
                 {
                     exec.MarkHeld();
-                    await SetLanePhaseAsync(lane, "Held", "Held", step.StepId, step.Code, ct);
+                    await SetLanePhaseAsync(lane, "Held", StepOutcome.Held, step.StepId, step.Code, ct);
                     await FlushAsync(lane, ct);
                 }
 
@@ -409,45 +530,22 @@ public sealed partial class BatchSchedulerHostedService
             if (machine.Phase == HandshakePhase.WaitingPlcReady &&
                 TryConsumeSkip(batch.Id, step.StepId, out var skipReason))
             {
-                await IdlePlcAsync(plc, ct);
-                exec.MarkSkipped(skipReason);
-                RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "skip", skipReason);
-                await SetLanePhaseAsync(lane, "ReadyToAdvance", "Skipped", step.StepId, step.Code, ct);
-                if (!await FlushAsync(lane, ct))
-                    return new PhaseOutcome(LaneResult.Terminated, machine, work);
-                await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "step", new
-                {
-                    stepId = step.StepId, stepIndex = index, outcome = "Skipped"
-                }), ct);
-                return new PhaseOutcome(LaneResult.Completed, machine, work);
+                return await SkipPhaseAsync(lane, step, index,
+                    new SkipGate(skipReason, Machine: machine, Work: work), ct);
             }
 
             if ((machine.Phase is HandshakePhase.WaitingPlcReady or HandshakePhase.StepRunning) &&
                 TryGetHold(batch.Id, out var holdReason))
             {
                 var runningHold = machine.Phase == HandshakePhase.StepRunning;
-                if (runningHold)
-                    await CommandPlcHoldAsync(plc, watchdog.HoldAckTimeout, ct);
-                else
-                    await IdlePlcAsync(plc, ct);
-                if (runningHold)
-                    exec.MarkHeld();
-                else
-                    exec.RevertToPending();
-                await SetLanePhaseAsync(lane, "Held", runningHold ? "Held" : "Pending", step.StepId, step.Code, ct);
-                batch.Hold(holdReason);
-                ConsumeHold(batch.Id);
-                RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "hold",
-                    runningHold ? "Host_Hold=1 PLC_Held" : holdReason);
-                await FlushAsync(lane, ct);
-                barrier.Signal(LaneResult.Held);
-                await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "held", new
-                {
-                    reason = holdReason,
-                    equipmentCode = lane.Equipment.Code,
-                    hostHold = runningHold
-                }), ct);
-                return new PhaseOutcome(LaneResult.Held, machine, work);
+                return await HoldPhaseAsync(lane, step, holdReason, barrier, new HoldGate(
+                    runningHold ? StepOutcome.Held : StepOutcome.Pending,
+                    runningHold ? "Host_Hold=1 PLC_Held" : holdReason,
+                    CommandPlcHold: runningHold,
+                    Mark: runningHold ? HoldMark.Held : HoldMark.Pending,
+                    HoldAckTimeout: watchdog.HoldAckTimeout,
+                    Machine: machine,
+                    Work: work), ct);
             }
 
             var now = DateTimeOffset.UtcNow;
@@ -486,7 +584,7 @@ public sealed partial class BatchSchedulerHostedService
             foreach (var action in actions)
                 await ApplyAsync(action, lane, machine, exec, step, work, now, ct);
 
-            if (exec.Outcome == "Completed")
+            if (exec.Outcome == StepOutcome.Completed)
             {
                 await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "step", new
                 {
@@ -508,7 +606,7 @@ public sealed partial class BatchSchedulerHostedService
                     batch.Id, batch.BatchNo, step.StepId, step.Code,
                     machine.Fault?.Code.ToString() ?? "FAULT", "Fault",
                     machine.Fault?.Message ?? "握手故障", now));
-                await SetLanePhaseAsync(lane, "Faulted", "Faulted", step.StepId, step.Code, ct);
+                await SetLanePhaseAsync(lane, "Faulted", StepOutcome.Faulted, step.StepId, step.Code, ct);
                 await FlushAsync(lane, ct);
                 await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "fault", machine.Fault!), ct);
                 await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "alarm", new
@@ -524,17 +622,10 @@ public sealed partial class BatchSchedulerHostedService
             await Task.Delay(100, ct);
         }
 
-        if (exec.Outcome != "Skipped" && TryGetHold(batch.Id, out var holdAfter))
+        if (exec.Outcome != StepOutcome.Skipped && TryGetHold(batch.Id, out var holdAfter))
         {
-            await IdlePlcAsync(lane.Plc, ct);
-            await SetLanePhaseAsync(lane, "Held", exec.Outcome, step.StepId, step.Code, ct);
-            batch.Hold(holdAfter);
-            ConsumeHold(batch.Id);
-            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "hold", holdAfter);
-            await FlushAsync(lane, ct);
-            barrier.Signal(LaneResult.Held);
-            await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "held", new { reason = holdAfter, equipmentCode = lane.Equipment.Code }), ct);
-            return new PhaseOutcome(LaneResult.Held, machine, work);
+            return await HoldPhaseAsync(lane, step, holdAfter, barrier, new HoldGate(
+                exec.Outcome, holdAfter, Mark: HoldMark.Keep, Machine: machine, Work: work), ct);
         }
 
         var oosHold = await HoldIfQualityOosAsync(lane, step, exec, barrier, machine, work, ct);
@@ -562,7 +653,7 @@ public sealed partial class BatchSchedulerHostedService
             equipmentCode = lane.Equipment.Code
         }), ct);
 
-        if (step.Type == StepType.Wait)
+        if (PlcProgram.Kind(step.Type) == ExecutionKind.Wait)
             return await AwaitHostWaitAsync(lane, step, index, resumeHeld, resumeCrashWait, barrier, ct);
 
         IReadOnlyDictionary<string, double> measured = new Dictionary<string, double>();
@@ -579,7 +670,7 @@ public sealed partial class BatchSchedulerHostedService
         var quality = JsonSerializer.Serialize(bound, BatchService.JsonOptions);
         var exec = lane.Batch.StepExecutions.Single(e => e.StepId == step.StepId);
         exec.MarkCompleted(DateTimeOffset.UtcNow, quality);
-        await SetLanePhaseAsync(lane, "ReadyToAdvance", "Completed", step.StepId, step.Code, ct);
+        await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "quality",
             $"[{lane.Equipment.Code}] 质检工步归档，禁止写 PLC", null));
@@ -641,7 +732,7 @@ public sealed partial class BatchSchedulerHostedService
             : resumeCrashWait
                 ? $"[{lane.Equipment.Code}] 引擎恢复等待剩余 {duration.TotalSeconds:0.##}s，禁止写 PLC"
                 : $"[{lane.Equipment.Code}] 等待 {duration.TotalSeconds:0.##}s，禁止写 PLC";
-        await SetLanePhaseAsync(lane, "HostWait", "Running", step.StepId, step.Code, ct);
+        await SetLanePhaseAsync(lane, "HostWait", StepOutcome.Running, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "HostWait", "wait", detail, duration.TotalSeconds));
         if (!await FlushAsync(lane, ct))
@@ -656,7 +747,7 @@ public sealed partial class BatchSchedulerHostedService
                 {
                     var remainingPeer = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
                     ExecOf(lane, step).MarkHeld();
-                    await SetLanePhaseAsync(lane, "Held", "Held", step.StepId, step.Code, ct);
+                    await SetLanePhaseAsync(lane, "Held", StepOutcome.Held, step.StepId, step.Code, ct);
                     lane.Db.HandshakeEvents.Add(new HandshakeEvent(
                         lane.Batch.Id, step.StepId, step.Code, "HostWait", "hold",
                         $"[{lane.Equipment.Code}] 邻道保持，保存等待剩余", remainingPeer));
@@ -667,36 +758,14 @@ public sealed partial class BatchSchedulerHostedService
             }
 
             if (TryConsumeSkip(lane.Batch.Id, step.StepId, out var skipReason))
-            {
-                ExecOf(lane, step).MarkSkipped(skipReason);
-                await SetLanePhaseAsync(lane, "ReadyToAdvance", "Skipped", step.StepId, step.Code, ct);
-                lane.Db.HandshakeEvents.Add(new HandshakeEvent(
-                    lane.Batch.Id, step.StepId, step.Code, "HostWait", "skip",
-                    $"[{lane.Equipment.Code}] {skipReason}", null));
-                if (!await FlushAsync(lane, ct))
-                    return new PhaseOutcome(LaneResult.Terminated, null, null);
-                await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "step", new
-                {
-                    stepId = step.StepId, stepIndex = index, outcome = "Skipped"
-                }), ct);
-                return new PhaseOutcome(LaneResult.Completed, null, null);
-            }
+                return await SkipPhaseAsync(lane, step, index, new SkipGate(skipReason, "HostWait"), ct);
 
             if (TryGetHold(lane.Batch.Id, out var holdReason))
             {
-                await IdlePlcAsync(lane.Plc, ct);
                 var remainingHold = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
-                ExecOf(lane, step).MarkHeld();
-                await SetLanePhaseAsync(lane, "Held", "Held", step.StepId, step.Code, ct);
-                lane.Batch.Hold(holdReason);
-                ConsumeHold(lane.Batch.Id);
-                lane.Db.HandshakeEvents.Add(new HandshakeEvent(
-                    lane.Batch.Id, step.StepId, step.Code, "HostWait", "hold",
-                    $"[{lane.Equipment.Code}] {holdReason}，剩余 {remainingHold:0.##}s", remainingHold));
-                await FlushAsync(lane, ct);
-                barrier.Signal(LaneResult.Held);
-                await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "held", new { reason = holdReason, equipmentCode = lane.Equipment.Code }), ct);
-                return new PhaseOutcome(LaneResult.Held, null, null);
+                return await HoldPhaseAsync(lane, step, holdReason, barrier, new HoldGate(
+                    StepOutcome.Held, $"{holdReason}，剩余 {remainingHold:0.##}s",
+                    Phase: "HostWait", RemainingSeconds: remainingHold), ct);
             }
 
             var remaining = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
@@ -720,7 +789,7 @@ public sealed partial class BatchSchedulerHostedService
         }
 
         ExecOf(lane, step).MarkCompleted(DateTimeOffset.UtcNow, "{}");
-        await SetLanePhaseAsync(lane, "ReadyToAdvance", "Completed", step.StepId, step.Code, ct);
+        await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "wait",
             $"[{lane.Equipment.Code}] 等待完成，未写 PLC", null));
@@ -781,7 +850,7 @@ public sealed partial class BatchSchedulerHostedService
     {
         await IdlePlcAsync(lane.Plc, ct);
         ExecOf(lane, step).MarkAwaitingConfirm();
-        await SetLanePhaseAsync(lane, "AwaitingConfirm", "AwaitingConfirm", step.StepId, step.Code, ct);
+        await SetLanePhaseAsync(lane, "AwaitingConfirm", StepOutcome.AwaitingConfirm, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "AwaitingConfirm", "confirm",
             $"[{lane.Equipment.Code}] 人工确认工步，禁止写 PLC", null));
@@ -819,36 +888,11 @@ public sealed partial class BatchSchedulerHostedService
             }
 
             if (TryConsumeSkip(lane.Batch.Id, step.StepId, out var skipReason))
-            {
-                ExecOf(lane, step).MarkSkipped(skipReason);
-                await SetLanePhaseAsync(lane, "ReadyToAdvance", "Skipped", step.StepId, step.Code, ct);
-                lane.Db.HandshakeEvents.Add(new HandshakeEvent(
-                    lane.Batch.Id, step.StepId, step.Code, "AwaitingConfirm", "skip",
-                    $"[{lane.Equipment.Code}] {skipReason}", null));
-                if (!await FlushAsync(lane, ct))
-                    return new PhaseOutcome(LaneResult.Terminated, null, null);
-                await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "step", new
-                {
-                    stepId = step.StepId, stepIndex = index, outcome = "Skipped"
-                }), ct);
-                return new PhaseOutcome(LaneResult.Completed, null, null);
-            }
+                return await SkipPhaseAsync(lane, step, index, new SkipGate(skipReason, "AwaitingConfirm"), ct);
 
             if (TryGetHold(lane.Batch.Id, out var holdReason))
-            {
-                await IdlePlcAsync(lane.Plc, ct);
-                ExecOf(lane, step).MarkHeld();
-                await SetLanePhaseAsync(lane, "Held", "Held", step.StepId, step.Code, ct);
-                lane.Batch.Hold(holdReason);
-                ConsumeHold(lane.Batch.Id);
-                lane.Db.HandshakeEvents.Add(new HandshakeEvent(
-                    lane.Batch.Id, step.StepId, step.Code, "AwaitingConfirm", "hold",
-                    $"[{lane.Equipment.Code}] {holdReason}", null));
-                await FlushAsync(lane, ct);
-                barrier.Signal(LaneResult.Held);
-                await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "held", new { reason = holdReason, equipmentCode = lane.Equipment.Code }), ct);
-                return new PhaseOutcome(LaneResult.Held, null, null);
-            }
+                return await HoldPhaseAsync(lane, step, holdReason, barrier,
+                    new HoldGate(StepOutcome.Held, holdReason, Phase: "AwaitingConfirm"), ct);
 
             if (TryConsumeConfirm(lane.Batch.Id, step.StepId, out var comment))
             {
@@ -858,7 +902,7 @@ public sealed partial class BatchSchedulerHostedService
                     ["意见"] = string.IsNullOrWhiteSpace(comment) ? "操作员确认" : comment
                 }, BatchService.JsonOptions);
                 ExecOf(lane, step).MarkCompleted(DateTimeOffset.UtcNow, quality);
-                await SetLanePhaseAsync(lane, "ReadyToAdvance", "Completed", step.StepId, step.Code, ct);
+                await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
                 lane.Db.HandshakeEvents.Add(new HandshakeEvent(
                     lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "confirm",
                     $"[{lane.Equipment.Code}] 人工确认完成，未写 PLC", null));
@@ -899,7 +943,7 @@ public sealed partial class BatchSchedulerHostedService
     private async Task SetLanePhaseAsync(
         LaneScope lane,
         string phase,
-        string outcome,
+        StepOutcome outcome,
         Guid? stepId,
         string? stepCode,
         CancellationToken ct)
@@ -923,21 +967,14 @@ public sealed partial class BatchSchedulerHostedService
         lane.Batch.UpdateHandshake(await MergedPhaseAsync(lane, ct));
     }
 
-    /// <summary>把各车道的相位汇总成批次级展示串（单车道即其相位，多车道按设备码排序拼接）。</summary>
-    private async Task<string> MergedPhaseAsync(LaneScope lane, CancellationToken ct)
+    /// <summary>批次级展示串由 <see cref="BatchLanes.Format"/> 从车道行汇总——格式的唯一定义在域层。</summary>
+    private static async Task<string> MergedPhaseAsync(LaneScope lane, CancellationToken ct)
     {
         var rows = await lane.Db.Lanes.AsNoTracking()
             .Where(l => l.BatchId == lane.Batch.Id)
             .ToListAsync(ct);
 
-        return rows.Count switch
-        {
-            0 => lane.Batch.HandshakePhase,
-            1 => rows[0].Phase,
-            _ => string.Join(BatchLanes.Separator, rows
-                .OrderBy(r => r.EquipmentCode, StringComparer.Ordinal)
-                .Select(r => $"{r.EquipmentCode}:{r.Phase}"))
-        };
+        return BatchLanes.Format(rows, lane.Batch.HandshakePhase);
     }
 
     /// <summary>
@@ -1017,7 +1054,34 @@ public sealed partial class BatchSchedulerHostedService
     private bool TryGetHold(Guid batchId, out string reason) =>
         _holdReasons.TryGetValue(batchId, out reason!);
 
-    private void ConsumeHold(Guid batchId) => _holdReasons.TryRemove(batchId, out _);
+    private void ConsumeHold(Guid batchId)
+    {
+        _holdReasons.TryRemove(batchId, out _);
+        DeleteIntent(batchId, SchedulerIntentKinds.Hold);
+    }
+
+    private void DeleteIntent(Guid batchId, string kind)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _scopes.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var rows = await db.SchedulerIntents
+                    .Where(i => i.BatchId == batchId && i.Kind == kind)
+                    .ToListAsync();
+                if (rows.Count == 0)
+                    return;
+                db.SchedulerIntents.RemoveRange(rows);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "删除调度意图 {Kind} 失败 {BatchId}", kind, batchId);
+            }
+        });
+    }
 
     private static async Task CommandPlcHoldAsync(IPlcHandshakeClient plc, TimeSpan timeout, CancellationToken ct)
     {

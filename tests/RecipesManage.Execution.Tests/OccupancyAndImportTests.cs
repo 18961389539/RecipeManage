@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using RecipesManage.Application.Contracts;
@@ -11,6 +12,8 @@ using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Recipes;
 using RecipesManage.Infrastructure.Persistence;
 using Xunit;
+
+using static RecipesManage.Execution.Tests.ServiceHarness;
 
 namespace RecipesManage.Execution.Tests;
 
@@ -33,19 +36,19 @@ public sealed class OccupancyAndImportTests
         var s1 = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true)]);
         draft.ReplaceProcedure([s1], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
         var events = new ConcurrentBag<ExecutionEvent>();
-        var user = new OperatorUser(operatorUser.Id);
+        var user = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
         var batches = new BatchService(
             db,
             user,
-            new NoopScheduler(),
+            new RecordingScheduler(),
             hasher,
             new NoopPdf(),
             new CapturingPublisher(events),
@@ -83,18 +86,18 @@ public sealed class OccupancyAndImportTests
         var s1 = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true)]);
         draft.ReplaceProcedure([s1], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var user = new OperatorUser(operatorUser.Id);
+        var user = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
         var batches = new BatchService(
             db,
             user,
-            new NoopScheduler(),
+            new RecordingScheduler(),
             hasher,
             new NoopPdf(),
             new CapturingPublisher(new ConcurrentBag<ExecutionEvent>()),
@@ -112,6 +115,80 @@ public sealed class OccupancyAndImportTests
     }
 
     [Fact]
+    public async Task ReconcileAsync_TransfersLeaseFromFaultedToHeld()
+    {
+        await using var db = OpenDb();
+        var hasher = new BcryptPasswordHasher();
+        var operatorUser = new AppUser("operator", "车间操作员", hasher.Hash("Operator@123"), UserRole.Operator);
+        db.Users.Add(operatorUser);
+        var equipment = new EquipmentLine(
+            "HT-XFER", "xfer furnace", PlcProtocol.Simulator, "127.0.0.1", 102,
+            "S7_1200", 0, 1, "{}", "it");
+        db.Equipment.Add(equipment);
+
+        var t0 = DateTimeOffset.UtcNow.AddHours(-3);
+        var faulted = MakeLive(db, "BFAULT", equipment.Id, operatorUser.Id, t0);
+        faulted.Fault("PLC", "超时");
+        var held = MakeLive(db, "BHELD", equipment.Id, operatorUser.Id, t0.AddHours(1));
+        held.Hold("现场确认");
+        db.EquipmentLeases.Add(new EquipmentLease(equipment.Id, equipment.Code, faulted.Id, faulted.BatchNo, t0));
+        await db.SaveChangesAsync();
+
+        await new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance)
+            .ReconcileAsync(CancellationToken.None);
+
+        var lease = Assert.Single(db.EquipmentLeases.AsNoTracking().ToList());
+        Assert.Equal(held.Id, lease.BatchId);
+        Assert.Equal("BHELD", lease.BatchNo);
+
+        var occ = OccupancyRealtime.Snapshot(
+            [equipment],
+            db.Batches.AsNoTracking().ToList(),
+            db.EquipmentLeases.AsNoTracking().ToList());
+        var row = Assert.Single(occ, r => r.Code == "HT-XFER");
+        Assert.Equal("Occupied", row.Occupancy);
+        Assert.Equal("BHELD", row.BatchNo);
+        Assert.Equal(nameof(BatchStatus.Held), row.BatchStatus);
+    }
+
+    private static ProductionBatch MakeLive(
+        AppDbContext db, string batchNo, Guid equipmentId, Guid userId, DateTimeOffset started)
+    {
+        var stepId = Guid.NewGuid();
+        var snapshot = new ControlRecipeSnapshot
+        {
+            MasterRecipeId = Guid.NewGuid(),
+            RecipeVersionId = Guid.NewGuid(),
+            VersionNumber = 1,
+            RecipeCode = "T",
+            RecipeName = "t",
+            ProductCode = "P",
+            ProductName = "p",
+            FrozenAt = started,
+            Steps =
+            [
+                new SnapshotStep
+                {
+                    StepId = stepId,
+                    Code = "S10",
+                    Name = "heat",
+                    Type = StepType.Heat,
+                    Ordinal = 0,
+                    WatchdogSeconds = 30,
+                    Parameters = []
+                }
+            ]
+        };
+        var json = JsonSerializer.Serialize(snapshot, BatchService.JsonOptions);
+        var batch = ProductionBatch.Create(batchNo, equipmentId, snapshot, json, userId);
+        batch.StepExecutions.Add(new BatchStepExecution(batch.Id, stepId, "S10", "heat", StepType.Heat, 0));
+        batch.Queue();
+        batch.MarkRunning(started);
+        db.Batches.Add(batch);
+        return batch;
+    }
+
+    [Fact]
     public async Task ImportAsync_CreatesDraftAndSkipsExistingCode()
     {
         await using var db = OpenDb();
@@ -126,7 +203,7 @@ public sealed class OccupancyAndImportTests
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var recipes = new RecipeService(db, new EngineerUser(user.Id), hasher);
+        var recipes = new RecipeService(db, new RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
         var exported = await recipes.ExportAsync(CancellationToken.None);
         var cloneCode = "IMP-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         var package = exported with
@@ -146,56 +223,5 @@ public sealed class OccupancyAndImportTests
         var second = await recipes.ImportAsync(package, CancellationToken.None);
         Assert.Equal(0, second.Created);
         Assert.Equal(1, second.Skipped);
-    }
-
-    private static AppDbContext OpenDb()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(Path.GetTempPath(), $"brmes-occ-{Guid.NewGuid():N}.db")}")
-            .Options;
-        var db = new AppDbContext(options);
-        db.Database.EnsureCreated();
-        return db;
-    }
-
-    private sealed class NoopScheduler : IBatchScheduler
-    {
-        public ValueTask EnqueueStartAsync(Guid batchId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueAbortAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueHoldAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueSkipAsync(Guid batchId, string reason, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueConfirmAsync(Guid batchId, string comment, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-    }
-
-    private sealed class NoopPdf : IBatchRecordPdf
-    {
-        public byte[] Render(BatchRecordDto record) => [];
-    }
-
-    private sealed class CapturingPublisher(ConcurrentBag<ExecutionEvent> sink) : IExecutionPublisher
-    {
-        public Task PublishAsync(ExecutionEvent evt, CancellationToken cancellationToken = default)
-        {
-            sink.Add(evt);
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class OperatorUser(Guid id) : ICurrentUser
-    {
-        public Guid? UserId { get; } = id;
-        public string UserName => "operator";
-        public string DisplayName => "车间操作员";
-        public UserRole? Role => UserRole.Operator;
-        public bool IsAuthenticated => true;
-    }
-
-    private sealed class EngineerUser(Guid id) : ICurrentUser
-    {
-        public Guid? UserId { get; } = id;
-        public string UserName => "engineer";
-        public string DisplayName => "工艺工程师";
-        public UserRole? Role => UserRole.ProcessEngineer;
-        public bool IsAuthenticated => true;
     }
 }

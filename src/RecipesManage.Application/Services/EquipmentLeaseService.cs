@@ -86,8 +86,9 @@ public sealed class EquipmentLeaseService
     }
 
     /// <summary>
-    /// 启动时对账：为升级前就在跑的批次补写租约，清理已进入终态批次的残留租约。
-    /// 顺序按批次时间，先到先得，后到者放弃（保留现状，不强行中止）。
+    /// 启动时对账：为仍占用的批次补写租约，清理终态残留。
+    /// 同一设备多批时把租约转给优先级更高的占用者（运行 / 排队 / 保持 先于故障），
+    /// 避免历史故障批把正在保持的批次从总览占用表上挤掉。
     /// </summary>
     public async Task ReconcileAsync(CancellationToken ct = default)
     {
@@ -98,24 +99,52 @@ public sealed class EquipmentLeaseService
                         || b.Status == BatchStatus.Faulted)
             .ToListAsync(ct);
 
-        foreach (var batch in live.OrderBy(b => b.StartedAt ?? b.CreatedAt))
+        var claimants = new Dictionary<Guid, List<ProductionBatch>>();
+        foreach (var batch in live)
         {
-            var ids = BatchService.BoundEquipmentIds(batch);
-            var codes = await _db.Equipment
-                .Where(e => ids.Contains(e.Id))
-                .ToDictionaryAsync(e => e.Id, e => e.Code, ct);
-            try
+            foreach (var id in BatchService.BoundEquipmentIds(batch))
             {
-                await AcquireAsync(batch, ids, codes, ct);
-            }
-            catch (DomainException)
-            {
-                _log.LogWarning("批次 {BatchNo} 启动时未能补齐设备租约，设备可能已被其它批次占用", batch.BatchNo);
+                if (!claimants.TryGetValue(id, out var list))
+                    claimants[id] = list = [];
+                list.Add(batch);
             }
         }
 
+        var codes = await _db.Equipment.AsNoTracking()
+            .ToDictionaryAsync(e => e.Id, e => e.Code, ct);
+        var leases = await _db.EquipmentLeases.ToListAsync(ct);
+        var byEquipment = leases.ToDictionary(l => l.EquipmentId);
+        var dirty = false;
+
+        foreach (var (equipmentId, contestants) in claimants)
+        {
+            var winner = EquipmentOccupancy.Preferred(contestants);
+            var code = codes.GetValueOrDefault(equipmentId, equipmentId.ToString("N")[..8]);
+            if (byEquipment.TryGetValue(equipmentId, out var lease))
+            {
+                if (lease.BatchId == winner.Id)
+                    continue;
+                _log.LogWarning(
+                    "设备 {EquipmentCode} 租约从 {FromBatch} 转给 {ToBatch}（{Status}）",
+                    code, lease.BatchNo, winner.BatchNo, winner.Status);
+                lease.TransferTo(winner.Id, winner.BatchNo, DateTimeOffset.UtcNow);
+                dirty = true;
+                continue;
+            }
+
+            _db.EquipmentLeases.Add(new EquipmentLease(
+                equipmentId, code, winner.Id, winner.BatchNo, DateTimeOffset.UtcNow));
+            dirty = true;
+        }
+
+        if (dirty)
+            await _db.SaveChangesAsync(ct);
+
         var liveIds = live.Select(b => b.Id).ToHashSet();
-        var stale = await _db.EquipmentLeases.Where(l => !liveIds.Contains(l.BatchId)).ToListAsync(ct);
+        var claimed = claimants.Keys.ToHashSet();
+        var stale = await _db.EquipmentLeases
+            .Where(l => !liveIds.Contains(l.BatchId) || !claimed.Contains(l.EquipmentId))
+            .ToListAsync(ct);
         if (stale.Count > 0)
         {
             _db.EquipmentLeases.RemoveRange(stale);

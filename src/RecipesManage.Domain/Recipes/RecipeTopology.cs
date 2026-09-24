@@ -18,8 +18,38 @@ public static class RecipeTopology
                 throw new DomainException("EDGE_SELF", "工步不能自环。");
         }
 
+        // 工步编码是快照与执行记录之间的连接键：批次详情用 ToDictionary(Code) 找工步、
+        // 快照漂移比对也按 Code 对齐。同版本内重码会让该配方的所有批次详情与 eBR 永久 500，
+        // 所以这里先给人话错误，数据库层再靠 (RecipeVersionId, Code) 唯一索引兜底。
+        var duplicateCode = steps
+            .GroupBy(s => (s.Code ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateCode is not null)
+            throw new DomainException("DUP_STEP_CODE", $"工步编码「{duplicateCode.Key}」在同一版本内重复。");
+
+        ValidateNamedPhases(steps);
         ValidateUnitBoundaries(steps, edges);
         _ = Order(steps, edges);
+    }
+
+    /// <summary>
+    /// Unit Procedure / Operation 不能空着交给拓扑：空名会在泳道与设备绑定里被默认成同一条轨道。
+    /// 同时拒绝"连续问号"名称——设计器与导入都走这里，编码丢字的工步名一旦冻结进快照，
+    /// 电子批记录里就会印出「??」这种无法还原的字。
+    /// </summary>
+    public static void ValidateNamedPhases(IReadOnlyCollection<RecipeStep> steps)
+    {
+        foreach (var step in steps)
+        {
+            if (string.IsNullOrWhiteSpace(step.UnitProcedure))
+                throw new DomainException("ISA88_UNIT", $"工步 {step.Code} 必须填写单元规程（Unit Procedure）。");
+            if (string.IsNullOrWhiteSpace(step.Operation))
+                throw new DomainException("ISA88_OP", $"工步 {step.Code} 必须填写操作（Operation）。");
+            TextIntegrity.EnsureNotEncodingLoss(step.Code, "工步编码");
+            TextIntegrity.EnsureNotEncodingLoss(step.Name, "工步名称");
+            TextIntegrity.EnsureNotEncodingLoss(step.UnitProcedure, "单元规程");
+            TextIntegrity.EnsureNotEncodingLoss(step.Operation, "操作");
+        }
     }
 
     /// <summary>
@@ -38,7 +68,29 @@ public static class RecipeTopology
             var fromUnit = Isa88.UnitName(from.UnitProcedure);
             var toUnit = Isa88.UnitName(to.UnitProcedure);
             if (string.Equals(fromUnit, toUnit, StringComparison.Ordinal))
+            {
+                if (from.Ordinal >= to.Ordinal)
+                    throw new DomainException("ISA88_OP",
+                        $"同一单元规程内连线必须按工步顺序：{from.Code} → {to.Code}。");
                 continue;
+            }
+
+            var fromUnitSteps = steps
+                .Where(s => string.Equals(Isa88.UnitName(s.UnitProcedure), fromUnit, StringComparison.Ordinal))
+                .OrderBy(s => s.Ordinal)
+                .ThenBy(s => s.Code)
+                .ToList();
+            var toUnitSteps = steps
+                .Where(s => string.Equals(Isa88.UnitName(s.UnitProcedure), toUnit, StringComparison.Ordinal))
+                .OrderBy(s => s.Ordinal)
+                .ThenBy(s => s.Code)
+                .ToList();
+            if (fromUnitSteps[^1].Id != from.Id)
+                throw new DomainException("ISA88_UNIT",
+                    $"跨单元连线必须从单元规程末工步出发：{from.Code} 不是 {fromUnit} 的最后工步。");
+            if (toUnitSteps[0].Id != to.Id)
+                throw new DomainException("ISA88_UNIT",
+                    $"跨单元连线必须进入单元规程首工步：{to.Code} 不是 {toUnit} 的第一工步。");
 
             var fromHasIntraOut = edges.Any(other =>
                 other.FromStepId == from.Id &&
@@ -113,6 +165,24 @@ public static class RecipeTopology
         }
 
         return waves;
+    }
+
+    /// <summary>
+    /// 按工步序号列出单元规程，避免按名字排序把 UP-QC 排到写 PLC 单元前面。
+    /// </summary>
+    public static IReadOnlyList<string> UnitNamesInProcessOrder(IReadOnlyCollection<RecipeStep> steps)
+    {
+        if (steps.Count == 0)
+            return [];
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var names = new List<string>();
+        foreach (var step in steps.OrderBy(s => s.Ordinal).ThenBy(s => s.Code, StringComparer.Ordinal))
+        {
+            var name = Isa88.UnitName(step.UnitProcedure);
+            if (seen.Add(name))
+                names.Add(name);
+        }
+        return names;
     }
 
     public static IReadOnlyList<RecipeStep> Order(IReadOnlyCollection<RecipeStep> steps, IReadOnlyCollection<RecipeEdge> edges)

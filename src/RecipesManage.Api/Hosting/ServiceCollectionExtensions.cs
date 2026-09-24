@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -21,15 +22,18 @@ public static class ServiceCollectionExtensions
     {
         services.AddDbContext<AppDbContext>(options =>
         {
-            RecipesDatabase.Apply(options, config.GetConnectionString("PostgreSQL"), config.GetConnectionString("Sqlite"));
+            RecipesDatabase.Apply(options, config.GetConnectionString("Sqlite"));
             options.UseQueryTrackingBehavior(QueryTrackingBehavior.TrackAll);
         });
 
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
+        // 登录失败计数是进程内的（单实例部署），所以必须是 singleton；scoped 会让计数每次请求归零。
+        services.AddSingleton<LoginGuard>();
         services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<AuthService>();
         services.AddScoped<RecipeService>();
+        services.AddScoped<ApprovalChainService>();
         services.AddScoped<MaterialLotService>();
         services.AddScoped<BatchService>();
         services.AddScoped<EquipmentService>();
@@ -47,7 +51,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BatchSchedulerHostedService>();
         services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
         services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
+        services.AddSingleton(BackupSettingsFrom(config));
+        services.AddSingleton(sp => new DatabaseBackup(
+            sp.GetRequiredService<BackupSettings>(),
+            RecipesDatabase.ResolveConnectionString(config.GetConnectionString("Sqlite"))));
+        services.AddSingleton<DailyBackupHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<DailyBackupHostedService>());
         services.AddSignalR();
+        services.AddBrmesPolicies();
         services.AddSingleton<IExecutionPublisher, SignalRExecutionPublisher>();
 
         // 签发（JwtIssuer.Issue）与验证两侧必须用同一个密钥解析规则，否则会出现
@@ -95,6 +106,24 @@ public static class ServiceCollectionExtensions
             });
         services.AddAuthorization();
         return services;
+    }
+
+    /// <summary>
+    /// 备份配置：每一项都能缺省，单设备现场常常没人改 appsettings。
+    /// AtUtc 只认不变的 "HH:mm" 格式——几点备份是运维事实，不该被服务器区域设置读成另一个时刻。
+    /// </summary>
+    private static BackupSettings BackupSettingsFrom(IConfiguration config)
+    {
+        var at = TimeOnly.TryParseExact(config["Backup:AtUtc"], "HH:mm", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var parsed) ? parsed : new TimeOnly(2, 15);
+        var directory = config["Backup:Directory"];
+        return new BackupSettings
+        {
+            Enabled = config.GetValue("Backup:Enabled", true),
+            AtUtc = at,
+            Keep = config.GetValue("Backup:Keep", 7),
+            Directory = string.IsNullOrWhiteSpace(directory) ? "App_Data/backups" : directory.Trim()
+        };
     }
 }
 

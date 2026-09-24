@@ -1,93 +1,177 @@
 <template>
   <div>
     <div class="page-title">
-      <h2>过程报警</h2>
-      <el-radio-group v-model="filter" size="small">
-        <el-radio-button value="open">未确认</el-radio-button>
-        <el-radio-button value="all">全部</el-radio-button>
+      <div>
+        <h2>{{ $t("过程报警") }}</h2>
+        <span>{{ $t("握手故障、质检超差和调度异常。确认后仍保留，供放行与追溯。") }}</span>
+      </div>
+      <div>
+        <el-button
+          v-if="canAck && openCount > 0"
+          type="primary"
+          :loading="acking === 'bulk'"
+          :disabled="!!acking"
+          @click="ackVisible"
+        >{{ $t("确认本页 {0} 条", [openCount]) }}</el-button>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <HelpTip term="聚焦本页搜索" chord="/" plain placement="bottom">
+        <el-input v-model="query" class="search-field" clearable data-shortcut-search :placeholder="$t('搜索批次 / 代码 / 说明')" />
+      </HelpTip>
+      <span v-if="!loading" class="result-count">{{ countText }}</span>
+      <el-radio-group v-model="filter" size="small" class="filter-chips">
+        <el-radio-button value="open">{{ $t("未确认") }}</el-radio-button>
+        <el-radio-button value="all">{{ $t("全部") }}</el-radio-button>
       </el-radio-group>
     </div>
-    <el-alert class="gap-after"
-      :closable="false"
-      type="info"
-      show-icon
-      title="握手故障、质检超差、调度引擎异常会写入报警履历。确认后仍保留记录，供批次放行与追溯。"
-     
-    />
     <el-alert class="gap-after"
       v-if="error"
       :closable="false"
       type="error"
-      :title="`报警列表加载失败：${error}`"
+      :title="$t('报警列表加载失败：{0}', [error])"
       show-icon
      
     />
     <el-table
-      :data="visible"
+      ref="tableRef"
+      :data="items"
       v-loading="loading"
       class="clickable-rows"
-      :empty-text="filter === 'open' ? '暂无未确认报警' : '暂无过程报警'"
+      scrollbar-always-on
+      max-height="calc(100vh - 292px)"
+      :empty-text="emptyText"
+      :default-sort="defaultSort"
+      @sort-change="onSortChange"
       @row-click="(row: ProcessAlarmDto) => $router.push(`/batches/${row.batchId}`)"
     >
-      <el-table-column prop="raisedAt" label="时间" width="180" fixed>
+      <el-table-column prop="raisedAt" :label="$t('时间')" width="180" fixed sortable="custom" :sort-orders="SERVER_DESC_FIRST">
         <template #default="{ row }">{{ formatDateTime(row.raisedAt) }}</template>
       </el-table-column>
-      <el-table-column prop="batchNo" label="批次" width="160" />
-      <el-table-column prop="stepCode" label="工步" width="80" />
-      <el-table-column prop="code" label="代码" width="140" />
-      <el-table-column prop="severity" label="级别" width="90">
+      <el-table-column prop="batchNo" :label="$t('批次')" width="160" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <el-table-column prop="stepCode" :label="$t('工步')" width="92" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <el-table-column prop="code" :label="$t('代码')" width="140" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <el-table-column prop="severity" :label="$t('级别')" width="104" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
           <el-tag size="small" :type="alarmSeverityTagType(row.severity)" effect="dark">{{ alarmSeverityLabel(row.severity) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="message" label="说明" />
-      <el-table-column label="确认" width="140">
+      <el-table-column prop="message" :label="$t('说明')" />
+      <el-table-column prop="acknowledgedAt" :label="$t('确认')" width="140" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
           <span v-if="row.acknowledgedAt">{{ row.acknowledgedBy }}</span>
           <el-button v-else-if="auth.can('Operator', 'Supervisor', 'Quality')" link type="primary"
-            :loading="acking === row.id" @click.stop="ack(row)">确认</el-button>
-          <span v-else>未确认</span>
+            :loading="acking === row.id" :disabled="!!acking" @click.stop="ack(row)">{{ $t("确认") }}</el-button>
+          <span v-else>{{ $t("未确认") }}</span>
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination class="pager" layout="total, prev, pager, next" background small :page-size="take"
+      :current-page="page" :total="total" hide-on-single-page @current-change="onPageChange" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { t } from "../../i18n";
+import { computed, onMounted, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import type { TableInstance } from "element-plus";
 import http from "../../api/http";
-import type { ProcessAlarmDto } from "../../api/types";
+import type { ProcessAlarmDto, ProcessAlarmPageDto } from "../../api/types";
 import { useAuthStore } from "../../stores/auth";
 import { useExecutionHub } from "../../realtime/executionHub";
 import { alarmSeverityLabel, alarmSeverityTagType } from "../../utils/labels";
 import { formatDateTime } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
 import { useCoalescedReload } from "../../utils/useCoalescedReload";
+import { useKeyboardRows } from "../../utils/useKeyboardRows";
+import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
+import { useServerPaging } from "../../utils/useServerPaging";
+import HelpTip from "../../components/HelpTip.vue";
 
 const auth = useAuthStore();
 const items = ref<ProcessAlarmDto[]>([]);
+const tableRef = ref<TableInstance>();
+const query = ref("");
 const filter = ref<"open" | "all">("open");
 const acking = ref("");
 const { loading, error, run } = useLoad();
 
-const visible = computed(() =>
-  filter.value === "open" ? items.value.filter((a) => !a.acknowledgedAt) : items.value
-);
+/**
+ * 搜索、"未确认"筛选、排序、分页全交给服务端。
+ * 客户端过滤只能看到当页那 50 条：未确认的老报警会被"最近 50 条"挤出去，
+ * 操作员在页面上看不见，也就永远不会去确认——而报警必须确认掉才算闭环。
+ */
+const pg = useServerPaging({ reload: load, defaultSort: "raisedAt", search: query });
+const { take, total, page, defaultSort, onSortChange, onPageChange } = pg;
+const countText = computed(() => {
+  const n = items.value.length;
+  const filtered = !!query.value.trim() || filter.value !== "all";
+  return filtered ? t("{0} / {1} 条", n, total.value) : t("共 {0} 条", total.value);
+});
+const emptyText = computed(() => {
+  if (query.value.trim()) return t("没有匹配的报警");
+  return filter.value === "open" ? t("暂无未确认报警") : t("暂无过程报警");
+});
+const canAck = computed(() => auth.can("Operator", "Supervisor", "Quality"));
+const openCount = computed(() => items.value.filter((a) => !a.acknowledgedAt).length);
+// 整行可点，但 EP 渲染的 tr 不可聚焦——键盘用户此前打不开任何报警。
+useKeyboardRows(tableRef, () => items.value);
+
+watch(filter, () => pg.onFilterChange());
 
 async function load() {
-  await run(http.get<ProcessAlarmDto[]>("/alarms"), (d) => (items.value = d));
+  await run(
+    http.get<ProcessAlarmPageDto>("/alarms", {
+      params: pg.params({ onlyOpen: filter.value === "open" ? "true" : undefined })
+    }),
+    (d) => {
+      items.value = d.items;
+      total.value = d.total;
+    }
+  );
 }
 
 async function ack(row: ProcessAlarmDto) {
+  if (acking.value) return;
   acking.value = row.id;
   try {
     await http.post(`/alarms/${row.id}/ack`);
     await load();
     // 「未确认」筛选下确认成功后整行会消失，不提示容易被当成误操作或记录丢失。
-    ElMessage.success(`已确认报警 ${row.code}`);
+    ElMessage.success(t("已确认报警 {0}", row.code));
   } catch (e) {
     ElMessage.error((e as Error).message);
+  } finally {
+    acking.value = "";
+  }
+}
+
+async function ackVisible() {
+  if (acking.value) return;
+  const pending = items.value.filter((a) => !a.acknowledgedAt);
+  if (!pending.length) return;
+  try {
+    await ElMessageBox.confirm(
+      t("确认当前列表中的 {0} 条未确认报警？确认后仍保留履历，供批次放行与追溯。", pending.length),
+      t("批量确认报警"),
+      { type: "warning", confirmButtonText: t("全部确认"), cancelButtonText: t("取消") }
+    );
+  } catch {
+    return;
+  }
+  acking.value = "bulk";
+  let ok = 0;
+  try {
+    for (const row of pending) {
+      await http.post(`/alarms/${row.id}/ack`);
+      ok += 1;
+    }
+    await load();
+    ElMessage.success(`已确认 ${ok} 条报警`);
+  } catch (e) {
+    await load();
+    ElMessage.error(`已确认 ${ok} 条，其余失败：${(e as Error).message}`);
   } finally {
     acking.value = "";
   }

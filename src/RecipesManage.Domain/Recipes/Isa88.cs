@@ -6,7 +6,8 @@ namespace RecipesManage.Domain.Recipes;
 /// </summary>
 public static class Isa88
 {
-    public const string DefaultUnitProcedure = "UP-01 热处理单元";
+    /// <summary>单元规程缺省名。刻意不含工艺行业词——真实名称由设计器填写。</summary>
+    public const string DefaultUnitProcedure = "UP-01";
 
     public static string DefaultOperation(StepType type) => type switch
     {

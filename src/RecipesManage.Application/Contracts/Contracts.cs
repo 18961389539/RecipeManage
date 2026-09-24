@@ -19,6 +19,7 @@ public interface IAppDbContext
     DbSet<RecipeEdge> RecipeEdges { get; }
     DbSet<RecipeParameter> RecipeParameters { get; }
     DbSet<ApprovalRecord> ApprovalRecords { get; }
+    DbSet<ApprovalChainConfig> ApprovalChains { get; }
     DbSet<EquipmentLine> Equipment { get; }
     DbSet<EquipmentClass> EquipmentClasses { get; }
     DbSet<PhaseTemplate> PhaseTemplates { get; }
@@ -33,12 +34,7 @@ public interface IAppDbContext
     DbSet<BatchLane> Lanes { get; }
     DbSet<EquipmentLease> EquipmentLeases { get; }
     DbSet<AppliedDataFix> DataFixes { get; }
-    /// <summary>
-    /// 提供器能否在服务端对 DateTimeOffset 列做 ORDER BY。
-    /// SQLite 会直接抛 NotSupportedException，此时排序/分页只能留在客户端；
-    /// PostgreSQL（生产）走服务端下推。
-    /// </summary>
-    bool SupportsServerDateOrdering { get; }
+    DbSet<SchedulerIntent> SchedulerIntents { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
 

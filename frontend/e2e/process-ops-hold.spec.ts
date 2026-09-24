@@ -7,7 +7,8 @@ import {
   handshakeRows,
   loginAs,
   passwords,
-  uniqueStamp
+  uniqueStamp,
+  esignReasonAndWait,
 } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -15,7 +16,7 @@ test.describe.configure({ mode: "serial" });
 test("OPC UA Mix Pressure Transfer handshake and QualityCheck does not write PLC", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
   await abortActiveBatches(page.request);
 
   const batchNo = `BOPS${uniqueStamp()}`;
@@ -29,7 +30,7 @@ test("OPC UA Mix Pressure Transfer handshake and QualityCheck does not write PLC
 
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 90_000 });
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 90_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write" && (r.detail ?? "").includes("Step_Type=4"))).toBeTruthy();
@@ -51,15 +52,13 @@ test("hold during StepRunning writes Host_Hold and waits PLC_Held", async ({ pag
   await expect(page.locator(".page-title")).toContainText("StepRunning", { timeout: 30_000 });
 
   await page.getByRole("button", { name: "保持" }).click();
-  await fillPrompt(page, "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "StepRunning 保持");
-  await esignAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", passwords["车间操作员"]);
+  await esignReasonAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "StepRunning 保持", passwords["车间操作员"]);
   await expect(page.locator(".page-title")).toContainText("· Held ·", { timeout: 30_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.kind === "hold" && (r.detail ?? "").includes("Host_Hold"))).toBeTruthy();
 
   await page.getByRole("button", { name: "中止" }).click();
-  await fillPrompt(page, "中止批次", "E2E 保持验证后中止");
-  await esignAndWait(page, "/abort", "POST", "中止批次", passwords["车间操作员"]);
+  await esignReasonAndWait(page, "/abort", "POST", "中止批次", "E2E 保持验证后中止", passwords["车间操作员"]);
   await expect(page.locator(".page-title")).toContainText("· Aborted ·", { timeout: 30_000 });
 });

@@ -8,7 +8,7 @@ using RecipesManage.Infrastructure.Persistence;
 
 namespace RecipesManage.Api.Controllers;
 
-[Authorize]
+[Authorize(Policy = AuthorizationPolicies.Admin)]
 [ApiController]
 [Route("api/users")]
 public sealed class UsersController(AuthService auth) : ControllerBase
@@ -25,29 +25,50 @@ public sealed class UsersController(AuthService auth) : ControllerBase
         auth.UpdateUserAsync(id, request, ct);
 }
 
-[Authorize]
+[Authorize(Policy = AuthorizationPolicies.Admin)]
 [ApiController]
 [Route("api/admin")]
-public sealed class AdminController(IConfiguration config, ICurrentUser user) : ControllerBase
+public sealed class AdminController(IConfiguration config, AuthService auth, ILogger<AdminController> log) : ControllerBase
 {
-    [HttpGet("sqlite-backup")]
-    public IActionResult SqliteBackup()
+    /// <summary>
+    /// 整库备份。要求 Admin 策略 + 电子签名 + 审计（见 <see cref="AuthService.RequireBackupEsignAsync"/>）。
+    ///
+    /// 两处改动过：
+    /// - GET → POST：GET 会被代理/浏览器缓存与记录，也容易被一个 &lt;img&gt; 触发；
+    ///   而且密码不该出现在 URL 里。
+    /// - 直接拷文件 → SQLite Backup API：库在 WAL 模式下，裸复制会得到"主库 + 半截 WAL"的撕裂快照。
+    /// </summary>
+    [HttpPost("sqlite-backup")]
+    public async Task<IActionResult> SqliteBackup([FromBody] EsignActionRequest request, CancellationToken ct)
     {
-        if (user.Role is not UserRole.Admin)
-            return Forbid();
-
-        var path = RecipesDatabase.TryGetSqliteFilePath(
-            config.GetConnectionString("PostgreSQL"),
-            config.GetConnectionString("Sqlite"));
-        if (path is null)
-            return BadRequest(new { code = "NOT_SQLITE", message = "当前不是 SQLite 文件库。PostgreSQL 请使用 pg_dump。" });
-        if (!System.IO.File.Exists(path))
-            return NotFound(new { code = "NO_DB", message = "找不到 SQLite 文件。" });
-
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var ms = new MemoryStream();
-        fs.CopyTo(ms);
         var name = $"brmes-{DateTime.UtcNow:yyyyMMddHHmmss}.db";
-        return File(ms.ToArray(), "application/vnd.sqlite3", name);
+        await auth.RequireBackupEsignAsync(request.Password, name, ct);
+
+        string path;
+        try
+        {
+            path = RecipesDatabase.BackupToTempFile(config.GetConnectionString("Sqlite"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FileNotFoundException)
+        {
+            return BadRequest(new { code = "NOT_SQLITE", message = ex.Message });
+        }
+
+        try
+        {
+            return File(await System.IO.File.ReadAllBytesAsync(path, ct), "application/vnd.sqlite3", name);
+        }
+        finally
+        {
+            // 临时快照里是全套口令哈希。删不掉必须喊出来——静默吞掉就等于把整库留在 %TEMP% 里。
+            try
+            {
+                System.IO.File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "整库备份临时文件未删除，含口令哈希，请手工清理：{Path}", path);
+            }
+        }
     }
 }

@@ -2,10 +2,18 @@
   <div class="approvals">
     <div class="page-title">
       <div>
-        <h2>多级审核工作台</h2>
-        <span>工艺工程师提交 → 工艺主管签署路径 → 质量签署参数窗口。当前角色只能处理对应节点。</span>
+        <h2>{{ $t("多级审核工作台") }}</h2>
+        <span>{{ $t("按配方选定的审批链逐级签署；当前角色只能处理轮到自己的那一级。链由管理员在「审批链配置」里维护。") }}</span>
       </div>
-      <el-button :loading="loading" @click="loadList">刷新</el-button>
+      <div>
+        <el-button :loading="loading" @click="loadList">{{ $t("刷新") }}</el-button>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <HelpTip term="聚焦本页搜索" chord="/" plain placement="bottom">
+        <el-input v-model="query" class="search-field" clearable data-shortcut-search :placeholder="$t('搜索编码 / 名称 / 产品')" />
+      </HelpTip>
+      <span v-if="!loading" class="result-count">{{ countText }}</span>
     </div>
     <el-alert class="gap-after"
       v-if="error"
@@ -17,41 +25,46 @@
     />
     <el-row :gutter="12">
       <el-col :span="8" :xs="24">
-        <el-card header="待审核配方">
+        <el-card :header="$t('待审核配方')">
           <el-table
+            ref="tableRef"
             :data="items"
             v-loading="loading"
             class="clickable-rows"
-            empty-text="没有待审核配方"
+            :empty-text="query.trim() ? '没有匹配的待审配方' : '没有待审核配方'"
             highlight-current-row
             :row-class-name="rowClass"
             @row-click="(row: RecipeListItemDto) => select(row.id)"
           >
-            <el-table-column prop="code" label="编码" width="110" fixed />
-            <el-table-column prop="name" label="名称" min-width="120" />
-            <el-table-column label="待审节点" width="100">
-              <template #default="{ row }">{{ levelLabel(row.pendingLevel) }}</template>
+            <el-table-column prop="code" :label="$t('编码')" width="110" fixed />
+            <el-table-column prop="name" :label="$t('名称')" min-width="120" />
+            <el-table-column :label="$t('待审节点')" width="110">
+              <template #default="{ row }">{{ row.pendingTitle || "—" }}</template>
             </el-table-column>
-            <el-table-column label="审版" width="56">
+            <el-table-column :label="$t('审版')" width="56">
               <template #default="{ row }">{{ row.reviewVersion ? `v${row.reviewVersion}` : "—" }}</template>
             </el-table-column>
           </el-table>
         </el-card>
       </el-col>
       <el-col :span="16" :xs="24">
-        <el-empty v-if="!detail && !detailLoading" description="选择左侧配方，在此审阅 Procedure 与冻结 Setpoints 矩阵" />
+        <el-empty v-if="!detail && !detailLoading" :description="$t('选择左侧配方，在此审阅工艺与冻结设定矩阵')" />
         <template v-else-if="detail">
           <el-card v-loading="detailLoading">
             <template #header>
               <div class="head">
                 <div>
                   <b>{{ detail.code }} {{ detail.name }}</b>
-                  <div class="muted">产品 {{ detail.productName }} · 审核版 v{{ review?.versionNumber ?? "—" }} · 状态 {{ recipeStatusLabel(review?.status) }}</div>
+                  <div class="muted">{{ $t("产品 {0} · 审核版 v{1} · 状态 {2}", [detail.productName, review?.versionNumber ?? "—", recipeStatusLabel(review?.status)]) }}</div>
                 </div>
                 <div>
-                  <el-button v-if="canDecide" type="success" @click="decide('Approved')">通过并电子签名</el-button>
-                  <el-button v-if="canDecide" type="danger" @click="decide('Rejected')">驳回</el-button>
-                  <el-button @click="$router.push(`/recipes/${detail.id}`)">打开设计器</el-button>
+                  <HelpTip v-if="canDecide" term="通过并电子签名" chord="ctrl+enter" allow-in-input plain placement="bottom">
+                    <el-button type="success" :loading="deciding === 'Approved'" :disabled="!!deciding" @click="decide('Approved')">{{ $t("通过并电子签名") }}</el-button>
+                  </HelpTip>
+                  <HelpTip v-if="canDecide" term="驳回" plain placement="bottom">
+                    <el-button type="danger" :loading="deciding === 'Rejected'" :disabled="!!deciding" @click="decide('Rejected')">{{ $t("驳回") }}</el-button>
+                  </HelpTip>
+                  <el-button @click="$router.push(`/recipes/${detail.id}`)">{{ $t("打开设计器") }}</el-button>
                 </div>
               </div>
             </template>
@@ -60,7 +73,7 @@
               :closable="false"
               show-icon
               :type="canDecide ? 'warning' : 'info'"
-              :title="`当前节点：${levelLabel(pending.level)}`"
+              :title="$t('当前节点：{0}', [pending.title || nodeLabel(pending.node)])"
               :description="pending.meaning || pendingMeaningFallback"
              
             />
@@ -68,25 +81,25 @@
               v-else
               :closable="false"
               type="success"
-              title="本版本已无待审节点"
+              :title="$t('本版本已无待审节点')"
              
             />
-            <p v-if="review?.changeNote" class="muted">变更说明：{{ review.changeNote }}</p>
+            <p v-if="review?.changeNote" class="muted">{{ $t("变更说明：{0}", [review.changeNote]) }}</p>
             <div v-if="diff" class="diff-block">
-              <h4>相对生效版 v{{ diff.fromVersion }} 的差异</h4>
-              <p v-if="diff.addedSteps.length">新增工步：{{ diff.addedSteps.join("、") }}</p>
-              <p v-if="diff.removedSteps.length">删除工步：{{ diff.removedSteps.join("、") }}</p>
+              <h4>{{ $t("相对生效版 v{0} 的差异", [diff.fromVersion]) }}</h4>
+              <p v-if="diff.addedSteps.length">{{ $t("新增工步：{0}", [diff.addedSteps.join("、")]) }}</p>
+              <p v-if="diff.removedSteps.length">{{ $t("删除工步：{0}", [diff.removedSteps.join("、")]) }}</p>
               <el-table v-if="diff.changes.length" :data="diff.changes" size="small" max-height="220" border>
-                <el-table-column prop="path" label="路径" min-width="180" fixed />
-                <el-table-column prop="before" label="生效版" />
-                <el-table-column prop="after" label="审核版" />
+                <el-table-column prop="path" :label="$t('路径')" min-width="180" fixed />
+                <el-table-column prop="before" :label="$t('生效版')" />
+                <el-table-column prop="after" :label="$t('审核版')" />
               </el-table>
               <el-empty
                 v-else-if="!diff.addedSteps.length && !diff.removedSteps.length"
-                description="与生效版工艺内容相同"
+                :description="$t('与生效版工艺内容相同')"
               />
             </div>
-            <h4>Procedure / Steps</h4>
+            <h4>{{ $t("工艺工步") }}</h4>
             <ProcedureFlow
               v-if="review"
               flow-id="approval-flow"
@@ -97,7 +110,7 @@
               :height="260"
               @select="selectedStepId = $event"
             />
-            <h4>Parameters / Setpoints 矩阵（只读审阅）</h4>
+            <h4>{{ $t("参数矩阵（只读审阅）") }}</h4>
             <SetpointMatrix
               v-if="review"
               :steps="review.steps"
@@ -107,19 +120,25 @@
               :max-height="280"
               @select="selectedStepId = $event"
             />
-            <h4><HelpTip term="电子签名">电子签名链</HelpTip></h4>
+            <h4><HelpTip term="电子签名">{{ $t("电子签名链") }}</HelpTip></h4>
             <el-table :data="review?.approvals ?? []" size="small" border>
-              <el-table-column label="级别" width="140" fixed>
-                <template #default="{ row }">{{ levelLabel(row.level) }}</template>
+              <el-table-column :label="$t('审核节点')" width="140" fixed>
+                <template #default="{ row }">{{ row.title || nodeLabel(row.node) }}</template>
               </el-table-column>
-              <el-table-column prop="decision" label="结论" width="120">
+              <el-table-column :label="$t('要求角色')" width="100">
+                <template #default="{ row }">{{ userRoleLabel(row.requiredRole) }}</template>
+              </el-table-column>
+              <el-table-column prop="decision" :label="$t('结论')" width="120">
                 <template #default="{ row }">
                   <el-tag size="small" :type="approvalDecisionTagType(row.decision)" effect="dark">{{ approvalDecisionLabel(row.decision) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="reviewerName" label="签署人" />
-              <el-table-column prop="meaning" label="签署含义" min-width="240" />
-              <el-table-column prop="comment" label="意见" />
+              <el-table-column prop="reviewerName" :label="$t('签署人')" />
+              <el-table-column prop="meaning" :label="$t('签署含义')" min-width="240" />
+              <el-table-column :label="$t('签署时间')" width="170">
+                <template #default="{ row }">{{ formatDateTime(row.decidedAt) }}</template>
+              </el-table-column>
+              <el-table-column prop="comment" :label="$t('意见')" />
             </el-table>
           </el-card>
         </template>
@@ -131,9 +150,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
+import type { TableInstance } from "element-plus";
 import http from "../../api/http";
-import { esignPassword } from "../../utils/esign";
+import { esignWithReason } from "../../utils/esign";
 import type { ApprovalDto, RecipeDetailDto, RecipeListItemDto, RecipeVersionDiffDto, RecipeVersionDto } from "../../api/types";
 import { useAuthStore } from "../../stores/auth";
 import ProcedureFlow from "../../components/ProcedureFlow.vue";
@@ -142,22 +162,43 @@ import { changedMatrixKeys } from "../../setpointMatrix";
 import {
   approvalDecisionLabel,
   approvalDecisionTagType,
-  approvalLevelLabel as levelLabel,
-  recipeStatusLabel
+  approvalNodeLabel as nodeLabel,
+  recipeStatusLabel,
+  userRoleLabel
 } from "../../utils/labels";
+import { formatDateTime, matchesQuery } from "../../utils/format";
+import { canDecideReview, headPendingNode } from "../../utils/reviewGate";
+import { t } from "../../i18n";
 import { useLoad } from "../../utils/useLoad";
+import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import HelpTip from "../../components/HelpTip.vue";
+import { usePageShortcuts } from "../../shortcuts/registry";
 
 const route = useRoute();
 const auth = useAuthStore();
 const all = ref<RecipeListItemDto[]>([]);
-const items = computed(() => all.value.filter((r) => r.draftStatus === "InReview"));
+const query = ref("");
+const items = computed(() => all.value.filter((r) => {
+  if (r.draftStatus !== "InReview") return false;
+  return matchesQuery(query.value, r.code, r.name, r.productName, r.productCode, r.pendingTitle);
+}));
+const countText = computed(() => {
+  const total = all.value.filter((r) => r.draftStatus === "InReview").length;
+  const n = items.value.length;
+  // 计数走带占位的译文键，而不是拼好的模板字符串：英文里量词位置不同（"7 items"），
+  // 字符串拼出来的那种在另一种语言里必然是错的。
+  return query.value.trim() ? t("{0} / {1} 条", n, total) : t("共 {0} 条", total);
+});
+// 整行可点选中，但 EP 渲染的 tr 不可聚焦——键盘用户此前选不了待审配方。
+const tableRef = ref<TableInstance>();
+useKeyboardRows(tableRef, () => items.value);
 const detail = ref<RecipeDetailDto | null>(null);
 const selectedId = ref<string | null>(null);
 const selectedStepId = ref<string | null>(null);
 const diff = ref<RecipeVersionDiffDto | null>(null);
 const { loading, error, run } = useLoad();
 const detailLoading = ref(false);
+const deciding = ref("");
 
 const review = computed<RecipeVersionDto | null>(() => {
   const versions = detail.value?.versions ?? [];
@@ -166,19 +207,11 @@ const review = computed<RecipeVersionDto | null>(() => {
     ?? null;
 });
 
-const pending = computed<ApprovalDto | undefined>(() =>
-  review.value?.approvals.find((a) => a.decision === "Pending"));
+const pending = computed(() => headPendingNode(review.value));
 
 const pendingMeaningFallback = "请再次输入登录密码作为电子签名。";
 
-const canDecide = computed(() => {
-  const node = pending.value;
-  if (!node || review.value?.status !== "InReview") return false;
-  const role = auth.user?.role;
-  return role === "Admin"
-    || (node.level === "Supervisor" && role === "Supervisor")
-    || (node.level === "Quality" && role === "Quality");
-});
+const canDecide = computed(() => canDecideReview(review.value, auth.user?.role));
 
 const flowMarkers = computed(() => {
   const map: Record<string, "added" | "changed"> = {};
@@ -200,6 +233,7 @@ const flowSteps = computed(() =>
     type: s.type,
     unitProcedure: s.unitProcedure,
     operation: s.operation,
+    plcProgramId: s.plcProgramId,
     ordinal: s.ordinal
   }))
 );
@@ -246,7 +280,7 @@ async function select(id: string) {
     }
   } catch (e) {
     // 原先详情取数失败毫无反馈，右侧区域会一直停在"请选择左侧配方"。
-    ElMessage.error(`配方详情加载失败：${(e as Error).message}`);
+    ElMessage.error(t("配方详情加载失败：{0}", (e as Error).message));
     detail.value = null;
     diff.value = null;
   } finally {
@@ -255,21 +289,39 @@ async function select(id: string) {
 }
 
 async function decide(decision: "Approved" | "Rejected") {
-  if (!detail.value) return;
+  if (!detail.value || deciding.value) return;
+  deciding.value = decision;
   try {
     const meaning = pending.value?.meaning ?? pendingMeaningFallback;
-    const { value: comment } = await ElMessageBox.prompt(
-      `${meaning}\n\n${decision === "Approved" ? "审核意见（通过）" : "驳回原因"}`,
-      `当前节点：${levelLabel(pending.value?.level)}`
+    const level = t("当前节点：{0}", pending.value?.title ?? "");
+    // 驳回必须有原因（后端 REJECT_REASON），通过时意见可选——原来两栏分两个弹窗问。
+    const { reason: comment, password } = await esignWithReason(
+      level,
+      meaning,
+      decision === "Approved" ? "审核意见（通过）" : "驳回原因",
+      decision === "Rejected"
     );
-    const password = await esignPassword(`当前节点：${levelLabel(pending.value?.level)}`);
     await http.post(`/recipes/${detail.value.id}/decide`, { decision, comment, password });
     ElMessage.success(decision === "Approved" ? "已电子签名通过" : "已驳回");
     await loadList();
   } catch (e) {
     if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
+  } finally {
+    deciding.value = "";
   }
 }
+
+usePageShortcuts(() => [
+  {
+    id: "approval.approve",
+    chord: "ctrl+enter",
+    group: "配方审核",
+    label: "通过并电子签名",
+    allowInInput: true,
+    when: () => canDecide.value && !deciding.value,
+    run: () => { void decide("Approved"); }
+  }
+]);
 
 onMounted(loadList);
 </script>

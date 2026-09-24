@@ -16,8 +16,6 @@ public sealed class AppDbContext : DbContext, IAppDbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
-    public bool SupportsServerDateOrdering => Database.ProviderName is not "Microsoft.EntityFrameworkCore.Sqlite";
-
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<MasterRecipe> Recipes => Set<MasterRecipe>();
@@ -26,6 +24,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<RecipeEdge> RecipeEdges => Set<RecipeEdge>();
     public DbSet<RecipeParameter> RecipeParameters => Set<RecipeParameter>();
     public DbSet<ApprovalRecord> ApprovalRecords => Set<ApprovalRecord>();
+    public DbSet<ApprovalChainConfig> ApprovalChains => Set<ApprovalChainConfig>();
     public DbSet<EquipmentLine> Equipment => Set<EquipmentLine>();
     public DbSet<EquipmentClass> EquipmentClasses => Set<EquipmentClass>();
     public DbSet<PhaseTemplate> PhaseTemplates => Set<PhaseTemplate>();
@@ -40,6 +39,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<BatchLane> Lanes => Set<BatchLane>();
     public DbSet<EquipmentLease> EquipmentLeases => Set<EquipmentLease>();
     public DbSet<AppliedDataFix> DataFixes => Set<AppliedDataFix>();
+    public DbSet<SchedulerIntent> SchedulerIntents => Set<SchedulerIntent>();
 
     /// <summary>
     /// 乐观并发：任何实现 <see cref="IConcurrencyStamped"/> 的实体在被写入前轮换自己的戳，
@@ -86,9 +86,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        var jsonType = RecipesDatabase.HealthName(Database) == RecipesDatabase.PostgreSql
-            ? "jsonb"
-            : "TEXT";
+        const string jsonType = "TEXT";
 
         modelBuilder.Entity<AppUser>(e =>
         {
@@ -101,6 +99,8 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<AuditLog>(e =>
         {
             e.ToTable("audit_logs");
+            // 见 AuditTimestamp：不写这个转换器，ORDER BY / 范围比较会被 SQLite 提供器直接拒绝。
+            e.Property(x => x.At).HasConversion(AuditTimestamp.Converter);
             e.HasIndex(x => x.At);
         });
 
@@ -123,12 +123,29 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<RecipeStep>(e =>
         {
             e.ToTable("recipe_steps");
+            // Code 是快照 ↔ 执行记录 ↔ 漂移比对的连接键，重码会让下游 ToDictionary 直接抛。
+            e.HasIndex(x => new { x.RecipeVersionId, x.Code }).IsUnique();
             e.HasMany(x => x.Parameters).WithOne().HasForeignKey(x => x.RecipeStepId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RecipeEdge>().ToTable("recipe_edges");
         modelBuilder.Entity<RecipeParameter>().ToTable("recipe_parameters");
-        modelBuilder.Entity<ApprovalRecord>().ToTable("approval_records");
+        modelBuilder.Entity<ApprovalRecord>(e =>
+        {
+            e.ToTable("approval_records");
+            // Meaning 是从同一行的冻结副本现推的展示值，不是第三份要维护的数据。
+            e.Ignore(x => x.Meaning);
+            // 一个版本的链上每个顺序只应有一条：Submit/Reopen 都会先 Clear 再整条展开。
+            // 口径从"审核级别"换成"链上顺序"，正是为了让一条链能配出任意长度的节点。
+            e.HasIndex(x => new { x.RecipeVersionId, x.Seq }).IsUnique();
+        });
+
+        modelBuilder.Entity<ApprovalChainConfig>(e =>
+        {
+            e.ToTable("approval_chains");
+            e.HasIndex(x => x.Code).IsUnique();
+            e.Property(x => x.StepsJson).HasColumnType(jsonType);
+        });
 
         modelBuilder.Entity<EquipmentLine>(e =>
         {
@@ -157,6 +174,12 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.ToTable("production_batches");
             e.HasIndex(x => x.BatchNo).IsUnique();
             e.Property(x => x.ControlRecipeJson).HasColumnType(jsonType);
+            // 列表页要按这些时间列做服务端排序分页，所以挂上定宽 UTC 的文本映射（见 AuditTimestamp）。
+            // 转换器与 EF 自带映射逐字符一致、历史行偏移本来就是 +00:00，因此不需要回填。
+            e.Property(x => x.CreatedAt).HasConversion(AuditTimestamp.Converter);
+            e.Property(x => x.StartedAt).HasConversion(AuditTimestamp.Converter);
+            e.Property(x => x.CompletedAt).HasConversion(AuditTimestamp.Converter);
+            e.Property(x => x.ReleasedAt).HasConversion(AuditTimestamp.Converter);
             e.HasMany(x => x.StepExecutions).WithOne().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Samples).WithOne().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -166,6 +189,8 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         {
             e.ToTable("process_samples");
             e.HasIndex(x => new { x.BatchId, x.SampledAt });
+            // 趋势要"按时间取最近 N 点"，没这个映射就排不了序、只能整批次读回内存（样本每 400ms 一行）。
+            e.Property(x => x.SampledAt).HasConversion(AuditTimestamp.Converter);
         });
 
         modelBuilder.Entity<LabSample>(e =>
@@ -181,6 +206,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.ToTable("material_lots");
             e.HasIndex(x => x.LotNumber).IsUnique();
             e.HasIndex(x => x.ParentLotId);
+            e.Property(x => x.CreatedAt).HasConversion(AuditTimestamp.Converter);
         });
 
         modelBuilder.Entity<BatchMaterialUse>(e =>
@@ -200,6 +226,9 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.ToTable("process_alarms");
             e.HasIndex(x => x.BatchId);
             e.HasIndex(x => x.RaisedAt);
+            // 两个时间列都要能被服务端 ORDER BY：SQLite 提供器拒绝原生 DateTimeOffset 排序。
+            e.Property(x => x.RaisedAt).HasConversion(AuditTimestamp.Converter);
+            e.Property(x => x.AcknowledgedAt).HasConversion(AuditTimestamp.Converter);
         });
 
         modelBuilder.Entity<BatchLane>(e =>
@@ -208,6 +237,8 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.HasIndex(x => new { x.BatchId, x.EquipmentId }).IsUnique();
             e.HasIndex(x => x.BatchId);
             e.Property(x => x.ConcurrencyStamp).IsConcurrencyToken();
+            // 结论按字符串存：库里的历史值就是 "Completed" / "Skipped" 这些词，存成整数会让既有批次读不出来。
+            e.Property(x => x.Outcome).HasConversion<string>();
         });
 
         modelBuilder.Entity<EquipmentLease>(e =>
@@ -215,6 +246,13 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.ToTable("equipment_leases");
             // 一台设备同一时刻只允许一行租约 —— 设备排他由数据库保证，而不是应用层先查后写。
             e.HasIndex(x => x.EquipmentId).IsUnique();
+            e.HasIndex(x => x.BatchId);
+        });
+
+        modelBuilder.Entity<SchedulerIntent>(e =>
+        {
+            e.ToTable("scheduler_intents");
+            e.HasIndex(x => new { x.BatchId, x.Kind }).IsUnique();
             e.HasIndex(x => x.BatchId);
         });
 
@@ -226,6 +264,8 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<BatchStepExecution>(e =>
         {
             e.Property(x => x.ConcurrencyStamp).IsConcurrencyToken();
+            // 与 batch_lanes.Outcome 同一口径：TEXT 存枚举名，历史数据不用回填。
+            e.Property(x => x.Outcome).HasConversion<string>();
         });
 
         modelBuilder.Entity<AppliedDataFix>(e =>

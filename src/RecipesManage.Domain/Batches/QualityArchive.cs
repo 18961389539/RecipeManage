@@ -11,9 +11,20 @@ public static class QualityArchive
     {
         var result = new Dictionary<string, double>(StringComparer.Ordinal);
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var archived = step.Parameters.Where(p => p.ArchiveAsQuality).OrderBy(p => p.SlotIndex).ToList();
 
-        foreach (var parameter in step.Parameters.Where(p => p.ArchiveAsQuality).OrderBy(p => p.SlotIndex))
-            result[parameter.Name] = Match(parameter, measured, used);
+        // 声明了实测点的参数先取，避免被同名推断抢走标签。
+        foreach (var parameter in archived.Where(p => !string.IsNullOrWhiteSpace(p.MeasuredTag)))
+        {
+            if (TryTake(measured, used, parameter.MeasuredTag!, out var value))
+                result[parameter.Name] = value;
+        }
+
+        foreach (var parameter in archived.Where(p => string.IsNullOrWhiteSpace(p.MeasuredTag)))
+        {
+            if (TryMatch(parameter, measured, used, out var value))
+                result[parameter.Name] = value;
+        }
 
         foreach (var (tag, value) in measured)
             result[$"PLC:{tag}"] = value;
@@ -21,22 +32,28 @@ public static class QualityArchive
         return result;
     }
 
-    private static double Match(
+    private static bool TryMatch(
         SnapshotParameter parameter,
         IReadOnlyDictionary<string, double> measured,
-        HashSet<string> used)
+        HashSet<string> used,
+        out double value)
     {
         var unit = parameter.EngineeringUnit ?? "";
         var name = parameter.Name ?? "";
+        var semantic = ParameterSemantics.Resolve(parameter.Semantic, name, unit);
 
-        if (LooksLikeDuration(name, unit) && TryTake(measured, used, "HoldTime", out var hold))
-            return hold;
-        if (LooksLikeTemperature(name, unit) && TryTake(measured, used, "Temperature", out var temp))
-            return temp;
-        if (LooksLikePressure(name, unit) && TryTake(measured, used, "Pressure", out var pressure))
-            return pressure;
+        if (semantic == ParameterSemantic.Duration && TryTake(measured, used, "HoldTime", out value))
+            return true;
+        if (semantic != ParameterSemantic.Duration &&
+            !LooksLikeHardness(name, unit) &&
+            LooksLikeTemperature(name, unit) &&
+            TryTake(measured, used, "Temperature", out value))
+            return true;
+        if (LooksLikePressure(name, unit) && TryTake(measured, used, "Pressure", out value))
+            return true;
 
-        return parameter.Setpoint;
+        value = 0;
+        return false;
     }
 
     private static bool TryTake(
@@ -56,32 +73,16 @@ public static class QualityArchive
     }
 
     private static bool LooksLikeTemperature(string name, string unit) =>
-        !LooksLikeDuration(name, unit) &&
-        !LooksLikeHardness(name, unit) && (
-            unit.Contains('℃', StringComparison.Ordinal) ||
-            unit.Equals("C", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("温度", StringComparison.Ordinal) ||
-            name.Contains("temp", StringComparison.OrdinalIgnoreCase));
+        unit.Contains('℃', StringComparison.Ordinal) ||
+        unit.Equals("C", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("温度", StringComparison.Ordinal) ||
+        name.Contains("temp", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeHardness(string name, string unit) =>
         name.Contains("硬度", StringComparison.Ordinal) ||
         name.Contains("HB", StringComparison.OrdinalIgnoreCase) ||
         unit.Equals("HB", StringComparison.OrdinalIgnoreCase) ||
         unit.Equals("HRC", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeRate(string name, string unit) =>
-        unit.Contains('/') ||
-        name.Contains("斜率", StringComparison.Ordinal) ||
-        name.Contains("ramp", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeDuration(string name, string unit) =>
-        !LooksLikeRate(name, unit) && (
-            unit.Equals("s", StringComparison.OrdinalIgnoreCase) ||
-            unit.Equals("sec", StringComparison.OrdinalIgnoreCase) ||
-            unit.Equals("min", StringComparison.OrdinalIgnoreCase) ||
-            unit.Equals("h", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("时长", StringComparison.Ordinal) ||
-            name.Contains("时间", StringComparison.Ordinal));
 
     private static bool LooksLikePressure(string name, string unit) =>
         name.Contains("压", StringComparison.Ordinal) ||
@@ -97,7 +98,10 @@ public static class QualityArchive
         foreach (var parameter in step.Parameters.Where(p => p.ArchiveAsQuality).OrderBy(p => p.SlotIndex))
         {
             if (!archived.TryGetValue(parameter.Name, out var value))
+            {
+                rows.Add(new QualitySpecResult(parameter.Name, 0, parameter.Min, parameter.Max, false, true));
                 continue;
+            }
             var oos = (parameter.Min is { } min && value < min) || (parameter.Max is { } max && value > max);
             rows.Add(new QualitySpecResult(parameter.Name, value, parameter.Min, parameter.Max, oos));
         }
@@ -126,4 +130,10 @@ public static class QualityArchive
     }
 }
 
-public sealed record QualitySpecResult(string Name, double Value, double? Min, double? Max, bool OutOfSpec);
+public sealed record QualitySpecResult(
+    string Name,
+    double Value,
+    double? Min,
+    double? Max,
+    bool OutOfSpec,
+    bool Unmeasured = false);

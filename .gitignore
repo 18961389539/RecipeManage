@@ -21,3 +21,6 @@ blob-report/
 src/RecipesManage.Api/wwwroot/
 .env
 .env.local
+
+# 单实例互斥的锁文件（内容只是持有者诊断信息）
+*.db.lock

@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using RecipesManage.Domain.Batches;
+using RecipesManage.Domain.Common;
 using RecipesManage.Domain.Recipes;
 using Xunit;
 
@@ -101,6 +102,7 @@ public sealed class SnapshotIntegrityTests
         };
         SnapshotIntegrity.Seal(snapshot, options, out var json);
         Assert.DoesNotContain("unitProcedure", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("equipmentClassCode", json, StringComparison.Ordinal);
         var loaded = JsonSerializer.Deserialize<ControlRecipeSnapshot>(json, options);
         Assert.Equal(SnapshotIntegrity.Valid, SnapshotIntegrity.Verify(loaded, options));
 
@@ -136,85 +138,84 @@ public sealed class SnapshotIntegrityTests
     }
 
     [Fact]
-    public void Verify_IgnoresUnitEquipmentSoLegacySnapshotsStayValid()
+    public void Verify_UnitEquipmentChangeInvalidatesNewSeal()
     {
-        var snapshot = new ControlRecipeSnapshot
-        {
-            MasterRecipeId = Guid.NewGuid(),
-            RecipeVersionId = Guid.NewGuid(),
-            VersionNumber = 1,
-            RecipeCode = "AL-HT-2UP",
-            RecipeName = "parallel",
-            ProductCode = "P",
-            ProductName = "prod",
-            FrozenAt = DateTimeOffset.Parse("2026-09-07T00:00:00+08:00"),
-            Steps = []
-        };
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        };
+        var snapshot = BaseSnapshot("AL-HT-2UP", "parallel");
+        var options = JsonOpts();
         SnapshotIntegrity.Seal(snapshot, options, out var json);
         Assert.DoesNotContain("unitEquipment", json, StringComparison.Ordinal);
 
-        var withMap = new ControlRecipeSnapshot
-        {
-            MasterRecipeId = snapshot.MasterRecipeId,
-            RecipeVersionId = snapshot.RecipeVersionId,
-            VersionNumber = snapshot.VersionNumber,
-            RecipeCode = snapshot.RecipeCode,
-            RecipeName = snapshot.RecipeName,
-            ProductCode = snapshot.ProductCode,
-            ProductName = snapshot.ProductName,
-            FrozenAt = snapshot.FrozenAt,
-            IntegrityHash = snapshot.IntegrityHash,
-            UnitEquipment = new Dictionary<string, Guid> { ["UP-淬火"] = Guid.NewGuid() },
-            Steps = snapshot.Steps,
-            Edges = snapshot.Edges
-        };
-        Assert.Equal(SnapshotIntegrity.Valid, SnapshotIntegrity.Verify(withMap, options));
+        var withMap = Copy(snapshot, unitEquipment: new Dictionary<string, Guid> { ["UP-淬火"] = Guid.NewGuid() });
+        Assert.Equal(SnapshotIntegrity.Mismatch, SnapshotIntegrity.Verify(withMap, options));
     }
 
     [Fact]
-    public void Verify_IgnoresLotNumberSoGenealogyDoesNotBreakSealedSnapshot()
+    public void Verify_LotNumberChangeInvalidatesNewSeal()
     {
-        var snapshot = new ControlRecipeSnapshot
-        {
-            MasterRecipeId = Guid.NewGuid(),
-            RecipeVersionId = Guid.NewGuid(),
-            VersionNumber = 1,
-            RecipeCode = "AL-HT-T6",
-            RecipeName = "heat",
-            ProductCode = "P",
-            ProductName = "prod",
-            FrozenAt = DateTimeOffset.Parse("2026-09-07T00:00:00+08:00"),
-            Steps = []
-        };
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        };
+        var snapshot = BaseSnapshot("AL-HT-T6", "heat");
+        var options = JsonOpts();
         SnapshotIntegrity.Seal(snapshot, options, out var json);
         Assert.DoesNotContain("lotNumber", json, StringComparison.Ordinal);
-        var withLot = new ControlRecipeSnapshot
-        {
-            MasterRecipeId = snapshot.MasterRecipeId,
-            RecipeVersionId = snapshot.RecipeVersionId,
-            VersionNumber = snapshot.VersionNumber,
-            RecipeCode = snapshot.RecipeCode,
-            RecipeName = snapshot.RecipeName,
-            ProductCode = snapshot.ProductCode,
-            ProductName = snapshot.ProductName,
-            FrozenAt = snapshot.FrozenAt,
-            IntegrityHash = snapshot.IntegrityHash,
-            LotNumber = "INGOT-01",
-            Steps = snapshot.Steps,
-            Edges = snapshot.Edges
-        };
+        var withLot = Copy(snapshot, lotNumber: "INGOT-01");
+        Assert.Equal(SnapshotIntegrity.Mismatch, SnapshotIntegrity.Verify(withLot, options));
+    }
+
+    [Fact]
+    public void Verify_AcceptsHistoricalV1HashWhenBindingFieldsWereAddedLater()
+    {
+        var snapshot = BaseSnapshot("AL-HT-T6", "heat");
+        var options = JsonOpts();
+        snapshot.IntegrityHash = SnapshotIntegrity.ComputeHashV1(snapshot, options);
+        var withLot = Copy(snapshot, lotNumber: "INGOT-01");
         Assert.Equal(SnapshotIntegrity.Valid, SnapshotIntegrity.Verify(withLot, options));
     }
+
+    [Fact]
+    public void DemandSealed_RejectsMismatch()
+    {
+        var ex = Assert.Throws<DomainException>(() => SnapshotIntegrity.DemandSealed(SnapshotIntegrity.Mismatch));
+        Assert.Equal("SNAPSHOT_INTEGRITY", ex.Code);
+        SnapshotIntegrity.DemandSealed(SnapshotIntegrity.Valid);
+        SnapshotIntegrity.DemandSealed(SnapshotIntegrity.Legacy);
+    }
+
+    private static ControlRecipeSnapshot BaseSnapshot(string code, string name) => new()
+    {
+        MasterRecipeId = Guid.NewGuid(),
+        RecipeVersionId = Guid.NewGuid(),
+        VersionNumber = 1,
+        RecipeCode = code,
+        RecipeName = name,
+        ProductCode = "P",
+        ProductName = "prod",
+        FrozenAt = DateTimeOffset.Parse("2026-09-07T00:00:00+08:00"),
+        Steps = []
+    };
+
+    private static ControlRecipeSnapshot Copy(
+        ControlRecipeSnapshot snapshot,
+        string? lotNumber = null,
+        IReadOnlyDictionary<string, Guid>? unitEquipment = null) => new()
+    {
+        MasterRecipeId = snapshot.MasterRecipeId,
+        RecipeVersionId = snapshot.RecipeVersionId,
+        VersionNumber = snapshot.VersionNumber,
+        RecipeCode = snapshot.RecipeCode,
+        RecipeName = snapshot.RecipeName,
+        ProductCode = snapshot.ProductCode,
+        ProductName = snapshot.ProductName,
+        FrozenAt = snapshot.FrozenAt,
+        IntegrityHash = snapshot.IntegrityHash,
+        LotNumber = lotNumber ?? snapshot.LotNumber,
+        UnitEquipment = unitEquipment ?? snapshot.UnitEquipment,
+        Steps = snapshot.Steps,
+        Edges = snapshot.Edges
+    };
+
+    private static JsonSerializerOptions JsonOpts() => new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 }

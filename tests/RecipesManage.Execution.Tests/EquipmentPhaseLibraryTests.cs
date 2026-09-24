@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
+using static RecipesManage.Execution.Tests.ServiceHarness;
+
 namespace RecipesManage.Execution.Tests;
 
 public sealed class EquipmentPhaseLibraryTests
@@ -42,8 +44,8 @@ public sealed class EquipmentPhaseLibraryTests
         db.Recipes.AddRange(heat, mix);
         await db.SaveChangesAsync();
 
-        var user = new RoleUser(op.Id);
-        var batches = new BatchService(db, user, new NoopScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
+        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
@@ -70,8 +72,8 @@ public sealed class EquipmentPhaseLibraryTests
         db.Recipes.Add(mix);
         await db.SaveChangesAsync();
 
-        var user = new RoleUser(op.Id);
-        var batches = new BatchService(db, user, new NoopScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
+        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BNONE1", mix.Id, equipment.Id), CancellationToken.None);
@@ -106,15 +108,15 @@ public sealed class EquipmentPhaseLibraryTests
         var s2 = new RecipeStep(draft.Id, "S20", "qc", StepType.QualityCheck, 1, 0, 0, 30, null,
             [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)]);
         draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var user = new RoleUser(op.Id);
-        var batches = new BatchService(db, user, new NoopScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
+        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BQ1", recipe.Id, equipment.Id), CancellationToken.None);
@@ -127,48 +129,10 @@ public sealed class EquipmentPhaseLibraryTests
         var s1 = new RecipeStep(draft.Id, "S10", name, type, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "设定值", "", 1, 0, 10, true, false)]);
         draft.ReplaceProcedure([s1], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
         return recipe;
-    }
-
-    private static AppDbContext OpenDb()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(Path.GetTempPath(), $"brmes-eqcls-{Guid.NewGuid():N}.db")}")
-            .Options;
-        var db = new AppDbContext(options);
-        db.Database.EnsureCreated();
-        return db;
-    }
-
-    private sealed class RoleUser(Guid id) : ICurrentUser
-    {
-        public Guid? UserId { get; } = id;
-        public string UserName => "operator";
-        public string DisplayName => "车间操作员";
-        public UserRole? Role => UserRole.Operator;
-        public bool IsAuthenticated => true;
-    }
-
-    private sealed class NoopScheduler : IBatchScheduler
-    {
-        public ValueTask EnqueueStartAsync(Guid batchId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueAbortAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueHoldAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueSkipAsync(Guid batchId, string reason, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueConfirmAsync(Guid batchId, string comment, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-    }
-
-    private sealed class NoopPdf : IBatchRecordPdf
-    {
-        public byte[] Render(BatchRecordDto record) => [];
-    }
-
-    private sealed class NoopPublisher : IExecutionPublisher
-    {
-        public Task PublishAsync(ExecutionEvent evt, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

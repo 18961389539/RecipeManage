@@ -12,6 +12,8 @@ public sealed class MasterRecipe : Entity
     public RecipeLifecycle Lifecycle { get; private set; } = RecipeLifecycle.Active;
     public Guid? CurrentDraftVersionId { get; private set; }
     public Guid? CurrentApprovedVersionId { get; private set; }
+    /// <summary>本配方走哪条审批链；null = 走默认链。提交时解析并冻结，改这里只影响之后的提交。</summary>
+    public string? ApprovalChainCode { get; private set; }
 
     public List<RecipeVersion> Versions { get; private set; } = [];
 
@@ -25,6 +27,12 @@ public sealed class MasterRecipe : Entity
         string? description,
         Guid createdBy)
     {
+        // 创建与导入都走这里，所以一处就能挡住编码丢失的名称落库（见 TextIntegrity）。
+        TextIntegrity.EnsureNotEncodingLoss(code, "配方编码");
+        TextIntegrity.EnsureNotEncodingLoss(name, "配方名称");
+        TextIntegrity.EnsureNotEncodingLoss(productCode, "产品编码");
+        TextIntegrity.EnsureNotEncodingLoss(productName, "产品名称");
+
         var recipe = new MasterRecipe
         {
             Code = code.Trim().ToUpperInvariant(),
@@ -93,6 +101,16 @@ public sealed class MasterRecipe : Entity
         ProductCode = productCode.Trim();
         ProductName = productName.Trim();
         Description = description;
+        Touch();
+    }
+
+    /// <summary>
+    /// 指定本配方以后走哪条审批链（null = 默认链）。
+    /// 只影响之后的提交：在审版本的节点早在提交时就冻结好了，改这里动不了它。
+    /// </summary>
+    public void UseApprovalChain(string? chainCode)
+    {
+        ApprovalChainCode = string.IsNullOrWhiteSpace(chainCode) ? null : chainCode.Trim();
         Touch();
     }
 }

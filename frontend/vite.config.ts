@@ -1,8 +1,13 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    // 纯逻辑测试跑 node 环境即可；将来要给组件写测试再按需引 happy-dom。
+    environment: "node",
+    include: ["src/**/*.spec.ts"]
+  },
   build: {
     rollupOptions: {
       output: {

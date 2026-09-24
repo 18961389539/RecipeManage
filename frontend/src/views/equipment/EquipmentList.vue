@@ -1,355 +1,243 @@
 <template>
   <div>
     <div class="page-title">
-      <h2>设备与 PLC 驱动</h2>
-      <el-button v-if="auth.can('Admin')" type="primary" @click="open()">新增设备</el-button>
+      <div>
+        <h2>{{ $t("设备与 PLC 驱动") }}</h2>
+        <span>{{ $t("产线设备、连接参数，以及设备类上的相模板。") }}</span>
+      </div>
+      <div>
+        <el-button v-if="equipmentPane === 'devices' && auth.can('Admin')" type="primary" @click="open(null)">{{ $t("新增设备") }}</el-button>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <HelpTip term="聚焦本页搜索" chord="/" plain placement="bottom">
+        <el-input
+          v-model="query"
+          class="search-field"
+          clearable
+          data-shortcut-search
+          :placeholder="equipmentPane === 'library' ? $t('搜索设备类 / 相模板') : $t('搜索编码 / 名称 / 主机')"
+        />
+      </HelpTip>
+      <span v-if="!loading" class="result-count">{{ countText }}</span>
     </div>
     <el-alert class="gap-after"
       v-if="error"
       :closable="false"
       type="error"
-      :title="`设备列表加载失败：${error}`"
+      :title="$t('设备列表加载失败：{0}', [error])"
       show-icon
-     
     />
-    <el-table :data="items" v-loading="loading" empty-text="暂无设备">
-      <el-table-column prop="code" label="编码" width="100" fixed />
-      <el-table-column prop="name" label="名称" />
-      <el-table-column prop="protocol" label="协议" width="120">
-        <template #default="{ row }">{{ protocolLabel(row.protocol) }}</template>
-      </el-table-column>
-      <el-table-column prop="host" label="主机" />
-      <el-table-column prop="port" label="端口" width="80" />
-      <el-table-column prop="plcModel" label="型号" width="120" />
-      <el-table-column prop="equipmentClassCode" label="设备类" width="110">
-        <template #default="{ row }">{{ row.equipmentClassCode || "未分类" }}</template>
-      </el-table-column>
-      <el-table-column prop="enabled" label="启用" width="80">
-        <template #default="{ row }">{{ row.enabled ? "是" : "否" }}</template>
-      </el-table-column>
-      <el-table-column label="占用" width="160">
-        <template #header><HelpTip term="设备占用" /></template>
-        <template #default="{ row }">
-          <span v-if="row.occupancy === 'Occupied'" class="occ" @click.stop="openOccupant(row)">{{ row.occupyingBatchNo }}</span>
-          <span v-else>空闲</span>
+    <el-tabs v-model="equipmentPane" class="equipment-tabs">
+      <el-tab-pane name="devices">
+        <template #label>
+          <span class="tab-label"><HelpTip term="设备驱动">{{ $t("设备") }}</HelpTip></span>
         </template>
-      </el-table-column>
-      <el-table-column label="" width="360">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="open(row)">{{ auth.can('Admin') ? "编辑" : "查看" }}</el-button>
-          <el-button v-if="auth.can('Admin', 'Operator', 'Supervisor')" link type="primary" :loading="busy === `test:${row.id}`" @click="testConn(row)">测试连接</el-button>
-          <el-button v-if="auth.can('Admin')" link type="primary" :loading="busy === `validate:${row.id}`" @click="validate(row)">校验点表</el-button>
-          <el-dropdown v-if="(row.protocol === 'Simulator' || row.protocol === 'ModbusTcp' || row.protocol === 'OpcUa' || row.protocol === 'SiemensS7') && auth.can('Operator', 'Supervisor')" @command="(mode: string) => inject(row, mode)">
-            <el-button link type="warning" :loading="busy === `inject:${row.id}`">仿真故障</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="HoldNotReady">保持未 Ready（禁止写参）</el-dropdown-item>
-                <el-dropdown-item command="CorruptEcho">回读不一致（拒绝 Trigger_Write）</el-dropdown-item>
-                <el-dropdown-item command="NoAck">Trigger 后不应答</el-dropdown-item>
-                <el-dropdown-item command="StepError">PLC 报 Step_Error</el-dropdown-item>
-                <el-dropdown-item command="DropHeartbeat">丢失心跳</el-dropdown-item>
-                <el-dropdown-item command="None" divided>清除故障</el-dropdown-item>
-              </el-dropdown-menu>
+        <el-table :data="shown" v-loading="loading" scrollbar-always-on max-height="calc(100vh - 340px)" :empty-text="query.trim() ? $t('没有匹配的设备') : $t('暂无设备')">
+          <el-table-column prop="code" :label="$t('编码')" width="100" fixed sortable :sort-method="sorters.code" />
+          <el-table-column prop="name" :label="$t('名称')" sortable :sort-method="sorters.name" />
+          <el-table-column prop="protocol" :label="$t('协议')" width="120" sortable :sort-method="sorters.protocol">
+            <template #default="{ row }">{{ protocolLabel(row.protocol) }}</template>
+          </el-table-column>
+          <el-table-column prop="host" :label="$t('主机')" sortable :sort-method="sorters.host" />
+          <el-table-column prop="port" :label="$t('端口')" width="80" sortable :sort-method="sorters.port" />
+          <el-table-column prop="plcModel" :label="$t('型号')" width="120" />
+          <el-table-column prop="equipmentClassCode" :label="$t('设备类')" width="110" sortable :sort-method="sorters.equipmentClassCode">
+            <template #default="{ row }">{{ row.equipmentClassCode || $t("未分类") }}</template>
+          </el-table-column>
+          <el-table-column prop="enabled" :label="$t('启用')" width="80" sortable :sort-method="sorters.enabled" :sort-orders="DESC_FIRST">
+            <template #default="{ row }">{{ row.enabled ? $t("是") : $t("否") }}</template>
+          </el-table-column>
+          <el-table-column prop="occupancy" :label="$t('占用')" width="160" sortable :sort-method="sorters.occupancy">
+            <template #header><HelpTip term="设备占用" /></template>
+            <template #default="{ row }">
+              <span v-if="row.occupancy === 'Occupied'" class="occ" @click.stop="openOccupant(row)">{{ row.occupyingBatchNo }}</span>
+              <span v-else>{{ $t("空闲") }}</span>
             </template>
-          </el-dropdown>
+          </el-table-column>
+          <el-table-column :label="$t('操作')" width="360">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="open(row)">{{ auth.can('Admin') ? $t("编辑") : $t("查看") }}</el-button>
+              <el-button v-if="auth.can('Admin', 'Operator', 'Supervisor')" link type="primary" :loading="busy === `test:${row.id}`" @click="testConn(row)">{{ $t("测试连接") }}</el-button>
+              <el-button v-if="auth.can('Admin')" link type="primary" :loading="busy === `validate:${row.id}`" @click="validate(row)">{{ $t("校验点表") }}</el-button>
+              <el-dropdown v-if="faultInjectable(row) && auth.can('Operator', 'Supervisor')" @command="(mode: string) => inject(row, mode)">
+                <el-button link type="warning" :loading="busy === `inject:${row.id}`">{{ $t("仿真故障") }}</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="m in injectModes" :key="m.mode" :command="m.mode" :divided="m.mode === 'None'">{{ m.label }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-alert class="gap-before" type="info" show-icon :title="$t('驱动层解耦：Simulator / Siemens S7（IoTClient） / Modbus TCP（IoTClient） / OPC UA（OPC Foundation）。握手变量集合固定，禁止绕过 PLC_Ready 盲写。')" />
+      </el-tab-pane>
+      <el-tab-pane name="library">
+        <template #label>
+          <span class="tab-label"><HelpTip term="相库">{{ $t("相库") }}</HelpTip></span>
         </template>
-      </el-table-column>
-    </el-table>
-    <el-alert class="gap-before" type="info" show-icon title="驱动层解耦：Simulator / Siemens S7（IoTClient） / Modbus TCP（IoTClient） / OPC UA（OPC Foundation）。握手变量集合固定，禁止绕过 PLC_Ready 盲写。" />
+        <PhaseLibraryPanel
+          :classes="shownClasses"
+          :can-edit="canEditLibrary"
+          :focus-class-id="focusClass?.id ?? ''"
+          :expand-all="equipmentPane === 'library' && !!query.trim()"
+          @changed="load"
+        />
+      </el-tab-pane>
+    </el-tabs>
 
-    <el-dialog v-model="visible" :title="form.id ? '设备 / 握手点表' : '新增设备'" width="720px">
-      <el-form label-width="110px" :disabled="!auth.can('Admin')">
-        <el-form-item label="编码"><el-input v-model="form.code" :disabled="!!form.id" /></el-form-item>
-        <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="协议">
-          <el-select v-model="form.protocol" style="width:100%">
-            <el-option label="Simulator" value="Simulator" />
-            <el-option label="Siemens S7" value="SiemensS7" />
-            <el-option label="Modbus TCP" value="ModbusTcp" />
-            <el-option label="OPC UA" value="OpcUa" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="主机"><el-input v-model="form.host" placeholder="IP 或 opc.tcp://host:4840" /></el-form-item>
-        <el-form-item label="端口"><el-input-number v-model="form.port" /></el-form-item>
-        <el-form-item label="型号"><el-input v-model="form.plcModel" /></el-form-item>
-        <el-form-item label="Rack/Slot">
-          <el-input-number v-model="form.rack" /> / <el-input-number v-model="form.slot" />
-        </el-form-item>
-        <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
-        <el-form-item label="设备类">
-          <el-select v-model="form.equipmentClassCode" clearable placeholder="未分类则跳过相能力校验" style="width:100%">
-            <el-option v-for="c in classes" :key="c.code" :label="`${c.code} · ${c.name}`" :value="c.code" />
-          </el-select>
-        </el-form-item>
-        <el-divider>握手看门狗（秒）</el-divider>
-        <el-form-item label="等待 Ready"><el-input-number v-model="watchdog.readyWaitSeconds" :min="2" /></el-form-item>
-        <el-form-item label="写参超时"><el-input-number v-model="watchdog.writeTimeoutSeconds" :min="1" /></el-form-item>
-        <el-form-item label="应答超时"><el-input-number v-model="watchdog.ackTimeoutSeconds" :min="1" /></el-form-item>
-        <el-form-item label="心跳超时"><el-input-number v-model="watchdog.heartbeatTimeoutSeconds" :min="1" /></el-form-item>
-        <el-form-item label="复位超时"><el-input-number v-model="watchdog.resetTimeoutSeconds" :min="1" /></el-form-item>
-        <el-form-item label="保持应答"><el-input-number v-model="watchdog.holdAckSeconds" :min="1" /></el-form-item>
-        <el-divider>握手点表（禁止缺 PLC_Ready / Trigger_Write）</el-divider>
-        <el-form-item>
-          <template #label>Step_ID <HelpTip term="Step_ID" /></template>
-          <el-input v-model="tagMap.stepId" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Step_Type <HelpTip term="Step_Type" /></template>
-          <el-input v-model="tagMap.stepType" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Trigger_Write <HelpTip term="Trigger_Write" /></template>
-          <el-input v-model="tagMap.triggerWrite" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>PLC_Ready <HelpTip term="PLC_Ready" /></template>
-          <el-input v-model="tagMap.plcReady" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Step_Running <HelpTip term="Step_Running" /></template>
-          <el-input v-model="tagMap.stepRunning" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Step_Complete <HelpTip term="Step_Complete" /></template>
-          <el-input v-model="tagMap.stepComplete" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Step_Error <HelpTip term="Step_Error" /></template>
-          <el-input v-model="tagMap.stepError" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Host_Hold <HelpTip term="Host_Hold" /></template>
-          <el-input v-model="tagMap.hostHold" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>PLC_Held <HelpTip term="PLC_Held" /></template>
-          <el-input v-model="tagMap.plcHeld" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Error_Code <HelpTip term="Error_Code" /></template>
-          <el-input v-model="tagMap.errorCode" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Heartbeat <HelpTip term="Heartbeat" /></template>
-          <el-input v-model="tagMap.heartbeat" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Temperature <HelpTip term="Temperature" /></template>
-          <el-input v-model="tagMap.measured.Temperature" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>HoldTime <HelpTip term="HoldTime" /></template>
-          <el-input v-model="tagMap.measured.HoldTime" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>Pressure <HelpTip term="Pressure" /></template>
-          <el-input v-model="tagMap.measured.Pressure" />
-        </el-form-item>
-        <template v-if="form.protocol === 'OpcUa'">
-          <el-divider>OPC UA 安全（默认不自动接受证书、匿名）</el-divider>
-          <el-form-item label="签名端点"><el-switch v-model="tagMap.opcUaUseSecurity" /></el-form-item>
-          <el-form-item label="接受自签证书"><el-switch v-model="tagMap.opcUaAutoAcceptCertificates" /></el-form-item>
-          <el-form-item label="用户名"><el-input v-model="tagMap.opcUaUser" placeholder="留空为匿名" /></el-form-item>
-          <el-form-item label="密码"><el-input v-model="tagMap.opcUaPassword" type="password" show-password /></el-form-item>
-        </template>
-      </el-form>
-      <template #footer>
-        <el-button @click="visible = false">关闭</el-button>
-        <el-button v-if="auth.can('Admin')" type="primary" :loading="saving" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
+    <EquipmentFormDialog v-model="formVisible" :equipment="editing" :classes="classes" :can-edit="auth.can('Admin')" @saved="load" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
-import http from "../../api/http";
-import type { ConnectionTestDto, EquipmentClassDto, EquipmentDto, ExecutionEvent, PlcProtocol, TagMapCheckDto } from "../../api/types";
+import { t } from "../../i18n";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
+import {
+  injectSimulatorFault, listEquipment, listEquipmentClasses, testConnection, validateTagMap
+} from "../../api/equipment";
+import type { EquipmentClassDto, EquipmentDto, ExecutionEvent } from "../../api/types";
 import { applyOccupancyToEquipment, occupancyFromEvent, useExecutionHub } from "../../realtime/executionHub";
 import { useCoalescedReload } from "../../utils/useCoalescedReload";
 import { usePolling } from "../../utils/usePolling";
 import { useAuthStore } from "../../stores/auth";
-import { protocolLabel } from "../../utils/labels";
+import { occupancyOrder, protocolLabel } from "../../utils/labels";
+import { matchesQuery } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
+import { templateProgram } from "../../utils/phaseTemplate";
 import HelpTip from "../../components/HelpTip.vue";
+import EquipmentFormDialog from "../../components/EquipmentFormDialog.vue";
+import PhaseLibraryPanel from "../../components/PhaseLibraryPanel.vue";
 
+/**
+ * 设备页只剩"列表 + 三个行内动作 + 实时刷新"。
+ * 设备表单在 EquipmentFormDialog、相库在 PhaseLibraryPanel / PhaseTemplateDialog，
+ * 点表 JSON 的翻译在 utils/tagMap（唯一可单测的那部分）。
+ */
 const auth = useAuthStore();
+const route = useRoute();
 const router = useRouter();
 const items = ref<EquipmentDto[]>([]);
+const query = ref("");
 const classes = ref<EquipmentClassDto[]>([]);
-const saving = ref(false);
 const busy = ref("");
-const { loading, error, run } = useLoad();
+const { loading, error, runValue } = useLoad();
+const canEditLibrary = computed(() => auth.can("Admin", "ProcessEngineer"));
+const formVisible = ref(false);
+const editing = ref<EquipmentDto | null>(null);
+
+type EquipmentPane = "devices" | "library";
+const equipmentPane = computed<EquipmentPane>({
+  get: () => (route.query.tab === "library" ? "library" : "devices"),
+  set: (value) => {
+    const next = { ...route.query };
+    if (value === "library") next.tab = "library";
+    else {
+      delete next.tab;
+      delete next.class;
+    }
+    void router.replace({ query: next });
+  }
+});
+
+const shownClasses = computed(() => {
+  const q = query.value;
+  if (equipmentPane.value !== "library" || !q.trim()) return classes.value;
+  return classes.value.flatMap((cls) => {
+    const classHit = matchesQuery(q, cls.code, cls.name, cls.description);
+    const templates = classHit
+      ? cls.templates
+      : cls.templates.filter((t) => matchesQuery(q, t.code, t.name, t.operation, String(templateProgram(t))));
+    if (!classHit && !templates.length) return [];
+    return [{ ...cls, templates }];
+  });
+});
+
+/** 设计器与设备页用 `?tab=library&class=CODE` 深链到某个设备类，面板据此只展开它。 */
+const focusClass = computed(() => {
+  const raw = route.query.class;
+  const code = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  return code ? classes.value.find((c) => c.code.toUpperCase() === code) ?? null : null;
+});
+
+const shown = computed(() =>
+  items.value.filter((row) =>
+    matchesQuery(
+      query.value,
+      row.code,
+      row.name,
+      row.host,
+      row.plcModel,
+      row.equipmentClassCode,
+      protocolLabel(row.protocol),
+      row.occupyingBatchNo
+    )
+  )
+);
+/** 排序口径见 utils/tableSort：协议/主机名按拼音，占用按次序（被占的在前）。 */
+const sorters = {
+  code: byText<EquipmentDto>((r) => r.code),
+  name: byText<EquipmentDto>((r) => r.name),
+  protocol: byText<EquipmentDto>((r) => protocolLabel(r.protocol)),
+  host: byText<EquipmentDto>((r) => r.host),
+  port: byNumber<EquipmentDto>((r) => r.port),
+  equipmentClassCode: byText<EquipmentDto>((r) => r.equipmentClassCode),
+  enabled: byNumber<EquipmentDto>((r) => (r.enabled ? 1 : 0)),
+  occupancy: byEnum<EquipmentDto>((r) => r.occupancy, occupancyOrder)
+};
+const countText = computed(() => {
+  if (equipmentPane.value === "library") {
+    const total = classes.value.reduce((sum, cls) => sum + cls.templates.length, 0);
+    const n = shownClasses.value.reduce((sum, cls) => sum + cls.templates.length, 0);
+    return query.value.trim() ? t("{0} / {1} 个相模板", n, total) : t("共 {0} 个相模板", total);
+  }
+  const n = shown.value.length;
+  const total = items.value.length;
+  return query.value.trim() ? t("{0} / {1} 台", n, total) : t("共 {0} 台", total);
+});
+
+/** computed 而非模块常量：t() 要在语言切换后重算，写死在数组里会冻结在加载时的语言。 */
+const injectModes = computed(() => [
+  { mode: "HoldNotReady", label: t("保持未 Ready（禁止写参）") },
+  { mode: "CorruptEcho", label: t("回读不一致（拒绝 Trigger_Write）") },
+  { mode: "NoAck", label: t("Trigger 后不应答") },
+  { mode: "StepError", label: t("PLC 报 Step_Error") },
+  { mode: "DropHeartbeat", label: t("丢失心跳") },
+  { mode: "None", label: t("清除故障") }
+]);
+/** 只有环回/仿真驱动能被注入故障，真实 PLC 上这个菜单必须不出现。 */
+function faultInjectable(row: EquipmentDto) {
+  return ["Simulator", "ModbusTcp", "OpcUa", "SiemensS7"].includes(row.protocol);
+}
+
 // 轮询也必须走合并窗口：绕过 scheduleReload 会和事件驱动的重拉叠打出重复请求。
 const poll = usePolling(() => scheduleReload());
-const visible = ref(false);
-const form = reactive({
-  id: "",
-  code: "",
-  name: "",
-  protocol: "Simulator" as PlcProtocol,
-  host: "127.0.0.1",
-  port: 102,
-  plcModel: "S7_1200",
-  rack: 0,
-  slot: 1,
-  enabled: true,
-  tagMapJson: "{}",
-  description: "",
-  watchdogJson: "",
-  equipmentClassCode: "" as string
-});
-const tagMap = reactive(emptyMap());
-const watchdog = reactive({
-  readyWaitSeconds: 15,
-  writeTimeoutSeconds: 5,
-  ackTimeoutSeconds: 8,
-  heartbeatTimeoutSeconds: 3,
-  resetTimeoutSeconds: 8,
-  idleSettleSeconds: 10,
-  holdAckSeconds: 8
-});
-
-function emptyMap() {
-  const params: string[] = [];
-  for (let i = 0; i < 16; i++) params.push(`DB10.${20 + i * 4}`);
-  return {
-    stepId: "DB10.0",
-    stepType: "DB10.4",
-    triggerWrite: "DB10.8.0",
-    plcReady: "DB10.8.1",
-    stepRunning: "DB10.8.2",
-    stepComplete: "DB10.8.3",
-    stepError: "DB10.8.4",
-    hostHold: "DB10.8.5",
-    plcHeld: "DB10.8.6",
-    errorCode: "DB10.12",
-    heartbeat: "DB10.16",
-    params,
-    measured: { Temperature: "DB10.84", Pressure: "DB10.88", HoldTime: "DB10.92" },
-    opcUaUseSecurity: false,
-    opcUaAutoAcceptCertificates: false,
-    opcUaUser: "",
-    opcUaPassword: ""
-  };
-}
-
-function applyMap(json: string) {
-  const raw = JSON.parse(json || "{}") as Record<string, unknown>;
-  const next = emptyMap();
-  next.stepId = String(raw.stepId ?? raw.StepId ?? next.stepId);
-  next.stepType = String(raw.stepType ?? raw.StepType ?? next.stepType);
-  next.triggerWrite = String(raw.triggerWrite ?? raw.TriggerWrite ?? next.triggerWrite);
-  next.plcReady = String(raw.plcReady ?? raw.PlcReady ?? next.plcReady);
-  next.stepRunning = String(raw.stepRunning ?? raw.StepRunning ?? next.stepRunning);
-  next.stepComplete = String(raw.stepComplete ?? raw.StepComplete ?? next.stepComplete);
-  next.stepError = String(raw.stepError ?? raw.StepError ?? next.stepError);
-  next.hostHold = String(raw.hostHold ?? raw.HostHold ?? next.hostHold);
-  next.plcHeld = String(raw.plcHeld ?? raw.PlcHeld ?? next.plcHeld);
-  next.errorCode = String(raw.errorCode ?? raw.ErrorCode ?? next.errorCode);
-  next.heartbeat = String(raw.heartbeat ?? raw.Heartbeat ?? next.heartbeat);
-  const measured = (raw.measured ?? raw.Measured ?? {}) as Record<string, string>;
-  next.measured.Temperature = measured.Temperature ?? next.measured.Temperature;
-  next.measured.HoldTime = measured.HoldTime ?? next.measured.HoldTime;
-  next.measured.Pressure = measured.Pressure ?? next.measured.Pressure;
-  const params = (raw.params ?? raw.Params) as string[] | undefined;
-  if (Array.isArray(params) && params.length === 16) next.params = params;
-  next.opcUaUseSecurity = Boolean(raw.opcUaUseSecurity ?? raw.OpcUaUseSecurity);
-  next.opcUaAutoAcceptCertificates = Boolean(raw.opcUaAutoAcceptCertificates ?? raw.OpcUaAutoAcceptCertificates);
-  next.opcUaUser = String(raw.opcUaUser ?? raw.OpcUaUser ?? "");
-  next.opcUaPassword = String(raw.opcUaPassword ?? raw.OpcUaPassword ?? "");
-  Object.assign(tagMap, next);
-  tagMap.measured = next.measured;
-  tagMap.params = next.params;
-}
-
-function applyWatchdog(json?: string | null) {
-  const defaults = {
-    readyWaitSeconds: 15,
-    writeTimeoutSeconds: 5,
-    ackTimeoutSeconds: 8,
-    heartbeatTimeoutSeconds: 3,
-    resetTimeoutSeconds: 8,
-    idleSettleSeconds: 10,
-    holdAckSeconds: 8
-  };
-  try {
-    const raw = JSON.parse(json || "{}") as Record<string, number>;
-    Object.assign(watchdog, defaults, raw);
-  } catch {
-    Object.assign(watchdog, defaults);
-  }
-}
 
 async function load() {
   // 原先裸 await：4 秒轮询一旦失败会持续抛未处理 rejection，界面也不会有任何提示。
-  await run(http.get<EquipmentDto[]>("/equipment"), (d) => (items.value = d));
-  await run(http.get<EquipmentClassDto[]>("/equipment/classes"), (d) => (classes.value = d));
+  await runValue(listEquipment(), (d) => (items.value = d));
+  await runValue(listEquipmentClasses(), (d) => (classes.value = d));
+}
+
+/** 复制一份再交给对话框：表单编辑不能改动列表里的那一行，否则取消后界面会留着没保存的值。 */
+function open(row: EquipmentDto | null) {
+  editing.value = row ? { ...row } : null;
+  formVisible.value = true;
 }
 
 function openOccupant(row: EquipmentDto) {
   if (row.occupyingBatchId) router.push(`/batches/${row.occupyingBatchId}`);
 }
 
-function open(row?: EquipmentDto) {
-  if (row) {
-    Object.assign(form, row);
-    applyMap(row.tagMapJson);
-    applyWatchdog(row.watchdogJson);
-  } else {
-    Object.assign(form, {
-      id: "", code: "", name: "", protocol: "Simulator", host: "127.0.0.1", port: 102,
-      plcModel: "S7_1200", rack: 0, slot: 1, enabled: true, tagMapJson: "{}", description: "", watchdogJson: "",
-      equipmentClassCode: ""
-    });
-    applyMap(JSON.stringify(emptyMap()));
-    applyWatchdog(null);
-  }
-  visible.value = true;
-}
-
-async function save() {
-  saving.value = true;
-  try {
-    form.tagMapJson = JSON.stringify({
-      StepId: tagMap.stepId,
-      StepType: tagMap.stepType,
-      TriggerWrite: tagMap.triggerWrite,
-      PlcReady: tagMap.plcReady,
-      StepRunning: tagMap.stepRunning,
-      StepComplete: tagMap.stepComplete,
-      StepError: tagMap.stepError,
-      HostHold: tagMap.hostHold,
-      PlcHeld: tagMap.plcHeld,
-      ErrorCode: tagMap.errorCode,
-      Heartbeat: tagMap.heartbeat,
-      Params: tagMap.params,
-      Measured: tagMap.measured,
-      OpcUaUseSecurity: tagMap.opcUaUseSecurity,
-      OpcUaAutoAcceptCertificates: tagMap.opcUaAutoAcceptCertificates,
-      OpcUaUser: tagMap.opcUaUser,
-      OpcUaPassword: tagMap.opcUaPassword
-    });
-    form.watchdogJson = JSON.stringify(watchdog);
-    if (form.id) await http.put(`/equipment/${form.id}`, form);
-    else await http.post("/equipment", form);
-    visible.value = false;
-    await load();
-  } catch (e) {
-    ElMessage.error((e as Error).message);
-  } finally {
-    saving.value = false;
-  }
-}
-
 async function validate(row: EquipmentDto) {
   // 键里带动作：一行有三个操作按钮，只写 row.id 会让没被点的那两个也一起转。
   busy.value = `validate:${row.id}`;
   try {
-    const { data } = await http.post<TagMapCheckDto>(`/equipment/${row.id}/validate-tagmap`);
-    ElMessage.success(data.message);
+    ElMessage.success((await validateTagMap(row.id)).message);
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
@@ -361,7 +249,7 @@ async function testConn(row: EquipmentDto) {
   // OPC UA 连不上要等超时，好几秒没有任何反馈，不加 loading 会被当成没点上而反复点。
   busy.value = `test:${row.id}`;
   try {
-    const { data } = await http.post<ConnectionTestDto>(`/equipment/${row.id}/test-connection`);
+    const data = await testConnection(row.id);
     if (data.connected) ElMessage.success(`${data.message} (${data.latencyMs.toFixed(0)} ms)`);
     else ElMessage.error(data.message);
   } catch (e) {
@@ -372,10 +260,25 @@ async function testConn(row: EquipmentDto) {
 }
 
 async function inject(row: EquipmentDto, mode: string) {
+  const label = injectModes.value.find((m) => m.mode === mode)?.label ?? mode;
+  try {
+    await ElMessageBox.confirm(
+      mode === "None"
+        ? t("清除 {0} 上的仿真故障？", row.code)
+        : t("向 {0} 注入「{1}」？若该设备上有运行中批次，会进入故障或保持。", row.code, label),
+      t("仿真故障"),
+      {
+        type: "warning",
+        confirmButtonText: mode === "None" ? t("清除") : t("注入"),
+        cancelButtonText: t("取消")
+      }
+    );
+  } catch {
+    return;
+  }
   busy.value = `inject:${row.id}`;
   try {
-    const { data } = await http.post<TagMapCheckDto>(`/equipment/${row.id}/inject-fault`, { mode });
-    ElMessage.warning(data.message);
+    ElMessage.warning((await injectSimulatorFault(row.id, mode)).message);
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
@@ -404,4 +307,7 @@ useExecutionHub({ onExecution });
 
 <style scoped>
 .occ { cursor: pointer; color: var(--accent-bright); }
+.equipment-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-3); }
+.equipment-tabs :deep(.el-tabs__item) { padding: 0 16px; }
+.tab-label { display: inline-flex; align-items: center; gap: 6px; }
 </style>

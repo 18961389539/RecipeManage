@@ -21,8 +21,21 @@ export function useLoad() {
    *              允许异步（如拿到列表后继续拉详情），此处 await 住以便其异常也进入同一错误处理。
    */
   async function run<T>(task: Promise<{ data: T }>, apply: (data: T) => unknown): Promise<void> {
+    return settle(task, (r) => apply(r.data));
+  }
+
+  /**
+   * 与 run 同一套 loading/error 语义，只是收口的服务层函数已经解过包了
+   * （`api/equipment.ts` 那类返回 `Promise<T>` 而不是 `Promise<AxiosResponse<T>>`）。
+   * 分成两个名字而不是靠"有没有 .data 属性"去猜：DTO 自己也可能有个叫 data 的字段。
+   */
+  async function runValue<T>(task: Promise<T>, apply: (data: T) => unknown): Promise<void> {
+    return settle(task, apply);
+  }
+
+  async function settle<T>(task: Promise<T>, apply: (data: T) => unknown): Promise<void> {
     try {
-      await apply((await task).data);
+      await apply(await task);
       error.value = "";
     } catch (e) {
       error.value = (e as Error).message || "数据加载失败";
@@ -31,5 +44,5 @@ export function useLoad() {
     }
   }
 
-  return { loading, error, run };
+  return { loading, error, run, runValue };
 }

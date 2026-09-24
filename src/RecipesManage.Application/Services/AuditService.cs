@@ -7,11 +7,17 @@ namespace RecipesManage.Application.Services;
 
 public sealed class AuditService(IAppDbContext db)
 {
+    /// <summary>
+    /// 履历查询。<paramref name="sort"/> 取前端的列 prop 名，白名单外（含 null）一律按时间；
+    /// <paramref name="dir"/> 只有 "asc" 是升序，其余都是降序——默认"先看最近发生了什么"。
+    /// </summary>
     public async Task<AuditLogPageDto> QueryAsync(
         string? entityType,
         string? entityId,
         int skip,
         int take,
+        string? sort,
+        string? dir,
         CancellationToken ct)
     {
         take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
@@ -22,29 +28,27 @@ public sealed class AuditService(IAppDbContext db)
         if (!string.IsNullOrWhiteSpace(entityId))
             query = query.Where(x => x.EntityId == entityId);
 
-        if (db.SupportsServerDateOrdering)
+        var ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase);
+        // 排序与分页都在 SQL 里做。以前只能整表读进内存：SQLite 提供器禁止 ORDER BY 原生的
+        // DateTimeOffset 列，而 <c>AuditLog.At</c> 现在存成"字典序即时间序"的定宽 TEXT（见 AuditTimestamp），
+        // 于是时间列也能直接排。Id 兜底做次级键——同用户名下大量同行时，没有它翻页会重复或漏行。
+        var ordered = (sort?.ToLowerInvariant(), ascending) switch
         {
-            // PostgreSQL（生产）：总数与分页全部下推，不再读入筛选后的全部履历。
-            var total = await query.CountAsync(ct);
-            var page = await query
-                .OrderByDescending(x => x.At)
-                .Skip(skip)
-                .Take(take)
-                .Select(x => new AuditLogDto(x.Id, x.UserName, x.Action, x.EntityType, x.EntityId, x.Detail, x.At))
-                .ToListAsync(ct);
-            return new AuditLogPageDto(total, page);
-        }
+            ("username", true) => query.OrderBy(x => x.UserName).ThenBy(x => x.Id),
+            ("username", false) => query.OrderByDescending(x => x.UserName).ThenBy(x => x.Id),
+            ("action", true) => query.OrderBy(x => x.Action).ThenBy(x => x.Id),
+            ("action", false) => query.OrderByDescending(x => x.Action).ThenBy(x => x.Id),
+            ("entitytype", true) => query.OrderBy(x => x.EntityType).ThenBy(x => x.Id),
+            ("entitytype", false) => query.OrderByDescending(x => x.EntityType).ThenBy(x => x.Id),
+            ("detail", true) => query.OrderBy(x => x.Detail).ThenBy(x => x.Id),
+            ("detail", false) => query.OrderByDescending(x => x.Detail).ThenBy(x => x.Id),
+            (_, true) => query.OrderBy(x => x.At).ThenBy(x => x.Id),
+            _ => query.OrderByDescending(x => x.At).ThenBy(x => x.Id),
+        };
 
-        // SQLite 提供器对 ORDER BY 里的 DateTimeOffset 直接抛 NotSupportedException，
-        // 这套迁移同时面向 PostgreSQL，不能靠 raw SQL 打通，因此本地/测试路径仍在客户端排序。
-        var rows = (await query.ToListAsync(ct))
-            .OrderByDescending(x => x.At)
-            .ToList();
         return new AuditLogPageDto(
-            rows.Count,
-            rows
-                .Skip(skip)
-                .Take(take)
+            await query.CountAsync(ct),
+            (await ordered.Skip(skip).Take(take).ToListAsync(ct))
                 .Select(x => new AuditLogDto(x.Id, x.UserName, x.Action, x.EntityType, x.EntityId, x.Detail, x.At))
                 .ToList());
     }

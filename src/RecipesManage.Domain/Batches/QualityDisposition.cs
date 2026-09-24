@@ -5,17 +5,27 @@ namespace RecipesManage.Domain.Batches;
 
 /// <summary>
 /// 对照控制配方快照规格判定归档质检是否超差，供质量放行前拦截。
+/// 标记 ArchiveAsQuality 的参数必须有实测绑定；禁止用设定值或 PLC 原始通道冒充合格。
 /// </summary>
 public static class QualityDisposition
 {
     public static bool HasOutOfSpec(ControlRecipeSnapshot snapshot, IEnumerable<BatchStepExecution> executions)
     {
-        foreach (var exec in executions)
+        var byStep = executions.ToDictionary(e => e.StepId);
+        foreach (var step in snapshot.Steps)
         {
-            if (exec.Outcome is "Skipped" or "Faulted")
+            if (!byStep.TryGetValue(step.StepId, out var exec))
                 continue;
+            if (exec.Outcome is StepOutcome.Skipped or StepOutcome.Faulted or StepOutcome.Pending)
+                continue;
+
+            var qualityParams = step.Parameters.Where(p => p.ArchiveAsQuality).ToList();
+            if (qualityParams.Count == 0)
+                continue;
+
             if (string.IsNullOrWhiteSpace(exec.QualityJson) || !exec.QualityJson.TrimStart().StartsWith('{'))
-                continue;
+                return true;
+
             Dictionary<string, double>? parsed;
             try
             {
@@ -23,22 +33,15 @@ public static class QualityDisposition
             }
             catch (JsonException)
             {
-                continue;
+                return true;
             }
             if (parsed is null)
-                continue;
+                return true;
 
-            var step = snapshot.Steps.FirstOrDefault(s => s.StepId == exec.StepId);
-            if (step is null)
-                continue;
-            foreach (var (tag, value) in parsed)
+            foreach (var param in qualityParams)
             {
-                if (tag.StartsWith("PLC:", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                var param = step.Parameters.FirstOrDefault(p =>
-                    string.Equals(p.Name, tag, StringComparison.Ordinal));
-                if (param is null)
-                    continue;
+                if (!parsed.TryGetValue(param.Name, out var value))
+                    return true;
                 if (param.Min is double min && value < min)
                     return true;
                 if (param.Max is double max && value > max)

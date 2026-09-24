@@ -52,7 +52,7 @@ public sealed class QualityArchiveTests
             ["Pressure"] = 1.06
         });
         Assert.Equal(8.04, bound["保温时长"]);
-        Assert.NotEqual(8.04, bound["升温斜率"]);
+        Assert.False(bound.ContainsKey("升温斜率"));
     }
 
     [Fact]
@@ -67,9 +67,11 @@ public sealed class QualityArchiveTests
             ]
         };
         var bound = QualityArchive.Bind(step, new Dictionary<string, double> { ["Temperature"] = 530, ["HoldTime"] = 1 });
-        Assert.Equal(95, bound["硬度下限"]);
+        Assert.False(bound.ContainsKey("硬度下限"));
         Assert.Equal(530, bound["PLC:Temperature"]);
-        Assert.False(QualityArchive.Evaluate(step, bound).Any(r => r.OutOfSpec));
+        var row = Assert.Single(QualityArchive.Evaluate(step, bound));
+        Assert.True(row.Unmeasured);
+        Assert.False(row.OutOfSpec);
     }
 
     [Fact]

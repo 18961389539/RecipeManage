@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Domain.Batches;
+using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Recipes;
 using RecipesManage.Infrastructure.Records;
 using Xunit;
@@ -118,15 +119,23 @@ public sealed class BatchRecordPdfTests
             BatchStatus.Completed,
             "Valid",
             snapshot,
-            [new StepExecutionDto(stepId, "S10", "升温", StepType.Heat, 0, "Completed", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, """{"目标温度":529.4}""")],
+            [new StepExecutionDto(stepId, "S10", "升温", StepType.Heat, 0, StepOutcome.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, """{"目标温度":529.4}""")],
             [new HandshakeLogDto(DateTimeOffset.UtcNow, "S10", "WritingParameters", "write", "Step_ID=10", 4)],
             [new SampleDto(DateTimeOffset.UtcNow, "Temperature", 529.4, "℃", stepId)],
             [],
-            [new ApprovalDto(Guid.NewGuid(), ApprovalLevel.Quality, ApprovalDecision.Approved, "qa", "ok", DateTimeOffset.UtcNow, "质量批准")],
+            [new ApprovalDto(Guid.NewGuid(), 1, ApprovalNode.Quality, "质量审核", UserRole.Quality, ApprovalDecision.Approved, "qa", "ok", DateTimeOffset.UtcNow, "质量批准")],
             [],
             DateTimeOffset.UtcNow,
             ControlRecipeWritePlan.FromSnapshot(snapshot).Select(i => new PlcWritePlanDto(
                 i.StepId, i.StepCode, i.StepName, i.StepType,
-                i.PlcStepId, i.PlcStepType, i.Parameters, i.WriteToPlc, i.Policy)).ToList());
+                i.PlcStepId, i.PlcStepType, i.Parameters, i.WriteToPlc, i.Policy)).ToList(),
+            Esigns: [
+                new BatchEsignDto(
+                    "batch.start.esign",
+                    ElectronicSignature.Batch("batch.start.esign"),
+                    "admin",
+                    DateTimeOffset.UtcNow,
+                    "BPDF1")
+            ]);
     }
 }

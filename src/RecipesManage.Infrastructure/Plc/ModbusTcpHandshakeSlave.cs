@@ -284,7 +284,7 @@ public sealed class ModbusTcpHandshakeSlave : IAsyncDisposable
                     stepId = ReadInt32(Parse(Map.StepId));
                     stepType = ReadInt32(Parse(Map.StepType));
                     parameters = new float[16];
-                    for (var i = 0; i < 16; i++)
+                    for (var i = 0; i < 16 && i < Map.Params.Count; i++)
                         parameters[i] = ReadFloat(Parse(Map.Params[i]));
                 }
 

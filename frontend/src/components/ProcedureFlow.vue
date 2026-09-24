@@ -4,16 +4,16 @@
       <span v-for="lane in lanes" :key="lane" class="lane-chip">{{ lane }}</span>
     </div>
     <div class="legend">
-      <span><i class="lg pending" />待执行</span>
-      <span><i class="lg run" />执行中</span>
-      <span><i class="lg wait" />待确认/保持</span>
-      <span><i class="lg ok" />完成</span>
-      <span><i class="lg skip" />跳过</span>
-      <span><i class="lg err" />故障</span>
-      <span v-if="hasMarkers"><i class="lg added" />相对生效版新增</span>
-      <span v-if="hasMarkers"><i class="lg changed" />参数有改</span>
+      <span><i class="lg pending" />{{ $t("待执行") }}</span>
+      <span><i class="lg run" />{{ $t("执行中") }}</span>
+      <span><i class="lg wait" />{{ $t("待确认/保持") }}</span>
+      <span><i class="lg ok" />{{ $t("完成") }}</span>
+      <span><i class="lg skip" />{{ $t("跳过") }}</span>
+      <span><i class="lg err" />{{ $t("故障") }}</span>
+      <span v-if="hasMarkers"><i class="lg added" />{{ $t("相对生效版新增") }}</span>
+      <span v-if="hasMarkers"><i class="lg changed" />{{ $t("参数有改") }}</span>
     </div>
-    <div class="canvas" :style="{ height: `${height}px` }">
+    <div class="canvas" :style="{ height: `${canvasHeight}px` }">
       <!-- fit-view-on-init 会按内容自动缩放，工步很少时不设上限会把节点放到巨大，
            因此把 max-zoom 收到 1.15，让两三个工步也保持正常字号。 -->
       <VueFlow
@@ -33,7 +33,7 @@
         <Background :gap="18" :size="1" />
         <Controls />
       </VueFlow>
-      <div v-else class="empty">控制配方快照尚无工步</div>
+      <div v-else class="empty">{{ $t("控制配方快照尚无工步") }}</div>
     </div>
   </div>
 </template>
@@ -51,15 +51,8 @@ import {
   collectLanes,
   layoutProcedure,
   sequentialFallbackEdges,
-  type ProcedureLayoutStep
+  type ProcedureFlowStep
 } from "../procedureLayout";
-
-interface ProcedureFlowStep extends ProcedureLayoutStep {
-  code: string;
-  name: string;
-  type: string;
-  operation?: string | null;
-}
 
 const props = withDefaults(defineProps<{
   steps: ProcedureFlowStep[];
@@ -114,6 +107,7 @@ const nodes = computed<Node[]>(() =>
         type: s.type,
         operation: s.operation,
         unitProcedure: s.unitProcedure,
+        plcProgramId: s.plcProgramId,
         outcome,
         current: isLive(outcome, s.id),
         picked: s.id === props.selectedStepId,
@@ -144,6 +138,16 @@ const graphEdges = computed<Edge[]>(() =>
 function onNodeClick({ node }: NodeMouseEvent) {
   emit("select", node.id);
 }
+
+/**
+ * `height` 现在是**上限**而不是固定值。
+ * 之前写死：审核台 2 个工步摊在 300px 画布上，上下各空 85px（实测），看着像画布没渲染完。
+ * 节点实测约 112px 高，取内容包围盒底部 + 40px 余量，最小留 150px 让控制条不贴边。
+ */
+const canvasHeight = computed(() => {
+  const bottom = nodes.value.reduce((max, n) => Math.max(max, (n.position?.y ?? 0) + 112), 0);
+  return Math.max(150, Math.min(props.height, bottom + 40));
+});
 </script>
 
 <style scoped>

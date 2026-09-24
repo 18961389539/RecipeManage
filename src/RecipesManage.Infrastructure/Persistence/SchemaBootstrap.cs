@@ -6,7 +6,8 @@ namespace RecipesManage.Infrastructure.Persistence;
 
 /// <summary>
 /// Applies EF Core migrations. Legacy SQLite files created with EnsureCreated have no
-/// __EFMigrationsHistory; those are baselined so subsequent migrations can run.
+/// __EFMigrationsHistory; their schema is already the current model, so every migration is
+/// baselined as applied instead of being replayed on top of an existing schema.
 /// </summary>
 public static class SchemaBootstrap
 {
@@ -30,23 +31,9 @@ public static class SchemaBootstrap
 
     private static async Task BaselineAsync(AppDbContext db, CancellationToken ct)
     {
-        var initial = db.Database.GetMigrations().FirstOrDefault()
-                      ?? throw new InvalidOperationException("未找到 EF Core 迁移程序集。");
-
-        if (RecipesDatabase.HealthName(db.Database) == RecipesDatabase.PostgreSql)
-        {
-            await db.Database.ExecuteSqlRawAsync("""
-                CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
-                    "MigrationId" character varying(150) NOT NULL,
-                    "ProductVersion" character varying(32) NOT NULL,
-                    CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
-                );
-                """, ct);
-            await db.Database.ExecuteSqlRawAsync(
-                """INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES ({0}, {1}) ON CONFLICT DO NOTHING;""",
-                [initial, "10.0.11"], ct);
-            return;
-        }
+        var migrations = db.Database.GetMigrations().ToArray();
+        if (migrations.Length == 0)
+            throw new InvalidOperationException("未找到 EF Core 迁移程序集。");
 
         await db.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
@@ -54,20 +41,24 @@ public static class SchemaBootstrap
                 "ProductVersion" TEXT NOT NULL
             );
             """, ct);
-        await db.Database.ExecuteSqlRawAsync(
-            """INSERT OR IGNORE INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES ({0}, {1});""",
-            [initial, "10.0.11"], ct);
+
+        // 只登记第一条迁移是个坑：MigrateAsync 会把后面每条都对着"已经由 EnsureCreated
+        // 按当前模型建好的库"再执行一遍，第一条 ALTER TABLE ADD COLUMN 就撞已存在的列，
+        // 启动直接崩在半应用状态。EnsureCreated 的库模式即当前模型，所以整体视为已应用。
+        var productVersion = db.Model.GetProductVersion() ?? "10.0.0";
+        foreach (var migration in migrations)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                """INSERT OR IGNORE INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES ({0}, {1});""",
+                [migration, productVersion], ct);
+        }
     }
 
     private static async Task<HashSet<string>> ListTablesAsync(AppDbContext db, CancellationToken ct)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var sql = RecipesDatabase.HealthName(db.Database) == RecipesDatabase.PostgreSql
-            ? """SELECT tablename FROM pg_tables WHERE schemaname = 'public'"""
-            : """SELECT name FROM sqlite_master WHERE type = 'table'""";
-
         await using var command = db.Database.GetDbConnection().CreateCommand();
-        command.CommandText = sql;
+        command.CommandText = """SELECT name FROM sqlite_master WHERE type = 'table'""";
         await db.Database.OpenConnectionAsync(ct);
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))

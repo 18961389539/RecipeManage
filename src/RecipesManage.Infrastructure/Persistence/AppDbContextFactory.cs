@@ -8,8 +8,7 @@ public sealed class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbConte
     public AppDbContext CreateDbContext(string[] args)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>();
-        var postgres = Environment.GetEnvironmentVariable("BRMES_POSTGRES");
-        RecipesDatabase.Apply(options, postgres, "Data Source=App_Data/recipes.design.db");
+        RecipesDatabase.Apply(options, "Data Source=App_Data/recipes.design.db");
         return new AppDbContext(options.Options);
     }
 }

@@ -2,6 +2,8 @@
  * 控制配方快照完整性（SHA-256 密封）四态的中文文案。
  * 批次监控与批次记录共用同一映射，避免两份译法分叉。
  */
+import { t } from "../i18n";
+
 export function snapshotIntegrityLabel(value?: string | null): string {
   if (!value) return "";
   const map: Record<string, string> = {
@@ -10,5 +12,5 @@ export function snapshotIntegrityLabel(value?: string | null): string {
     Mismatch: "完整性失败",
     Corrupt: "快照损坏"
   };
-  return map[value] ?? value;
+  return t(map[value] ?? value);
 }

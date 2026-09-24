@@ -30,11 +30,15 @@ public static class RecipeVersionComparer
             var b = toSteps[code];
             Add(changes, $"{code}.name", a.Name, b.Name);
             Add(changes, $"{code}.type", a.Type.ToString(), b.Type.ToString());
+            Add(changes, $"{code}.plcProgramId",
+                a.PlcProgramId?.ToString(CultureInfo.InvariantCulture) ?? "",
+                b.PlcProgramId?.ToString(CultureInfo.InvariantCulture) ?? "");
             Add(changes, $"{code}.watchdogSeconds", a.WatchdogSeconds.ToString(CultureInfo.InvariantCulture),
                 b.WatchdogSeconds.ToString(CultureInfo.InvariantCulture));
             Add(changes, $"{code}.description", a.Description ?? "", b.Description ?? "");
             Add(changes, $"{code}.unitProcedure", a.UnitProcedure ?? "", b.UnitProcedure ?? "");
             Add(changes, $"{code}.operation", a.Operation ?? "", b.Operation ?? "");
+            Add(changes, $"{code}.equipmentClassCode", a.EquipmentClassCode ?? "", b.EquipmentClassCode ?? "");
 
             var fromParams = a.Parameters.ToDictionary(p => p.SlotIndex);
             var toParams = b.Parameters.ToDictionary(p => p.SlotIndex);

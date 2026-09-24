@@ -11,24 +11,64 @@ public sealed class AuthService
     private readonly IAppDbContext _db;
     private readonly IPasswordHasher _passwords;
     private readonly ICurrentUser _user;
+    private readonly LoginGuard _login;
 
-    public AuthService(IAppDbContext db, IPasswordHasher passwords, ICurrentUser user)
+    public AuthService(IAppDbContext db, IPasswordHasher passwords, ICurrentUser user, LoginGuard login)
     {
         _db = db;
         _passwords = passwords;
         _user = user;
+        _login = login;
+    }
+
+    /// <summary>
+    /// 整库备份前的把关：管理员 + 电子签名 + 审计留痕。
+    ///
+    /// 导出的是<strong>全部账号口令哈希与全部批记录</strong>，等同交出整套身份档案，
+    /// 所以"是 Admin 就够了"并不够——被盗用的令牌或留在桌上没锁的会话都能一次拖走全库。
+    /// 审计写在导出之前：失败的尝试同样值得留痕。
+    /// </summary>
+    public async Task RequireBackupEsignAsync(string? password, string fileName, CancellationToken ct)
+    {
+        EnsureAdmin();
+        await new EsignGuard(_db, _user, _passwords).RequireAsync(password, ct);
+        _db.AuditLogs.Add(new AuditLog(
+            _user.UserId, _user.UserName, "admin.sqlite-backup", "Database", "",
+            $"导出整库备份 {fileName}（含全部账号口令哈希与批记录）"));
+        await _db.SaveChangesAsync(ct);
     }
 
     public async Task<AppUser> AuthenticateAsync(LoginRequest request, CancellationToken ct)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(
-            u => u.UserName == request.UserName.Trim().ToLowerInvariant(), ct)
-            ?? throw new DomainException("AUTH", "用户名或密码错误。");
+        var name = request.UserName.Trim().ToLowerInvariant();
+        var wait = _login.LockoutSeconds(name, DateTimeOffset.UtcNow);
+        if (wait > 0)
+        {
+            await AuditLoginAsync(null, name, "auth.login.locked",
+                $"连续失败已达上限，锁定窗口内还有 {wait}s 才接受下一次尝试。", ct);
+            throw new DomainException("TOO_MANY_ATTEMPTS", $"失败次数过多，请 {wait} 秒后再试。");
+        }
 
-        if (!user.IsActive || !_passwords.Verify(request.Password, user.PasswordHash))
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.UserName == name, ct);
+        // 不存在 / 已停用 / 密码错，对外同一句话：不能告诉调用者"这个用户名是有的"。
+        if (user is null || !user.IsActive || !_passwords.Verify(request.Password, user.PasswordHash))
+        {
+            var failures = _login.RecordFailure(name, DateTimeOffset.UtcNow);
+            await AuditLoginAsync(user?.Id, name, "auth.login.failed",
+                $"用户名或密码错误（{LoginGuard.Window.TotalMinutes:0} 分钟内第 {failures} 次）。", ct);
             throw new DomainException("AUTH", "用户名或密码错误。");
+        }
 
+        _login.RecordSuccess(name);
+        await AuditLoginAsync(user.Id, name, "auth.login", "登录成功。", ct);
         return user;
+    }
+
+    /// <summary>登录事件单独留痕：只记"谁在什么时候成功/失败"，绝不记口令。</summary>
+    private async Task AuditLoginAsync(Guid? userId, string userName, string action, string detail, CancellationToken ct)
+    {
+        _db.AuditLogs.Add(new AuditLog(userId, userName, action, "AppUser", userId?.ToString() ?? "", detail));
+        await _db.SaveChangesAsync(ct);
     }
 
     public async Task<IReadOnlyList<UserDto>> ListUsersAsync(CancellationToken ct)

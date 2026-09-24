@@ -55,9 +55,27 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
                             d.RelativeColumn();
                             d.RelativeColumn(2);
                         });
-                        HeaderRow(table, "级别", "结论", "签署人", "时间", "含义");
+                        HeaderRow(table, "审核节点", "结论", "签署人", "时间", "含义");
                         foreach (var a in record.RecipeApprovals)
-                            BodyRow(table, a.Level.ToString(), a.Decision.ToString(), a.ReviewerName ?? "", Format(a.DecidedAt), a.Meaning ?? "");
+                            BodyRow(table, a.Title, a.Decision.ToString(), a.ReviewerName ?? "", Format(a.DecidedAt), a.Meaning ?? "");
+                    }));
+                    col.Item().Element(c => Section(c, "批次执行电子签名", table =>
+                    {
+                        table.ColumnsDefinition(d =>
+                        {
+                            d.ConstantColumn(70);
+                            d.ConstantColumn(70);
+                            d.RelativeColumn();
+                            d.RelativeColumn(2);
+                            d.RelativeColumn();
+                        });
+                        HeaderRow(table, "动作", "签署人", "时间", "含义", "意见");
+                        var esigns = record.Esigns ?? [];
+                        if (esigns.Count == 0)
+                            BodyRow(table, "—", "—", "—", "尚无启动 / 保持 / 跳步 / 放行签署", "旧批次仅有审计动作码");
+                        else
+                            foreach (var e in esigns)
+                                BodyRow(table, e.Action, e.UserName ?? "", Format(e.At), e.Meaning, e.Extra ?? "");
                     }));
                     col.Item().Element(c => Section(c, "批次放行电子签名", table =>
                     {
@@ -123,7 +141,8 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
                         HeaderRow(table, "Phase", "工步", "Unit Procedure", "结果", "设定值");
                         foreach (var step in record.Snapshot.Steps)
                         {
-                            var outcome = record.StepExecutions.FirstOrDefault(s => s.StepId == step.StepId)?.Outcome ?? "Pending";
+                            var outcome = (record.StepExecutions.FirstOrDefault(s => s.StepId == step.StepId)?.Outcome
+                                ?? StepOutcome.Pending).ToString();
                             var setpoints = string.Join("；", step.Parameters.Select(p => $"{p.Name}={p.Setpoint}{p.EngineeringUnit}"));
                             BodyRow(table, step.Code, step.Name, step.UnitProcedure ?? Isa88.DefaultUnitProcedure, outcome, setpoints);
                         }

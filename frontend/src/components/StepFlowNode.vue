@@ -5,6 +5,7 @@
     <div class="name">{{ data.name }}</div>
     <div v-if="data.unitProcedure" class="op">{{ data.unitProcedure }}</div>
     <div v-if="data.operation" class="op">{{ data.operation }}</div>
+    <div v-if="data.plcProgramId" class="op">{{ $t("程序 {0}", [data.plcProgramId]) }}</div>
     <div v-if="changeLabel" class="outcome">{{ changeLabel }}</div>
     <div v-if="outcomeLabel" class="outcome">{{ outcomeLabel }}</div>
     <Handle type="source" :position="Position.Right" />
@@ -23,6 +24,7 @@ const props = defineProps<{
     type: string;
     operation?: string | null;
     unitProcedure?: string | null;
+    plcProgramId?: number | null;
     outcome?: string | null;
     current?: boolean;
     picked?: boolean;

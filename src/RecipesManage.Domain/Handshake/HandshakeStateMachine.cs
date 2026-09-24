@@ -1,11 +1,8 @@
 namespace RecipesManage.Domain.Handshake;
 
 /// <summary>
-/// 上位机 ↔ PLC 四步闭环握手状态机（Anti-Blind-Write）。
-/// A: PLC_Ready 后写缓存并置 Trigger_Write；
-/// B: 等待 Step_Running；
-/// C: 看门狗监控运行与心跳；
-/// D: Step_Complete 后归档实测、复位完成信号、步进。
+/// 上位机 ↔ PLC 握手状态机（禁止盲写）。相位枚举见 <see cref="HandshakePhase"/>；
+/// 操作员进度条 A/B/C/D 由 <see cref="HandshakeView.FourStepIndex"/> 投影，不要另写一套。
 /// </summary>
 public sealed class HandshakeStateMachine
 {

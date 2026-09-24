@@ -7,14 +7,26 @@ import { onUnmounted } from "vue";
  */
 export const POLL_INTERVAL_MS = 4000;
 
+/**
+ * 在跑的轮询任务。同一时刻只有一个实时页挂载，所以这是个最多一两个元素的集合；
+ * 顶栏徽标点一下就走这条路径立即重拉，而不是等下一个 4 秒。
+ */
+const live = new Set<() => unknown>();
+
+export function reloadRealtimeNow(): void {
+  for (const task of [...live]) void task();
+}
+
 export function usePolling(task: () => unknown, intervalMs = POLL_INTERVAL_MS) {
   let timer: number | undefined;
 
   function start() {
+    live.add(task);
     timer ??= window.setInterval(() => void task(), intervalMs);
   }
 
   function stop() {
+    live.delete(task);
     if (timer !== undefined) window.clearInterval(timer);
     timer = undefined;
   }

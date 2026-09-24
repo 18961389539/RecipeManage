@@ -67,17 +67,19 @@ public sealed class RecipeVersion : Entity
         Touch();
     }
 
-    public void Submit(DateTimeOffset now, Guid authorId = default, string authorName = "system", string? comment = null)
+    public void Submit(DateTimeOffset now, ApprovalChain chain, Guid authorId = default, string authorName = "system", string? comment = null)
     {
         EnsureDraft();
         RecipeTopology.Validate(Steps, Edges);
         if (Steps.Count == 0)
             throw new DomainException("EMPTY_PROCEDURE", "工步为空，不能提交审核。");
+        if (chain.Steps.Count == 0)
+            throw new DomainException("APPROVAL_CHAIN", $"审批链「{chain.Name}」没有审核节点，不能提交审核。");
 
         Status = RecipeStatus.InReview;
         SubmittedAt = now;
         Approvals.Clear();
-        var author = ApprovalRecord.Open(Id, ApprovalLevel.Author);
+        var author = ApprovalRecord.Pending(Id, 0, ApprovalChain.Submission);
         author.Complete(
             authorId,
             string.IsNullOrWhiteSpace(authorName) ? "system" : authorName,
@@ -85,17 +87,31 @@ public sealed class RecipeVersion : Entity
             comment,
             now);
         Approvals.Add(author);
-        Approvals.Add(ApprovalRecord.Open(Id, ApprovalLevel.Supervisor));
+
+        // 整条链在提交这一刻全部展开成冻结副本。此后改链配置不会影响这一版还差谁签，
+        // 也不会改变签署人看到的那句含义——所以这里必须一次写满，不能签完一级再开下一级。
+        for (var i = 0; i < chain.Steps.Count; i++)
+            Approvals.Add(ApprovalRecord.Pending(Id, i + 1, chain.Steps[i]));
         Touch();
     }
 
-    public void Decide(ApprovalLevel level, Guid reviewerId, string reviewerName, ApprovalDecision decision, string? comment, DateTimeOffset now)
+    /// <summary>链上第一个还没签的节点。没有则 null（链走到底）。</summary>
+    public ApprovalRecord? HeadNode => Approvals
+        .Where(a => a.Decision == ApprovalDecision.Pending)
+        .OrderBy(a => a.Seq)
+        .FirstOrDefault();
+
+    /// <summary>
+    /// 签掉当前头节点，链向前推进一格；签完最后一个才生效。
+    /// 要签谁、签了是什么意思，全看提交时冻结在记录上的副本，与当下的链配置无关。
+    /// </summary>
+    public ApprovalRecord Decide(Guid reviewerId, string reviewerName, ApprovalDecision decision, string? comment, DateTimeOffset now)
     {
         if (Status != RecipeStatus.InReview)
             throw new DomainException("NOT_IN_REVIEW", "当前版本不在审核中。");
 
-        var record = Approvals.SingleOrDefault(a => a.Level == level && a.Decision == ApprovalDecision.Pending)
-                     ?? throw new DomainException("NO_PENDING_LEVEL", $"没有待处理的 {level} 审核节点。");
+        var record = HeadNode
+                     ?? throw new DomainException("NO_PENDING_NODE", "本版本已无待处理的审核节点。");
 
         // 职责分离（GMP）：提交人不得审批自己的提交，同一人不得担任同一版本的多个审核节点。
         // 放在域层而非服务层，Admin 的角色旁路也无法绕过。
@@ -112,22 +128,19 @@ public sealed class RecipeVersion : Entity
             record.Complete(reviewerId, reviewerName, decision, comment, now);
             Status = RecipeStatus.Rejected;
             Touch();
-            return;
+            return record;
         }
 
         record.Complete(reviewerId, reviewerName, ApprovalDecision.Approved, comment, now);
 
-        if (level == ApprovalLevel.Supervisor)
-        {
-            Approvals.Add(ApprovalRecord.Open(Id, ApprovalLevel.Quality));
-        }
-        else if (level == ApprovalLevel.Quality)
+        if (HeadNode is null)
         {
             Status = RecipeStatus.Approved;
             ApprovedAt = now;
         }
 
         Touch();
+        return record;
     }
 
     public void ReopenRejected()

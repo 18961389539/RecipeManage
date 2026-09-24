@@ -1,10 +1,19 @@
 import { expect, test } from "@playwright/test";
-import { esignAndWait, fillPrompt, labeledInput, loginAs, passwords, uniqueStamp } from "./helpers";
+import {
+  esignAndWait,
+  fillPrompt,
+  labeledInput,
+  addPhaseFromTemplate,
+  loginAs,
+  passwords,
+  uniqueStamp,
+  esignReasonAndWait,
+} from "./helpers";
 
 test("quality reject then reopen and approve records audit", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
 
   const code = `QAR${uniqueStamp()}`;
   await loginAs(page, "工艺工程师");
@@ -18,34 +27,31 @@ test("quality reject then reopen and approve records audit", async ({ page }) =>
   await createDlg.getByRole("button", { name: "创建" }).click();
   await page.waitForURL("**/recipes/**");
 
-  await page.getByRole("button", { name: "+ Heat" }).click();
+  await addPhaseFromTemplate(page, "FURNACE", "PH-HEAT");
   await page.locator(".el-table__body tr").filter({ hasText: "升温时长" }).locator(".el-input-number input").first().fill("1");
-  await page.getByRole("button", { name: "+ QualityCheck" }).click();
+  await page.getByRole("button", { name: "+ 质检" }).click();
   await page.getByRole("button", { name: "提交审核" }).click();
-  await fillPrompt(page, "保存工艺 · 变更控制", "提交质量审核");
-  await esignAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", passwords["工艺工程师"]);
+  await esignReasonAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", "提交质量审核", passwords["工艺工程师"]);
   await esignAndWait(page, "/submit", "POST", "提交审核 · 电子签名", passwords["工艺工程师"]);
 
   await loginAs(page, "工艺主管");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：工艺主管", "路径可执行，交质量");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["工艺主管"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：工艺主管", "路径可执行，交质量", passwords["工艺主管"]);
 
   await loginAs(page, "质量工程师");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "驳回" }).click();
-  await fillPrompt(page, "当前节点：质量", "窗口需返工");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["质量工程师"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：质量", "窗口需返工", passwords["质量工程师"]);
 
   await page.goto("/audit");
   await page.locator(".el-select").click();
   await page.getByRole("option", { name: "主配方" }).click();
   await page.getByRole("button", { name: "刷新" }).click();
-  await expect(page.locator(".el-table__body")).toContainText("recipe.decide.esign");
-  await expect(page.locator(".el-table__body")).toContainText(/Quality:Rejected/);
+  await expect(page.locator(".el-table__body")).toContainText("电子签名审核");
+  await expect(page.locator(".el-table__body")).toContainText(/质量审核:Rejected/);
 
   await loginAs(page, "工艺工程师");
   await page.goto("/recipes");
@@ -54,23 +60,20 @@ test("quality reject then reopen and approve records audit", async ({ page }) =>
   await page.getByRole("button", { name: "重新打开" }).click();
   await esignAndWait(page, "/reopen", "POST", "重新打开驳回版本 · 电子签名", passwords["工艺工程师"]);
   await page.getByRole("button", { name: "提交审核" }).click();
-  await fillPrompt(page, "保存工艺 · 变更控制", "质量驳回后重开");
-  await esignAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", passwords["工艺工程师"]);
+  await esignReasonAndWait(page, "/procedure", "PUT", "保存工艺 · 电子签名", "质量驳回后重开", passwords["工艺工程师"]);
   await esignAndWait(page, "/submit", "POST", "提交审核 · 电子签名", passwords["工艺工程师"]);
 
   await loginAs(page, "工艺主管");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：工艺主管", "返工后路径可执行");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["工艺主管"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：工艺主管", "返工后路径可执行", passwords["工艺主管"]);
 
   await loginAs(page, "质量工程师");
   await page.goto("/approvals");
   await page.getByRole("cell", { name: code, exact: true }).click();
   await page.getByRole("button", { name: "通过并电子签名" }).click();
-  await fillPrompt(page, "当前节点：质量", "窗口合格");
-  await esignAndWait(page, "/decide", "POST", "电子签名", passwords["质量工程师"]);
+  await esignReasonAndWait(page, "/decide", "POST", "当前节点：质量", "窗口合格", passwords["质量工程师"]);
 
   await loginAs(page, "工艺工程师");
   await page.goto("/recipes");

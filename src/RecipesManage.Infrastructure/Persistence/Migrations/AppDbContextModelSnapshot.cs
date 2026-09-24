@@ -407,6 +407,41 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.ToTable("production_batches", (string)null);
                 });
 
+            modelBuilder.Entity("RecipesManage.Domain.Batches.SchedulerIntent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("StepId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("BatchId", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("scheduler_intents", (string)null);
+                });
+
             modelBuilder.Entity("RecipesManage.Domain.Equipment.EquipmentClass", b =>
                 {
                     b.Property<Guid>("Id")
@@ -565,6 +600,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PlcProgramId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("StepType")
                         .HasColumnType("INTEGER");
 
@@ -632,7 +670,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("At")
+                    b.Property<string>("At")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -780,6 +819,43 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.ToTable("applied_data_fixes", (string)null);
                 });
 
+            modelBuilder.Entity("RecipesManage.Domain.Recipes.ApprovalChainConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StepsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("approval_chains", (string)null);
+                });
+
             modelBuilder.Entity("RecipesManage.Domain.Recipes.ApprovalRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -797,11 +873,22 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<int>("Decision")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("Level")
+                    b.Property<string>("MeaningApproved")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MeaningRejected")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Node")
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid>("RecipeVersionId")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("RequiredRole")
+                        .HasColumnType("INTEGER");
 
                     b.Property<Guid?>("ReviewerId")
                         .HasColumnType("TEXT");
@@ -809,12 +896,20 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<string>("ReviewerName")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Seq")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RecipeVersionId");
+                    b.HasIndex("RecipeVersionId", "Seq")
+                        .IsUnique();
 
                     b.ToTable("approval_records", (string)null);
                 });
@@ -822,6 +917,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("RecipesManage.Domain.Recipes.MasterRecipe", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovalChainCode")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Code")
@@ -911,6 +1009,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<double?>("Max")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("MeasuredTag")
+                        .HasColumnType("TEXT");
+
                     b.Property<double?>("Min")
                         .HasColumnType("REAL");
 
@@ -922,6 +1023,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("ScaleWithBatch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Semantic")
                         .HasColumnType("INTEGER");
 
                     b.Property<double>("Setpoint")
@@ -964,6 +1068,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EquipmentClassCode")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -972,6 +1079,9 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Ordinal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("PlcProgramId")
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid>("RecipeVersionId")
@@ -991,7 +1101,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RecipeVersionId");
+                    b.HasIndex("RecipeVersionId", "Code")
+                        .IsUnique();
 
                     b.ToTable("recipe_steps", (string)null);
                 });

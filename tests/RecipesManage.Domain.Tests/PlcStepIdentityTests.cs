@@ -35,11 +35,19 @@ public sealed class Isa88GroupingTests
 
 public sealed class ElectronicSignatureTests
 {
-    [Fact]
-    public void Meaning_CoversAuthorSupervisorQuality()
+    // 配方审核节点的签名含义不再由这里按枚举查表——它随审批链配置冻结进 approval_records，
+    // 覆盖在 ApprovalChainTests（含"改链不改在审版本"那条）。
+
+    [Theory]
+    [InlineData("batch.start.esign", "禁止盲写")]
+    [InlineData("batch.hold.esign", "Host_Hold")]
+    [InlineData("batch.skip.esign", "主管")]
+    [InlineData("batch.release.esign", "质量")]
+    public void BatchMeaning_IsFixedStatement(string action, string needle)
     {
-        Assert.Contains("工艺工程师", ElectronicSignature.Meaning(ApprovalLevel.Author, ApprovalDecision.Approved));
-        Assert.Contains("工艺主管", ElectronicSignature.Meaning(ApprovalLevel.Supervisor, ApprovalDecision.Approved));
-        Assert.Contains("质量", ElectronicSignature.Meaning(ApprovalLevel.Quality, ApprovalDecision.Approved));
+        Assert.Contains(needle, ElectronicSignature.Batch(action));
+        Assert.StartsWith(ElectronicSignature.Batch(action), ElectronicSignature.AuditDetail(action, "B1"));
+        Assert.Equal(ElectronicSignature.ProcedureSave,
+            "我作为工艺工程师确认本次 Procedure / Steps / Parameters 变更准确，并记录变更原因。");
     }
 }

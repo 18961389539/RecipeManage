@@ -224,6 +224,15 @@ public class RecipeTopologyTests
     }
 
     [Fact]
+    public void Unit_names_follow_step_ordinal_not_alphabet()
+    {
+        var v = Guid.NewGuid();
+        var rinse = NewStep(v, "S10", 0, "UP-冲洗");
+        var qc = NewStep(v, "S30", 2, "UP-QC");
+        Assert.Equal(["UP-冲洗", "UP-QC"], RecipeTopology.UnitNamesInProcessOrder([qc, rinse]));
+    }
+
+    [Fact]
     public void Parallel_units_with_no_cross_edge_form_one_wave()
     {
         var v = Guid.NewGuid();
@@ -232,6 +241,47 @@ public class RecipeTopologyTests
         var waves = RecipeTopology.UnitProcedureWaves([a, b], []);
         Assert.Single(waves);
         Assert.Equal(["UP-A", "UP-B"], waves[0]);
+    }
+
+    [Fact]
+    public void Rejects_blank_unit_procedure()
+    {
+        var v = Guid.NewGuid();
+        var ex = Assert.Throws<RecipesManage.Domain.Common.DomainException>(() =>
+            NewStep(v, "S10", 0, "  "));
+        Assert.Equal("ISA88_UNIT", ex.Code);
+    }
+
+    [Fact]
+    public void Rejects_blank_operation()
+    {
+        var v = Guid.NewGuid();
+        var ex = Assert.Throws<RecipesManage.Domain.Common.DomainException>(() =>
+            new RecipeStep(v, "S10", "S10", StepType.Hold, 0, 0, 0, 30, null, [], operation: "  "));
+        Assert.Equal("ISA88_OP", ex.Code);
+    }
+
+    [Fact]
+    public void Rejects_intra_unit_backward_edge()
+    {
+        var v = Guid.NewGuid();
+        var a = NewStep(v, "S10", 0, "UP-A");
+        var b = NewStep(v, "S20", 1, "UP-A");
+        var ex = Assert.Throws<RecipesManage.Domain.Common.DomainException>(() =>
+            RecipeTopology.Validate([a, b], [new RecipeEdge(v, b.Id, a.Id)]));
+        Assert.Equal("ISA88_OP", ex.Code);
+    }
+
+    [Fact]
+    public void Rejects_cross_unit_edge_into_mid_unit_without_intra_edge()
+    {
+        var v = Guid.NewGuid();
+        var a = NewStep(v, "S10", 0, "UP-A");
+        var b = NewStep(v, "S20", 1, "UP-B");
+        var c = NewStep(v, "S30", 2, "UP-B");
+        var ex = Assert.Throws<RecipesManage.Domain.Common.DomainException>(() =>
+            RecipeTopology.Validate([a, b, c], [new RecipeEdge(v, a.Id, c.Id)]));
+        Assert.Equal("ISA88_UNIT", ex.Code);
     }
 
     private static RecipeStep NewStep(Guid versionId, string code, int ordinal, string? unit = null) =>

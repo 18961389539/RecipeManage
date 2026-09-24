@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 export interface MatrixParameter {
   name: string;
   engineeringUnit: string;
@@ -178,7 +179,7 @@ export function formatReadingSpec(reading: QualityReading): string {
   if (reading.oos) return "超差";
   if (reading.min != null || reading.max != null)
     return `${reading.min ?? "—"}~${reading.max ?? "—"} ${reading.unit}`.trim();
-  return reading.archived ? "—" : "参考";
+  return reading.archived ? "—" : t("参考");
 }
 
 export function formatReadingValue(reading: QualityReading): string {

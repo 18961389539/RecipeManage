@@ -21,7 +21,7 @@ public sealed record RecipeListItemDto(
     RecipeStatus? DraftStatus,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<string> UnitProcedures,
-    ApprovalLevel? PendingLevel = null,
+    string? PendingTitle = null,
     string? PendingMeaning = null,
     int? ReviewVersion = null);
 
@@ -34,7 +34,11 @@ public sealed record RecipeDetailDto(
     string? Description,
     RecipeVersionDto? Draft,
     RecipeVersionDto? Approved,
-    IReadOnlyList<RecipeVersionDto> Versions);
+    IReadOnlyList<RecipeVersionDto> Versions,
+    string? ApprovalChainCode = null);
+
+/// <summary>指定本配方走哪条审批链；null = 默认链。只影响之后的提交。</summary>
+public sealed record UseApprovalChainRequest(string? Code, string Password);
 
 public sealed record RecipeVersionDto(
     Guid Id,
@@ -59,7 +63,9 @@ public sealed record StepDto(
     string? Description,
     string? UnitProcedure,
     string? Operation,
-    IReadOnlyList<ParameterDto> Parameters);
+    IReadOnlyList<ParameterDto> Parameters,
+    int? PlcProgramId = null,
+    string? EquipmentClassCode = null);
 
 public sealed record ParameterDto(
     Guid Id,
@@ -71,18 +77,61 @@ public sealed record ParameterDto(
     double? Max,
     bool WriteToPlc,
     bool ArchiveAsQuality,
-    bool ScaleWithBatch);
+    bool ScaleWithBatch,
+    ParameterSemantic Semantic = ParameterSemantic.Unspecified,
+    string? MeasuredTag = null);
 
 public sealed record EdgeDto(Guid Id, Guid FromStepId, Guid ToStepId);
 
 public sealed record ApprovalDto(
     Guid Id,
-    ApprovalLevel Level,
+    int Seq,
+    ApprovalNode Node,
+    string Title,
+    UserRole RequiredRole,
     ApprovalDecision Decision,
     string? ReviewerName,
     string? Comment,
     DateTimeOffset? DecidedAt,
     string Meaning);
+
+/// <summary>链上一个节点的可编辑定义。含义两句会随整条链冻结进审批记录，改配置不动在审版本。</summary>
+public sealed record ApprovalChainStepDto(
+    ApprovalNode Node,
+    string Title,
+    UserRole RequiredRole,
+    string MeaningApproved,
+    string MeaningRejected);
+
+public sealed record ApprovalChainDto(
+    Guid Id,
+    string Code,
+    string Name,
+    bool IsDefault,
+    bool Enabled,
+    IReadOnlyList<ApprovalChainStepDto> Steps);
+
+/// <summary>只需要电子签名（登录口令）就能执行的写操作用这个载荷。</summary>
+public sealed record EsignPassword(string Password);
+
+/// <summary>
+/// 保存链时的节点定义。没有 Node：节点标识由 RequiredRole 派生（见 ApprovalNodeExtensions.NodeFor），
+/// 它是历史行回填与缺省文案用的内部标识，不该变成管理员要理解的配置项。
+/// </summary>
+public sealed record ApprovalChainStepRequest(
+    string Title,
+    UserRole RequiredRole,
+    string MeaningApproved,
+    string MeaningRejected);
+
+public sealed record SaveApprovalChainRequest(
+    Guid? Id,
+    string Code,
+    string Name,
+    bool IsDefault,
+    bool Enabled,
+    IReadOnlyList<ApprovalChainStepRequest> Steps,
+    string Password);
 
 public sealed record CreateRecipeRequest(
     string Code,
@@ -115,7 +164,9 @@ public sealed record SaveStepRequest(
     string? Description,
     string? UnitProcedure,
     string? Operation,
-    IReadOnlyList<SaveParameterRequest> Parameters);
+    IReadOnlyList<SaveParameterRequest> Parameters,
+    int? PlcProgramId = null,
+    string? EquipmentClassCode = null);
 
 public sealed record SaveParameterRequest(
     int SlotIndex,
@@ -126,7 +177,9 @@ public sealed record SaveParameterRequest(
     double? Max,
     bool WriteToPlc,
     bool ArchiveAsQuality,
-    bool ScaleWithBatch = false);
+    bool ScaleWithBatch = false,
+    ParameterSemantic Semantic = ParameterSemantic.Unspecified,
+    string? MeasuredTag = null);
 
 public sealed record SaveEdgeRequest(Guid FromStepId, Guid ToStepId);
 public sealed record SubmitRecipeRequest(string Password, string? Comment);
@@ -158,7 +211,8 @@ public sealed record BatchListItemDto(
     string HandshakePhase,
     int CurrentStepIndex,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? StartedAt);
+    DateTimeOffset? StartedAt,
+    bool PendingFinalSample = false);
 
 public sealed record BatchDetailDto(
     Guid Id,
@@ -181,7 +235,10 @@ public sealed record BatchDetailDto(
     IReadOnlyList<PlcWritePlanDto> WritePlan,
     string? ReleasedBy = null,
     DateTimeOffset? ReleasedAt = null,
-    string? ReleaseComment = null);
+    string? ReleaseComment = null,
+    string? PendingHoldReason = null,
+    string? PendingSkipReason = null,
+    string? PendingConfirmComment = null);
 
 public sealed record PlcWritePlanDto(
     Guid StepId,
@@ -201,7 +258,7 @@ public sealed record LaneHandshakeDto(
     Guid? StepId,
     string StepCode,
     string Phase,
-    string Outcome);
+    StepOutcome Outcome);
 
 public sealed record StepExecutionDto(
     Guid StepId,
@@ -209,7 +266,7 @@ public sealed record StepExecutionDto(
     string StepName,
     StepType StepType,
     int Ordinal,
-    string Outcome,
+    StepOutcome Outcome,
     DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt,
     string? QualityJson);
@@ -273,7 +330,8 @@ public sealed record DashboardDto(
     IReadOnlyList<BatchListItemDto> LiveBatches,
     IReadOnlyList<EquipmentOccupancyDto> EquipmentOccupancy,
     int PendingReleaseBatches = 0,
-    int PendingLabSamples = 0);
+    int PendingLabSamples = 0,
+    int HeldBatches = 0);
 
 public sealed record MaterialLotDto(
     Guid Id,
@@ -358,6 +416,57 @@ public sealed record AuditLogPageDto(
     int Total,
     IReadOnlyList<AuditLogDto> Items);
 
+/// <summary>
+/// 批次 / 物料批 / 报警列表的服务端分页结果。
+/// <paramref name="Total"/> 是筛选后的全量行数（不是本页行数），分页控件靠它算页数——
+/// 以前接口只返回"最近 200 条"，前端既看不到更早的批次，排序也只在这 200 条里排。
+/// </summary>
+public sealed record BatchListPageDto(
+    int Total,
+    IReadOnlyList<BatchListItemDto> Items);
+
+public sealed record MaterialLotPageDto(
+    int Total,
+    IReadOnlyList<MaterialLotDto> Items);
+
+public sealed record ProcessAlarmPageDto(
+    int Total,
+    IReadOnlyList<ProcessAlarmDto> Items);
+
+/// <summary>
+/// 趋势样本：降采样后的点集 + 原始规模。
+///
+/// 为什么不整表返回：样本是每约 400ms 每个测点一行，一个长跑批次能到几十万行，
+/// 全量推给浏览器既慢又画不出来。这里只读回最近 <see cref="SampleSeriesDto.ReadRows"/> 行，
+/// 再按 <paramref name="step"/> 等间隔抽稀到 <paramref name="maxPoints"/> 以内；
+/// <paramref name="Total"/> 仍是原始行数，界面据此写明"每 N 点取 1、且只覆盖最近 M 条"。
+/// 原始样本一行都不删：批记录要留到留存期，抽稀与开窗都只发生在读的一侧。
+/// </summary>
+public sealed record SampleSeriesDto(
+    IReadOnlyList<SampleDto> Points,
+    int Total,
+    int ReadRows,
+    int Step,
+    int MaxPoints);
+
+/// <summary>一份备份文件。<paramref name="CreatedAt"/> 是写入时刻（UTC），不是文件系统的修改时间。</summary>
+public sealed record BackupFileDto(string Name, long Bytes, DateTimeOffset CreatedAt);
+
+/// <summary>
+/// 备份现状：配置 + 磁盘上有哪些份 + 本进程最近一次跑的结果。
+/// <paramref name="LastError"/> 只在本进程内有过失败时非空，历史失败在操作审计里查 system.backup.failed。
+/// </summary>
+public sealed record BackupStatusDto(
+    string Directory,
+    bool Enabled,
+    int Keep,
+    string AtUtc,
+    DateTimeOffset NextRunAtUtc,
+    IReadOnlyList<BackupFileDto> Files,
+    DateTimeOffset? LastRunAtUtc,
+    string? LastFile,
+    string? LastError);
+
 public sealed record RecipeVersionDiffDto(
     int FromVersion,
     int ToVersion,
@@ -381,7 +490,9 @@ public sealed record PhaseParameterDto(
     double? Max,
     bool WriteToPlc,
     bool ArchiveAsQuality,
-    bool ScaleWithBatch);
+    bool ScaleWithBatch,
+    ParameterSemantic Semantic = ParameterSemantic.Unspecified,
+    string? MeasuredTag = null);
 
 public sealed record PhaseTemplateDto(
     Guid Id,
@@ -391,7 +502,8 @@ public sealed record PhaseTemplateDto(
     string Operation,
     int WatchdogSeconds,
     string ClassCode,
-    IReadOnlyList<PhaseParameterDto> Parameters);
+    IReadOnlyList<PhaseParameterDto> Parameters,
+    int? PlcProgramId = null);
 
 public sealed record EquipmentClassDto(
     Guid Id,
@@ -399,6 +511,15 @@ public sealed record EquipmentClassDto(
     string Name,
     string? Description,
     IReadOnlyList<PhaseTemplateDto> Templates);
+
+public sealed record UpsertPhaseTemplateRequest(
+    string Code,
+    string Name,
+    StepType StepType,
+    int PlcProgramId,
+    int WatchdogSeconds,
+    string? Operation,
+    IReadOnlyList<PhaseParameterDto> Parameters);
 
 public sealed record HandshakeLogDto(
     DateTimeOffset At,
@@ -433,7 +554,15 @@ public sealed record BatchRecordDto(
     DateTimeOffset? ReleasedAt = null,
     string? ReleaseComment = null,
     IReadOnlyList<BatchMaterialUseDto>? Materials = null,
-    IReadOnlyList<LabSampleDto>? LabSamples = null);
+    IReadOnlyList<LabSampleDto>? LabSamples = null,
+    IReadOnlyList<BatchEsignDto>? Esigns = null);
+
+public sealed record BatchEsignDto(
+    string Action,
+    string Meaning,
+    string? UserName,
+    DateTimeOffset At,
+    string? Extra);
 
 public sealed record ProcessAlarmDto(
     Guid Id,

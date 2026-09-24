@@ -10,9 +10,15 @@ export const passwords: Record<string, string> = {
 
 export async function loginAs(page: Page, role: keyof typeof passwords) {
   await page.goto("/dashboard");
-  const logout = page.getByRole("button", { name: "退出" });
+  // 顶栏的「退出」会先弹确认框（AppShell.logout 里的 ElMessageBox），
+  // 而确认框的主按钮也叫「退出」——所以点的时候限定在 .user 里，确认的时候限定在弹框里，
+  // 少了这一步，任何二次登录的用例都会卡在 waitForURL("**/login")。
+  const logout = page.locator(".user button", { hasText: "退出" });
   if (await logout.isVisible().catch(() => false)) {
     await logout.click();
+    const box = page.locator(".el-message-box");
+    await expect(box).toBeVisible();
+    await box.locator(".el-message-box__btns .el-button--primary").click();
     await page.waitForURL("**/login");
   } else {
     await page.goto("/login");
@@ -27,21 +33,38 @@ export function uniqueStamp() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
 }
 
+/**
+ * 按表单标签取输入框。
+ *
+ * 别用 `exact: true`：Element Plus 把必填星号算进可访问名，`编码` 实际叫 `"* 编码"`，
+ * 精确匹配会全部落空（实测 dialog.getByRole("textbox", { name: "编码", exact: true }) → 0）。
+ * 用锚定的正则匹配"整名 = 可选星号 + 标签"，既能命中必填项，也不会把 `编码` 误配到 `产品编码`。
+ */
 export function labeledInput(scope: Locator, label: string) {
-  return scope.getByRole("textbox", { name: label, exact: true });
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return scope.getByRole("textbox", { name: new RegExp(`^(\\* )?${escaped}$`) });
+}
+
+/**
+ * 定位消息弹框。
+ *
+ * 别再回到 `getByRole("dialog", { name, exact: true })`：签名弹窗的标题现在统一拼成
+ * 「动作 · 电子签名」（utils/esign.ts 的 esignTitle），精确匹配一个都对不上；
+ * 而 ElMessageBox 的 role 在不同版本里 dialog/alertdialog 混用过。按弹框内文本过滤最稳。
+ */
+function msgBox(page: Page, title: string) {
+  return page.locator(".el-message-box").filter({ hasText: title }).last();
 }
 
 export async function fillPrompt(page: Page, title: string, value: string) {
-  const box = page.getByRole("dialog", { name: title, exact: true }).last();
+  const box = msgBox(page, title);
   await expect(box).toBeVisible();
-  const handle = await box.elementHandle();
   const input = box.locator(".el-message-box__input input, .el-message-box__input textarea");
   await input.click();
   await input.fill(value);
   await expect(input).toHaveValue(value);
   await box.getByRole("button", { name: "确定" }).click();
-  if (handle)
-    await handle.waitForElementState("hidden");
+  await expect(box).toBeHidden();
 }
 
 export async function esignAndWait(
@@ -60,6 +83,53 @@ export async function esignAndWait(
   return resp;
 }
 
+/**
+ * 「原因 + 密码」合并成一屏的签名弹窗（utils/esign.ts 的 esignWithReason）。
+ *
+ * 09-22 之前是 prompt(原因) → prompt(密码) 两个弹框串联，用例也就写两次；
+ * 合并后只剩一个弹框、一个「签名并确认」按钮，所以必须在一个框里填完两栏再点。
+ */
+export async function esignReasonAndWait(
+  page: Page,
+  urlPart: string,
+  method: "POST" | "PUT",
+  title: string,
+  reason: string,
+  password: string
+) {
+  const box = msgBox(page, title);
+  const form = box.locator(".esign-form");
+  await expect(form).toBeVisible();
+  const pending = page.waitForResponse(
+    (r) => r.request().method() === method && r.url().includes(urlPart)
+  );
+  const reasonField = form.locator("textarea").first();
+  await reasonField.fill(reason);
+  await expect(reasonField).toHaveValue(reason);
+  await form.locator('input[type="password"]').fill(password);
+  await box.getByRole("button", { name: "签名并确认" }).click();
+  const resp = await pending;
+  expect(resp.ok(), `${method} ${urlPart} ${resp.status()}`).toBeTruthy();
+  await expect(box).toBeHidden();
+  return resp;
+}
+
+/**
+ * 从相库加一个工艺相（设计器右侧调色板：选设备类 → 「从相模板添加」→ 点模板）。
+ *
+ * 设计器早就不提供 `+ 升温` 这类按钮了——快捷行只剩上位机工步（等待 / 质检 / 人工确认），
+ * 工艺相必须由相模板生成，否则程序号与参数槽没有唯一来源。用例也跟着走这条路。
+ */
+export async function addPhaseFromTemplate(page: Page, classCode: string, templateCode: string) {
+  const palette = page.locator(".palette");
+  await palette.locator(".el-select").first().click();
+  const options = page.locator(".el-select-dropdown:visible").last();
+  await options.getByRole("option", { name: new RegExp(`^${classCode} ·`) }).click();
+  await palette.getByRole("button", { name: "从相模板添加" }).click();
+  const menu = page.locator(".el-dropdown-menu:visible").last();
+  await menu.getByRole("menuitem", { name: new RegExp(templateCode) }).click();
+}
+
 export async function createBatchFromApproved(
   page: Page,
   batchNo: string,
@@ -76,13 +146,13 @@ export async function createBatchFromApproved(
   await dialog.locator(".el-select").nth(0).click();
   await page.getByRole("option", { name: new RegExp(recipeCode) }).click();
   await dialog.locator(".el-select").nth(1).click();
-  const preferredIdle = page.getByRole("option", { name: new RegExp(`^${equipmentPrefix} .*空闲`) });
+  const preferredIdle = page.getByRole("option", { name: new RegExp(`^${equipmentPrefix} · 空闲`) });
   if (await preferredIdle.count())
     await preferredIdle.click();
   else if (opts?.allowOccupied)
     await page.getByRole("option", { name: new RegExp(`^${equipmentPrefix} `) }).click();
   else
-    await page.getByRole("option", { name: /Simulator · 空闲/ }).first().click();
+    await page.getByRole("option", { name: /空闲/ }).filter({ hasNotText: "不允许" }).first().click();
   for (const [unit, prefix] of Object.entries(unitBindings ?? {})) {
     const row = dialog.locator(".unit-bind").filter({ hasText: unit });
     await expect(row).toBeVisible();
@@ -91,11 +161,11 @@ export async function createBatchFromApproved(
       continue;
     await row.locator(".el-select").click();
     const list = page.locator(".el-select-dropdown:visible").last();
-    const idle = list.getByRole("option", { name: new RegExp(`^${prefix} .*空闲`) });
+    const idle = list.getByRole("option", { name: new RegExp(`^${prefix} · 空闲`) });
     if (await idle.count())
       await idle.click();
     else
-      await list.getByRole("option", { name: /Simulator · 空闲/ }).first().click();
+      await list.getByRole("option", { name: /空闲/ }).filter({ hasNotText: "不允许" }).first().click();
   }
   if (opts?.scaleFactor != null) {
     const scale = dialog.locator(".el-form-item").filter({ hasText: "缩放因子" }).locator("input");
@@ -111,7 +181,7 @@ export async function createBatchFromApproved(
   const resp = await pending;
   expect(resp.ok(), `POST /batches ${resp.status()} ${await resp.text()}`).toBeTruthy();
   await page.waitForURL(/\/batches\/[0-9a-f-]{36}/i);
-  await expect(page.getByText("快照 完整性有效")).toBeVisible();
+  await expect(page.getByText("快照：完整性有效")).toBeVisible();
 }
 
 export async function handshakeRows(page: Page) {
@@ -131,20 +201,28 @@ export async function abortActiveBatches(request: Page["request"]) {
   expect(login.ok()).toBeTruthy();
   const token = (await login.json() as { token: string }).token;
   const headers = { Authorization: `Bearer ${token}` };
-  const batches = await request.get("/api/batches", { headers });
-  const items = (await batches.json()) as { id: string; status: string }[];
-  for (const b of items.filter((x) => ["Running", "Held", "Queued"].includes(x.status))) {
+  // 列表是分页的：取满一页上限再筛，别用默认 50 条漏掉在跑的批次。
+  const batches = await request.get("/api/batches?take=200", { headers });
+  const items = ((await batches.json()) as { items: { id: string; status: string; batchNo?: string }[] }).items;
+  const live = ["Running", "Held", "Queued", "Faulted"];
+  const targets = items.filter((x) => live.includes(x.status) && isE2eBatchNo(x.batchNo));
+  for (const b of targets) {
     await request.post(`/api/batches/${b.id}/abort`, {
       headers,
       data: { password: "Operator@123", reason: "e2e cleanup" }
     });
   }
+  const ids = new Set(targets.map((b) => b.id));
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const eq = await request.get("/api/equipment", { headers });
-    const lines = (await eq.json()) as { occupancy?: string }[];
-    if (lines.every((e) => e.occupancy !== "Occupied"))
+    const again = await request.get("/api/batches?take=200", { headers });
+    const rows = ((await again.json()) as { items: { id: string; status: string }[] }).items;
+    if (rows.filter((x) => ids.has(x.id)).every((x) => !live.includes(x.status)))
       return;
     await new Promise((r) => setTimeout(r, 300));
   }
+}
+
+function isE2eBatchNo(batchNo?: string) {
+  return !!batchNo && /^(BE2E|BOPS|BHLD|BSCL|BSKP|BALM|BP2U|BDRF|BMBW|BS7|BRTY|BLOT|BCLS|BA|BB)/i.test(batchNo);
 }

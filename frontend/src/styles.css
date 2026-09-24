@@ -161,7 +161,86 @@ h2 { font-size: 18px; }
 p { margin: 0 0 var(--space-2); }
 p:last-child { margin-bottom: 0; }
 
-.page-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+.page-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+/* 紧跟筛选条时，标题与筛选不要叠出两档 16px */
+.page-title:has(+ .filter-bar) { margin-bottom: var(--space-3); }
+
+/* 列表页筛选：搜索与计数同一行，状态芯片另起一行左对齐。
+   此前全部塞进 page-title 右侧，十个状态按钮折成右上角的三行碎块，标题被顶到垂直居中。 */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.filter-bar .search-field { width: min(260px, 100%); }
+/* 服务端分页的表都在表格下面放一条；四张表各写一份 scoped 版本迟早会长得不一样。 */
+.pager { margin-top: var(--space-3); justify-content: flex-end; }
+@media (max-width: 768px) {
+  /* 窄屏下"共 N 条 + 翻页箭头"从右边折掉，改成跟着阅读方向左对齐。 */
+  .pager { justify-content: flex-start; }
+}
+.filter-bar .result-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.filter-bar .filter-chips {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 分段按钮折行后会丢掉左边框、圆角只留在首尾，看起来像断掉的控件。
+   筛选项改成独立芯片，折行后每一枚都有完整描边。 */
+.filter-bar .filter-chips .el-radio-button__inner {
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color);
+}
+.filter-bar .filter-chips .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  border-color: var(--el-color-primary);
+}
+.page-title > :first-child { min-width: 0; flex: 1 1 auto; }
+.page-title > div > span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.page-title > :last-child:not(:first-child) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  /* 操作区按内容宽度靠右，不要和标题对半平分，否则说明文字被挤成窄列逐行折断。
+     max-width 让按钮组在窄屏落到下一行后仍能在组内换行。 */
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+/* 监控/设计器按钮多，滚下去会丢掉保持、确认、保存。钉在主内容滚动顶。 */
+.page-title.sticky-actions {
+  position: sticky;
+  top: -4px;
+  z-index: 20;
+  background: var(--bg);
+  padding: var(--space-3) 0 var(--space-3);
+  margin-top: calc(-1 * var(--space-3));
+  border-bottom: 1px solid var(--line);
+}
 
 /* ===== 区块垂直节奏：视图里唯一的堆叠间距来源 =====
    此前每张卡片自带 style="margin-top:12px / 16px"，同一语义三种写法。
@@ -172,10 +251,57 @@ p:last-child { margin-bottom: 0; }
 .gap-after-sm { margin-bottom: var(--space-2); }
 /* 取数失败 / 首次加载的整页状态块 */
 .page-state { padding: var(--space-2) 0 var(--space-4); }
+/* 空数据的一行说明。不用 el-empty：那枚 3D 插图约 250–300px 高，
+   在要打印归档的记录里白占一页，在窄栏卡片里又把内容挤出视野。 */
+.none-note {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  break-inside: avoid;
+}
+
+/* 打印时藏掉一切交互件（按钮条、签名入口）。写在全局而不是各视图 scoped：
+   scoped 的 .no-print 只能命中本模板的元素，拆成子组件后那些按钮就藏不掉了，
+   归档件上会多出一列「合格 / 不合格」。 */
+@media print {
+  .no-print { display: none !important; }
+  .none-note { color: #444; border-color: #bbb; }
+}
 
 /* 整行可点击进入详情的表格：Element Plus 默认不给指针，用户看不出能点。
    加 class="clickable-rows" 开启。写在全局而非 scoped——scoped 选择器穿透不到 el-table 内部行元素 */
 .clickable-rows .el-table__body tr { cursor: pointer; }
+.clickable-rows .el-table__body tr.is-dead { cursor: default; }
+/* 键盘可用：行能 Tab 到（useKeyboardRows 打 tabindex），落点必须看得见。
+   outline 画在 tr 上，配合负偏移压在单元格内侧，不会被冻结首列的边缘切掉；
+   底色同时补一层，防止某些浏览器不给表格行绘制轮廓。 */
+.clickable-rows .el-table__body tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.clickable-rows .el-table__body tr:focus-visible > .el-table__cell { background: var(--tint); }
+/* 排序热区是整个表头单元格（EP 把 click 绑在 th 上），指针提示别只留在文字上。
+   箭头占位在 EP 自己的 padding 里，列名不够宽就加列宽，不要来这儿抢。 */
+.el-table th.is-sortable { cursor: pointer; }
+
+kbd.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
 
 /* effect="dark" 的状态标签把文字硬设成白色，压在本项目偏亮的状态色上只有 1.6~3.3:1，
    而标签文字普遍 12px、需要 4.5:1。换成深色墨水印后同样的底色能到 5.6~11.8:1。
@@ -184,6 +310,9 @@ html.dark .el-tag--dark { --el-tag-text-color: var(--bg); }
 /* 同一问题的另一处：筛选用的单选按钮组选中态也是白字压主色蓝（12px、3.33:1）。
    EP 把这个文字色收在 --el-radio-button-checked-text-color 里，改令牌即可，不必选到按钮内部。 */
 html.dark .el-radio-button { --el-radio-button-checked-text-color: var(--bg); }
+/* 同一问题的第三处，本轮全站对比度扫描扫出来的：分页当前页码是白字压主色蓝，
+   实测 12px / 3.33:1。这里 EP 没有可用的文字令牌，直接选到页码元素（前缀抬特异性即可）。 */
+html.dark .el-pager li.is-active.number { color: var(--bg); }
 /* 实色按钮（非 plain/text/link）同样走 EP 的变量而不是直接改 color，一行覆盖五种 type。
    --el-button-bg-color 在五种 type 下分别是 --el-color-success / --el-color-warning 等，
    引用它就不用为每种颜色各写一遍；hover 用 color-mix 提亮 15%（不是 EP 默认的混暗一档），
@@ -207,8 +336,13 @@ html.dark .el-button--info:not(.is-plain):not(.is-text):not(.is-link) {
    此前各视图靠一堆裸 style="margin-top:12px" / 16px 各写一套，同一层级间距不一致；
    以下把容器、卡片、表格、滚动条的观感集中收口，视图里不再需要逐处调 1-2px。 */
 
-/* 主内容区统一留白 */
-.el-main { padding: var(--space-4) var(--space-5); }
+/* 主内容区统一留白。
+   侧栏 + 主区是横向 flex。默认 min-width:auto 会按表格的最小内容宽度把主区撑出视口，
+   多出来的列被屏幕边缘切掉，横向滚动条落在视口外面。min-width:0 让主区停在剩余宽度里，
+   表格在自己的滚动条里左右移动。 */
+.shell.el-container { max-width: 100%; }
+.shell.el-container > .el-container { min-width: 0; min-height: 0; }
+.el-main { padding: var(--space-4) var(--space-5); min-width: 0; }
 
 /* 卡片：统一圆角与内外边距，抹平 Element Plus 默认的紧窄观感。
    header 与 body 用同一组内边距，标题与正文左缘必须严格对齐。 */
@@ -232,6 +366,24 @@ html.dark .el-button--info:not(.is-plain):not(.is-text):not(.is-link) {
 .el-form-item { margin-bottom: var(--space-4); }
 .el-dialog .el-form-item:last-child { margin-bottom: 0; }
 
+/* 长表单对话框：EP 让对话框随内容无限长高，而 .el-dialog__body 自己不滚——
+   内容一长，「保存」就被推到视口外（实测设备编辑 984px > 视口 900px，保存按钮 top=1071），
+   用户只能去滚遮罩层，看起来像按钮没了。改成对话框封顶 + 正文内滚 + 页脚固定。
+   85vh 是按 --el-dialog-margin-top(15vh) + 底部 50px 外边距反推的，留 10px 余量。 */
+.el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(85vh - 60px);
+}
+.el-dialog__body { flex: 1 1 auto; overflow-y: auto; }
+.el-dialog__footer { flex: none; }
+/* 电子签名合并弹窗的正文（utils/esign.ts 用 VNode 渲染，挂在 body 下，scoped 到不了） */
+.esign-form { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.esign-meaning { margin: 0; color: var(--text-body); font-size: 13px; line-height: 1.5; }
+/* 填写指引：与签署含义分开——含义是"我在声明什么"，指引是"这一栏该怎么写"。 */
+.esign-hint { margin: 0; color: var(--text-body); font-size: 12px; line-height: 1.5; }
+.esign-label { color: var(--muted); font-size: 12px; }
+
 /* 表格：表头降字号 + 降饱和，让它退到「列名」层级，
    不再和表体文字抢视觉重量（此前表头与正文同色同字号，只靠底色微差区分）。 */
 .el-table th.el-table__cell {
@@ -242,10 +394,26 @@ html.dark .el-button--info:not(.is-plain):not(.is-text):not(.is-link) {
 }
 /* 长列表逐行扫读容易串行，给表体加斑马纹；数值列统一等宽数字，
    避免 530 / 53 这类位数不同的数值左右跳动。 */
-.el-table { font-variant-numeric: tabular-nums; }
+.el-table {
+  font-variant-numeric: tabular-nums;
+  /* 默认滚动条只在悬停时出现，窄表被裁切的列看起来像坏了。提高不透明度，配合 scrollbar-always-on。 */
+  --el-scrollbar-opacity: 0.75;
+  --el-scrollbar-hover-opacity: 1;
+  --el-scrollbar-bg-color: var(--scrollbar-hover);
+}
 /* 表头锁单行：中文列名（如「设备占用」「四步握手」）在窄列里会逐字竖排，
    宁可让表格横向滚动，也不要出现一列一个字。 */
 .el-table th.el-table__cell .cell { white-space: nowrap; }
+/* 单元格里的术语下划线是 inline，父级省略号裁不到它，窄列会在字中间被切掉。 */
+.el-table .cell .help-tip,
+.el-table .cell .help-tip-plain {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .el-table__body tr:nth-child(even) > .el-table__cell { background: var(--sunken); }
 /* 斑马纹与 hover 特异性相同，必须在其后显式重写 hover，否则偶数行悬停无反馈 */
 .el-table__body tr:hover > .el-table__cell { background: var(--el-table-row-hover-bg-color); }
@@ -288,7 +456,27 @@ html.dark { scrollbar-color: var(--scrollbar) var(--sunken); }
 /* 术语提示气泡（HelpTip）。glossary 用 \n\n 分隔「定义」与「补充」，
    el-tooltip 的气泡默认不保留换行，故用 pre-line 呈现。
    气泡被渲染到 body 下，样式必须全局定义，scoped 无效。 */
-.help-tip-pop { max-width: 340px; line-height: 1.65; white-space: pre-line; }
+.help-tip-pop { max-width: 380px; line-height: 1.65; white-space: pre-line; }
+/* Vue Flow 自带 theme-default 是浅底白控件。设计器与只读画布共用这一套，
+   避免 RecipeDesigner / ProcedureFlow 各写一遍 :deep。 */
+html.dark .vue-flow { background: var(--sunken); }
+html.dark .vue-flow__edge-path { stroke-width: 1.6; }
+html.dark .vue-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+html.dark .vue-flow__controls-button {
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+  fill: var(--text-body);
+}
+html.dark .vue-flow__controls-button:last-child { border-bottom: 0; }
+html.dark .vue-flow__controls-button:hover { background: var(--hover); }
+html.dark .vue-flow__minimap { background: var(--panel); }
+html.dark .vue-flow__background { color: var(--line); }
+
 .handshake-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); }
 .handshake-card {
   background: var(--sunken); border: 1px solid var(--line); border-radius: 10px; padding: var(--space-3);
@@ -312,8 +500,8 @@ html.dark { scrollbar-color: var(--scrollbar) var(--sunken); }
   .el-main { padding: var(--space-3) var(--space-3) var(--space-5); }
   .el-card__header { padding: var(--space-3); }
   .el-card__body { padding: var(--space-3); }
-  /* 页标题行普遍是「标题 + 一组操作按钮」，窄屏必须允许换行，否则按钮把标题挤扁 */
-  .page-title { flex-wrap: wrap; gap: var(--space-3); }
+  /* 页标题行：窄屏标题独占一行，按钮组落到下一行 */
+  .page-title > :first-child { flex: 1 1 100%; }
   .page-title h2 { flex: 1 1 100%; }
 
   /* 四步握手卡：4 列在手机上每格不到 90px，中文会逐字竖排 */

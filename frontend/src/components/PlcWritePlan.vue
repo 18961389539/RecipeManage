@@ -7,24 +7,27 @@
     :max-height="maxHeight"
     :row-class-name="rowClass"
   >
-    <el-table-column prop="stepCode" label="工步" width="70" fixed />
-    <el-table-column prop="stepName" label="名称" min-width="120" />
-    <el-table-column label="Step_ID" width="88">
+    <el-table-column prop="stepCode" :label="$t('工步')" width="70" fixed />
+    <el-table-column prop="stepName" :label="$t('名称')" min-width="120" />
+    <el-table-column width="88">
+      <template #header><HelpTip term="Step_ID" /></template>
       <template #default="{ row }">{{ row.writeToPlc ? row.plcStepId : "—" }}</template>
     </el-table-column>
-    <el-table-column label="写参">
+    <el-table-column :label="$t('写参')">
       <template #default="{ row }">{{ formatParams(row) }}</template>
     </el-table-column>
-    <el-table-column label="策略" min-width="200">
+    <el-table-column :label="$t('策略')" min-width="200">
       <template #default="{ row }">
-        <span :class="{ host: !row.writeToPlc }">{{ row.policy }}</span>
+        <span :class="{ host: !row.writeToPlc }">{{ $t(row.policy) }}</span>
       </template>
     </el-table-column>
   </el-table>
 </template>
 
 <script setup lang="ts">
+import { t } from "../i18n";
 import type { PlcWritePlanDto } from "../api/types";
+import HelpTip from "./HelpTip.vue";
 
 const props = withDefaults(defineProps<{
   items: PlcWritePlanDto[];
@@ -37,7 +40,7 @@ const props = withDefaults(defineProps<{
 
 function formatParams(row: PlcWritePlanDto) {
   if (!row.writeToPlc)
-    return "禁止写 PLC";
+    return t("禁止写 PLC");
   const slots = (row.parameters ?? [])
     .map((value, index) => ({ index, value }))
     .filter((p) => p.value !== 0)

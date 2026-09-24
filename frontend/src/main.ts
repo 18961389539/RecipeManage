@@ -10,6 +10,7 @@ import "element-plus/dist/index.css";
 import "element-plus/theme-chalk/dark/css-vars.css";
 import App from "./App.vue";
 import router from "./router";
+import { i18n, t } from "./i18n";
 import { reportSessionExpired } from "./api/http";
 import { useAuthStore } from "./stores/auth";
 import "./styles.css";
@@ -19,6 +20,8 @@ document.documentElement.classList.add("dark");
 const app = createApp(App);
 app.use(createPinia());
 app.use(router);
+app.use(i18n);
+// 这里只给个初值；真正随语言切换的是 App.vue 上的 el-config-provider。
 app.use(ElementPlus, { locale: zhCn });
 
 // 会话过期：留在应用内跳转，不整页重载——location.assign 会连用户填了一半的表单一起丢掉。
@@ -26,7 +29,8 @@ app.use(ElementPlus, { locale: zhCn });
 reportSessionExpired((from) => {
   useAuthStore().logout();
   ElMessage.warning({
-    message: "登录状态已失效，请重新登录后继续操作。",
+    // 会话过期是脚本层弹的（不在任何组件里），所以走 t() 而不是模板的 $t。
+    message: t("登录状态已失效，请重新登录后继续操作。"),
     duration: 6000
   });
   void router.replace({ path: "/login", query: { redirect: from } });

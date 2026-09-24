@@ -37,19 +37,16 @@ public sealed class RecipeService
                 var review = r.Versions.FirstOrDefault(v => v.Status == RecipeStatus.InReview);
                 var pending = review?.Approvals
                     .Where(a => a.Decision == ApprovalDecision.Pending)
-                    .OrderBy(a => a.Level)
+                    .OrderBy(a => a.Seq)
                     .FirstOrDefault();
-                var units = (review ?? approved ?? draft)?.Steps
-                    .Select(s => Isa88.UnitName(s.UnitProcedure))
-                    .Distinct(StringComparer.Ordinal)
-                    .OrderBy(u => u, StringComparer.Ordinal)
-                    .ToList() ?? [];
+                var units = RecipeTopology.UnitNamesInProcessOrder(
+                    (review ?? approved ?? draft)?.Steps ?? []).ToList();
                 return new RecipeListItemDto(
                     r.Id, r.Code, r.Name, r.ProductCode, r.ProductName, r.Lifecycle,
                     approved?.VersionNumber, draft?.Status ?? approved?.Status,
                     r.UpdatedAt ?? r.CreatedAt, units,
-                    pending?.Level,
-                    pending is null ? null : ElectronicSignature.Meaning(pending.Level, pending.Decision),
+                    pending?.Title,
+                    pending?.Meaning,
                     review?.VersionNumber);
             }).ToList();
     }
@@ -59,7 +56,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> CreateAsync(CreateRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         if (await _db.Recipes.AnyAsync(r => r.Code == request.Code.Trim().ToUpperInvariant(), ct))
             throw new DomainException("DUP_CODE", "配方编码已存在。");
 
@@ -74,7 +71,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> UpdateHeaderAsync(Guid id, UpdateRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         var recipe = await LoadAsync(id, ct);
         recipe.UpdateHeader(request.Name, request.ProductCode, request.ProductName, request.Description);
         await AuditAsync("recipe.header", recipe.Id.ToString(), $"{request.Name} {request.ProductCode}", ct);
@@ -84,7 +81,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> SaveProcedureAsync(Guid id, SaveProcedureRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         await RequireEsignAsync(request.Password, ct);
         if (string.IsNullOrWhiteSpace(request.ChangeReason))
             throw new DomainException("CHANGE_REASON", "保存工艺必须填写变更原因。");
@@ -94,6 +91,14 @@ public sealed class RecipeService
         _db.RecipeSteps.RemoveRange(draft.Steps);
         _db.RecipeEdges.RemoveRange(draft.Edges);
 
+        var byRequestId = request.Steps.ToDictionary(s => s.Id);
+        var declared = RecipeUnitClass.ResolveDeclared(
+            request.Steps.Select(s => (s.UnitProcedure ?? "", s.Type, s.EquipmentClassCode)),
+            request.Edges
+                .Where(e => byRequestId.ContainsKey(e.FromStepId) && byRequestId.ContainsKey(e.ToStepId))
+                .Select(e => (
+                    byRequestId[e.FromStepId].UnitProcedure ?? "",
+                    byRequestId[e.ToStepId].UnitProcedure ?? "")));
         var steps = request.Steps.Select(s => new RecipeStep(
             draft.Id,
             s.Code,
@@ -106,10 +111,13 @@ public sealed class RecipeService
             s.Description,
             s.Parameters.Select(p => new RecipeParameter(
                 p.SlotIndex, p.Name, p.EngineeringUnit, p.Setpoint, p.Min, p.Max, p.WriteToPlc, p.ArchiveAsQuality,
-                p.ScaleWithBatch)),
+                p.ScaleWithBatch, p.Semantic, p.MeasuredTag)),
             s.Id,
             s.UnitProcedure,
-            s.Operation)).ToList();
+            s.Operation,
+            s.PlcProgramId,
+            RecipeUnitClass.Normalize(s.EquipmentClassCode)
+                ?? (declared.TryGetValue(Isa88.UnitName(s.UnitProcedure), out var inherited) ? inherited : null))).ToList();
 
         var edges = request.Edges.Select(e => new RecipeEdge(draft.Id, e.FromStepId, e.ToStepId)).ToList();
         draft.ReplaceProcedure(steps, edges);
@@ -121,17 +129,47 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> SubmitAsync(Guid id, SubmitRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
+        var chain = await ResolveChainAsync(recipe.ApprovalChainCode, ct);
         recipe.RequireDraft().Submit(
             DateTimeOffset.UtcNow,
+            chain,
             _user.UserId ?? Guid.Empty,
             _user.DisplayName,
             request.Comment);
-        await AuditAsync("recipe.submit.esign", recipe.Id.ToString(), ElectronicSignature.Meaning(ApprovalLevel.Author, ApprovalDecision.Approved), ct);
+        await AuditAsync("recipe.submit.esign", recipe.Id.ToString(),
+            $"{chain.Name}:{ApprovalChain.Submission.MeaningFor(ApprovalDecision.Approved)}", ct);
         await _db.SaveChangesAsync(ct);
         return Map(recipe);
+    }
+
+    /// <summary>
+    /// 解析这份配方该走哪条链。
+    /// 表里一条都没有 = 从没配过链（含只按模型建库的测试库），用代码内置的缺省链；
+    /// 但配方显式点了某条链而那条链不在（被停用或被删），必须报错而不是悄悄换一条——
+    /// 静默换链等于静默换掉"这一版要谁签"。
+    /// </summary>
+    private async Task<ApprovalChain> ResolveChainAsync(string? code, CancellationToken ct)
+    {
+        var rows = await _db.ApprovalChains.AsNoTracking()
+            .Where(c => c.Enabled)
+            .OrderBy(c => c.Code)
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return ApprovalChain.Standard;
+
+        if (code is null)
+        {
+            var fallback = rows.FirstOrDefault(c => c.IsDefault) ?? rows[0];
+            return fallback.ToChain();
+        }
+
+        var picked = rows.FirstOrDefault(c => string.Equals(c.Code, code, StringComparison.OrdinalIgnoreCase));
+        if (picked is null)
+            throw new DomainException("APPROVAL_CHAIN", $"配方指定的审批链 {code} 不存在或已停用。");
+        return picked.ToChain();
     }
 
     public async Task<RecipeDetailDto> DecideAsync(Guid id, DecideRequest request, CancellationToken ct)
@@ -140,27 +178,54 @@ public sealed class RecipeService
         var version = recipe.Versions.SingleOrDefault(v => v.Status == RecipeStatus.InReview)
                       ?? throw new DomainException("NOT_IN_REVIEW", "没有待审核版本。");
 
-        var pending = version.Approvals.Single(a => a.Decision == ApprovalDecision.Pending);
+        // 要签的是"链上第一个没签的节点"，它自带要求角色——不查当下的链配置，
+        // 所以在审版本不受管理员中途改链影响。
+        var node = version.HeadNode
+                   ?? throw new DomainException("NO_PENDING_NODE", "本版本已无待处理的审核节点。");
         var role = _user.Role ?? throw new DomainException("AUTH", "未登录。");
-        var expected = pending.Level == ApprovalLevel.Supervisor ? UserRole.Supervisor : UserRole.Quality;
-        if (role is not UserRole.Admin && role != expected)
-            throw new DomainException("FORBIDDEN", $"当前审核节点需要 {expected} 角色。");
+        if (role != node.RequiredRole)
+            throw new DomainException("FORBIDDEN", $"当前审核节点「{node.Title}」需要 {node.RequiredRole} 角色。");
 
         await RequireEsignAsync(request.Password, ct);
 
-        version.Decide(pending.Level, _user.UserId ?? Guid.Empty, _user.DisplayName, request.Decision, request.Comment, DateTimeOffset.UtcNow);
+        version.Decide(_user.UserId ?? Guid.Empty, _user.DisplayName, request.Decision, request.Comment, DateTimeOffset.UtcNow);
         if (version.Status == RecipeStatus.Approved)
             recipe.MarkApproved(version);
 
         await AuditAsync("recipe.decide.esign", recipe.Id.ToString(),
-            $"{pending.Level}:{request.Decision}:{ElectronicSignature.Meaning(pending.Level, request.Decision)}", ct);
+            $"{node.Title}:{request.Decision}:{node.Meaning}", ct);
+        await _db.SaveChangesAsync(ct);
+        return Map(recipe);
+    }
+
+    /// <summary>
+    /// 指定本配方走哪条审批链（null = 默认链）。电子签名 + 审计，因为它改变"这份配方要谁签"。
+    /// 在审版本不受影响：它的节点早在提交时冻结好了。
+    /// </summary>
+    public async Task<RecipeDetailDto> SetApprovalChainAsync(Guid id, UseApprovalChainRequest request, CancellationToken ct)
+    {
+        EnsureRole(UserRole.ProcessEngineer);
+        await RequireEsignAsync(request.Password, ct);
+        var recipe = await LoadAsync(id, ct);
+
+        var code = string.IsNullOrWhiteSpace(request.Code) ? null : request.Code.Trim();
+        if (code is not null)
+        {
+            var exists = await _db.ApprovalChains.AsNoTracking().AnyAsync(c => c.Code == code, ct);
+            if (!exists)
+                throw new DomainException("APPROVAL_CHAIN", $"审批链 {code} 不存在。");
+        }
+
+        recipe.UseApprovalChain(code);
+        await AuditAsync("recipe.chain", recipe.Id.ToString(),
+            code is null ? "审批链改回默认链" : $"审批链改为 {code}", ct);
         await _db.SaveChangesAsync(ct);
         return Map(recipe);
     }
 
     public async Task<RecipeDetailDto> ReopenAsync(Guid id, SubmitRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
         var rejected = recipe.Versions.SingleOrDefault(v => v.Status == RecipeStatus.Rejected)
@@ -174,7 +239,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> NewVersionAsync(Guid id, NewVersionRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
         var next = recipe.CreateNextDraft(_user.UserId ?? Guid.Empty, request.ChangeNote);
@@ -186,7 +251,7 @@ public sealed class RecipeService
 
     public async Task<RecipePackageDto> ExportAsync(CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer, UserRole.Quality, UserRole.Supervisor);
+        EnsureRole(UserRole.ProcessEngineer, UserRole.Quality, UserRole.Supervisor);
         var recipes = await _db.Recipes
             .Include(r => r.Versions).ThenInclude(v => v.Steps).ThenInclude(s => s.Parameters)
             .Include(r => r.Versions).ThenInclude(v => v.Edges)
@@ -202,7 +267,7 @@ public sealed class RecipeService
 
     public async Task<RecipeImportResultDto> ImportAsync(RecipePackageDto package, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.ProcessEngineer);
+        EnsureRole(UserRole.ProcessEngineer);
         var created = 0;
         var skipped = 0;
         var messages = new List<string>();
@@ -239,8 +304,8 @@ public sealed class RecipeService
                     draft.Id, s.Code, s.Name, s.Type, s.Ordinal, s.CanvasX, s.CanvasY, s.WatchdogSeconds, s.Description,
                     s.Parameters.Select(p => new RecipeParameter(
                         p.SlotIndex, p.Name, p.EngineeringUnit, p.Setpoint, p.Min, p.Max, p.WriteToPlc, p.ArchiveAsQuality,
-                        p.ScaleWithBatch)),
-                    id, s.UnitProcedure, s.Operation);
+                        p.ScaleWithBatch, p.Semantic, p.MeasuredTag)),
+                    id, s.UnitProcedure, s.Operation, s.PlcProgramId, s.EquipmentClassCode);
             }).ToList();
             var edges = source.Edges
                 .Where(e => idMap.ContainsKey(e.FromStepId) && idMap.ContainsKey(e.ToStepId))
@@ -300,10 +365,11 @@ public sealed class RecipeService
                     s.UnitProcedure, s.Operation,
                     s.Parameters.OrderBy(p => p.SlotIndex).Select(p => new ParameterDto(
                         p.Id, p.SlotIndex, p.Name, p.EngineeringUnit, p.Setpoint, p.Min, p.Max, p.WriteToPlc, p.ArchiveAsQuality,
-                        p.ScaleWithBatch)).ToList()
+                        p.ScaleWithBatch, p.Semantic, p.MeasuredTag)).ToList(),
+                    s.PlcProgramId, s.EquipmentClassCode
                 )).ToList(),
                 v.Edges.Select(e => new EdgeDto(e.Id, e.FromStepId, e.ToStepId)).ToList(),
-                v.Approvals.OrderBy(a => a.Level).Select(MapApproval).ToList());
+                v.Approvals.OrderBy(a => a.Seq).Select(MapApproval).ToList());
 
         var draft = recipe.Versions.FirstOrDefault(v => v.Id == recipe.CurrentDraftVersionId);
         var approved = recipe.Versions.FirstOrDefault(v => v.Id == recipe.CurrentApprovedVersionId);
@@ -313,10 +379,9 @@ public sealed class RecipeService
             .ToList();
         return new RecipeDetailDto(
             recipe.Id, recipe.Code, recipe.Name, recipe.ProductCode, recipe.ProductName, recipe.Description,
-            MapVersion(draft), MapVersion(approved), versions);
+            MapVersion(draft), MapVersion(approved), versions, recipe.ApprovalChainCode);
     }
 
     public static ApprovalDto MapApproval(ApprovalRecord a) =>
-        new(a.Id, a.Level, a.Decision, a.ReviewerName, a.Comment, a.DecidedAt,
-            ElectronicSignature.Meaning(a.Level, a.Decision));
+        new(a.Id, a.Seq, a.Node, a.Title, a.RequiredRole, a.Decision, a.ReviewerName, a.Comment, a.DecidedAt, a.Meaning);
 }

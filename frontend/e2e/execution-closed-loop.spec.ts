@@ -1,12 +1,21 @@
 import { expect, test } from "@playwright/test";
-import { createBatchFromApproved, esignAndWait, fillPrompt, handshakeRows, loginAs, passwords, uniqueStamp } from "./helpers";
+import {
+  createBatchFromApproved,
+  esignAndWait,
+  fillPrompt,
+  handshakeRows,
+  loginAs,
+  passwords,
+  uniqueStamp,
+  esignReasonAndWait,
+} from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test("manual confirm does not write PLC and shows Temperature trends", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
 
   const stamp = uniqueStamp();
   await loginAs(page, "车间操作员");
@@ -39,9 +48,8 @@ test("manual confirm does not write PLC and shows Temperature trends", async ({ 
   await page.getByText("uPlot", { exact: true }).click();
 
   await page.getByRole("button", { name: "人工确认" }).click();
-  await fillPrompt(page, "人工确认本工步（禁止写 PLC）", "现场确认放行");
-  await esignAndWait(page, "/confirm", "POST", "人工确认本工步（禁止写 PLC）", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 30_000 });
+  await esignReasonAndWait(page, "/confirm", "POST", "人工确认本工步（禁止写 PLC）", "现场确认放行", passwords["车间操作员"]);
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 30_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write")).toBeTruthy();

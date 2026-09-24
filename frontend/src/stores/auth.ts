@@ -26,8 +26,13 @@ export const useAuthStore = defineStore("auth", () => {
 
   function can(...roles: UserRole[]) {
     const role = user.value?.role;
-    return role === "Admin" || (!!role && roles.includes(role));
+    // 闭集：Admin 不是通配符。需要管理员时把 "Admin" 写进名单。
+    return !!role && roles.includes(role);
   }
 
-  return { token, user, isAuthed, login, logout, can };
+  function is(...roles: UserRole[]) {
+    return can(...roles);
+  }
+
+  return { token, user, isAuthed, login, logout, can, is };
 });

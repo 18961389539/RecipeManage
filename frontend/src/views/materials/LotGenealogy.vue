@@ -7,25 +7,25 @@
       show-icon
       :closable="false"
       :title="`谱系加载失败：${error}`"
-      description="请确认该批次是否存在，或返回列表重试。"
+      :description="$t('请确认该批次是否存在，或返回列表重试。')"
     />
     <el-skeleton v-else :rows="6" animated />
   </div>
   <div v-if="tree">
     <div class="page-title">
       <div>
-        <h2>谱系 · {{ tree.lot.lotNumber }}</h2>
+        <h2>{{ $t("谱系 · {0}", [tree.lot.lotNumber]) }}</h2>
         <span>{{ tree.lot.materialCode }} {{ tree.lot.materialName }} · {{ statusLabel(tree.lot.status) }}</span>
       </div>
       <div>
-        <el-button @click="$router.push('/lots')">返回列表</el-button>
-        <el-button v-if="tree.lot.status === 'Open'" type="primary" @click="openSplit">拆分子批</el-button>
+        <el-button @click="$router.push('/lots')">{{ $t("返回列表") }}</el-button>
+        <el-button v-if="tree.lot.status === 'Open'" type="primary" @click="openSplit">{{ $t("拆分子批") }}</el-button>
       </div>
     </div>
     <el-row :gutter="12">
       <el-col :span="8" :xs="24">
-        <el-card header="祖先批">
-          <el-empty v-if="!tree.ancestors.length" description="来料根批，无祖先" />
+        <el-card :header="$t('祖先批')">
+          <p v-if="!tree.ancestors.length" class="none-note">{{ $t("来料根批，无祖先。") }}</p>
           <ul v-else class="chain">
             <li v-for="row in tree.ancestors" :key="row.id">
               <el-link type="primary" @click="$router.push(`/lots/${row.id}`)">{{ row.lotNumber }}</el-link>
@@ -35,15 +35,15 @@
         </el-card>
       </el-col>
       <el-col :span="8" :xs="24">
-        <el-card header="本批">
+        <el-card :header="$t('本批')">
           <p><b>{{ tree.lot.lotNumber }}</b></p>
           <p class="muted">{{ sourceLabel(tree.lot.source) }} · {{ statusLabel(tree.lot.status) }}</p>
           <p>{{ tree.lot.quantity == null ? "数量未登记" : `${tree.lot.quantity} ${tree.lot.uom ?? ""}` }}</p>
         </el-card>
       </el-col>
       <el-col :span="8" :xs="24">
-        <el-card header="子批">
-          <el-empty v-if="!tree.descendants.length" description="尚未拆分" />
+        <el-card :header="$t('子批')">
+          <p v-if="!tree.descendants.length" class="none-note">{{ $t("尚未拆分子批。") }}</p>
           <ul v-else class="chain">
             <li v-for="row in tree.descendants" :key="row.id">
               <el-link type="primary" @click="$router.push(`/lots/${row.id}`)">{{ row.lotNumber }}</el-link>
@@ -53,27 +53,27 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-card class="gap-before" header="关联生产批次（投料 / 产出）">
-      <el-table :data="tree.uses">
-        <el-table-column prop="batchNo" label="生产批" width="160" fixed />
-        <el-table-column prop="role" label="角色" width="100">
+    <el-card class="gap-before" :header="$t('关联生产批次（投料 / 产出）')">
+      <el-table :data="tree.uses" :empty-text="$t('本批未关联生产批次')">
+        <el-table-column prop="batchNo" :label="$t('生产批')" width="160" fixed />
+        <el-table-column prop="role" :label="$t('角色')" width="100">
           <template #default="{ row }">{{ roleLabel(row.role) }}</template>
         </el-table-column>
-        <el-table-column prop="lotNumber" label="物料批" />
-        <el-table-column prop="materialCode" label="物料" width="110" />
-        <el-table-column label="数量" width="100">
+        <el-table-column prop="lotNumber" :label="$t('物料批')" />
+        <el-table-column prop="materialCode" :label="$t('物料')" width="110" />
+        <el-table-column :label="$t('数量')" width="100">
           <template #default="{ row }">{{ row.quantity ?? "—" }}</template>
         </el-table-column>
       </el-table>
     </el-card>
-    <el-dialog v-model="splitVisible" title="拆分子批" width="440px">
+    <el-dialog v-model="splitVisible" :title="$t('拆分子批')" width="440px">
       <el-form label-width="100px">
-        <el-form-item label="子批号"><el-input v-model="split.childLotNumber" /></el-form-item>
-        <el-form-item label="数量"><el-input-number v-model="split.quantity" :min="0.001" :step="1" /></el-form-item>
+        <el-form-item :label="$t('子批号')"><el-input v-model="split.childLotNumber" /></el-form-item>
+        <el-form-item :label="$t('数量')"><el-input-number v-model="split.quantity" :min="0.001" :step="1" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="splitVisible = false">取消</el-button>
-        <el-button type="primary" :loading="splitting" @click="doSplit">拆分</el-button>
+        <el-button @click="splitVisible = false">{{ $t("取消") }}</el-button>
+        <el-button type="primary" :loading="splitting" @click="doSplit">{{ $t("拆分") }}</el-button>
       </template>
     </el-dialog>
   </div>

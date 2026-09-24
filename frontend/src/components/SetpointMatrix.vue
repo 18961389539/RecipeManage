@@ -6,8 +6,8 @@
     size="small"
     :max-height="maxHeight"
   >
-    <el-table-column prop="name" label="参数" width="140" fixed />
-    <el-table-column prop="unit" label="单位" width="64" />
+    <el-table-column prop="name" :label="$t('参数')" width="140" fixed />
+    <el-table-column prop="unit" :label="$t('单位')" width="64" />
     <el-table-column v-for="col in matrix.columns" :key="col.id" :label="col.label" min-width="128">
       <template #header>
         <button
@@ -37,11 +37,11 @@
           >
             <span class="sp">{{ row.cells[col.id]!.setpoint }}</span>
             <span v-if="row.cells[col.id]!.min != null || row.cells[col.id]!.max != null" class="spec">
-              {{ row.cells[col.id]!.min ?? "—" }}~{{ row.cells[col.id]!.max ?? "—" }}
+              {{ $t("规格 {0}~{1}", [row.cells[col.id]!.min ?? "—", row.cells[col.id]!.max ?? "—"]) }}
             </span>
             <span v-if="row.actuals[col.id]" class="meas" :class="{ bad: row.actuals[col.id]!.oos }">
-              实测 {{ formatActual(row.actuals[col.id]!.value) }}
-              {{ row.actuals[col.id]!.oos ? "超差" : "合格" }}
+              {{ $t("实测 {0}", [formatActual(row.actuals[col.id]!.value)]) }}
+              {{ row.actuals[col.id]!.oos ? $t("超差") : $t("合格") }}
             </span>
           </button>
         </template>
@@ -49,7 +49,7 @@
       </template>
     </el-table-column>
   </el-table>
-  <el-empty v-else description="尚无工步参数可组成 Setpoints 矩阵" />
+  <el-empty v-else :description="$t('尚无工步参数可组成设定矩阵')" />
 </template>
 
 <script setup lang="ts">
@@ -113,7 +113,8 @@ function isChanged(stepId: string, row: { key: string }) {
 .muted { color: var(--muted); font-size: 12px; }
 .matrix-col {
   border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit;
-  padding: 0;
+  /* 与 .cell 同步留 4px 左内边距：选中列的 2px 色条是 inset 阴影，会压在数字左边沿上 */
+  padding: 0 0 0 4px;
 }
 /* 表头与单元格都是「点它即联动选中该工步」的入口，此前选中只把文字变蓝，
    在一整片同色表头里几乎看不出来；补下划线 + 悬停反馈。 */
@@ -126,7 +127,7 @@ function isChanged(stepId: string, row: { key: string }) {
 .cell {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   width: 100%; border: 0; background: transparent; color: inherit; cursor: pointer;
-  font: inherit; text-align: left; padding: 0; line-height: 1.5;
+  font: inherit; text-align: left; padding: 0 0 0 4px; line-height: 1.5;
 }
 .sp { font-variant-numeric: tabular-nums; font-weight: 600; }
 .spec { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }

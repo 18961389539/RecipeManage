@@ -3,6 +3,15 @@ export type RecipeStatus = "Draft" | "InReview" | "Approved" | "Rejected" | "Obs
 export type StepType = "Wait" | "Heat" | "Hold" | "Cool" | "Mix" | "Pressure" | "Transfer" | "QualityCheck" | "ManualConfirm";
 export type BatchStatus = "Created" | "Queued" | "Running" | "Completed" | "Faulted" | "Aborted" | "Held" | "Released" | "DispositionRejected";
 export type PlcProtocol = "Simulator" | "SiemensS7" | "ModbusTcp" | "OpcUa";
+/** 工步执行结论。成员就是 batch_step_executions / batch_lanes 里存的 TEXT 值。 */
+export type StepOutcome = "Pending" | "Running" | "Held" | "AwaitingConfirm" | "Completed" | "Skipped" | "Faulted";
+/** 主配方的生命周期：Obsolete 只读归档，与下面的 RecipeStatus（版本状态）不是一回事。 */
+export type RecipeLifecycle = "Active" | "Obsolete";
+/**
+ * 参数语义。Unspecified 时后端按名称/单位推断（历史数据的回退路径），
+ * 显式声明后归档取哪个实测点、哪个参数是工艺时长都由它说了算。
+ */
+export type ParameterSemantic = "Unspecified" | "Duration" | "Rate";
 
 export interface UserDto {
   id: string;
@@ -23,6 +32,9 @@ export interface ParameterDto {
   writeToPlc: boolean;
   archiveAsQuality: boolean;
   scaleWithBatch?: boolean;
+  semantic?: ParameterSemantic;
+  /** 归档时读取的实测点键名，对应设备点表 Measured 的 key；空则由后端按名称/单位推断。 */
+  measuredTag?: string | null;
 }
 
 export interface StepDto {
@@ -37,6 +49,8 @@ export interface StepDto {
   description?: string | null;
   unitProcedure?: string | null;
   operation?: string | null;
+  plcProgramId?: number | null;
+  equipmentClassCode?: string | null;
   parameters: ParameterDto[];
 }
 
@@ -46,14 +60,47 @@ export interface EdgeDto {
   toStepId: string;
 }
 
+/** 审批节点的稳定标识。链是可配的数据，界面显示一律用 title，这里只作筛选与兜底。 */
+export type ApprovalNode = "Submission" | "Supervisor" | "Quality" | "Release";
+
 export interface ApprovalDto {
   id: string;
-  level: "Author" | "Supervisor" | "Quality";
+  /** 链上顺序，0 是提交动作。推进与"还差谁签"只看它。 */
+  seq: number;
+  node: ApprovalNode;
+  /** 提交时冻结在记录上的节点名称——链后来怎么改都不影响这一版显示什么。 */
+  title: string;
+  requiredRole: UserRole;
   decision: "Pending" | "Approved" | "Rejected";
   reviewerName?: string | null;
   comment?: string | null;
   decidedAt?: string | null;
   meaning?: string | null;
+}
+
+export interface ApprovalChainStepDto {
+  node: ApprovalNode;
+  title: string;
+  requiredRole: UserRole;
+  meaningApproved: string;
+  meaningRejected: string;
+}
+
+/** 保存时的节点定义：没有 node，标识由 requiredRole 派生（那是内部标识，不该让管理员理解）。 */
+export interface ApprovalChainStepRequest {
+  title: string;
+  requiredRole: UserRole;
+  meaningApproved: string;
+  meaningRejected: string;
+}
+
+export interface ApprovalChainDto {
+  id: string;
+  code: string;
+  name: string;
+  isDefault: boolean;
+  enabled: boolean;
+  steps: ApprovalChainStepDto[];
 }
 
 export interface RecipeVersionDto {
@@ -78,6 +125,8 @@ export interface RecipeDetailDto {
   draft?: RecipeVersionDto | null;
   approved?: RecipeVersionDto | null;
   versions: RecipeVersionDto[];
+  /** 本配方走哪条审批链；null = 默认链。 */
+  approvalChainCode?: string | null;
 }
 
 export interface RecipeListItemDto {
@@ -86,12 +135,13 @@ export interface RecipeListItemDto {
   name: string;
   productCode: string;
   productName: string;
-  lifecycle: string;
+  lifecycle: RecipeLifecycle;
   approvedVersion?: number | null;
   draftStatus?: RecipeStatus | null;
   updatedAt: string;
   unitProcedures?: string[];
-  pendingLevel?: "Author" | "Supervisor" | "Quality" | null;
+  /** 待决节点的冻结名称；链可配，所以这里不是枚举而是文本。 */
+  pendingTitle?: string | null;
   pendingMeaning?: string | null;
   reviewVersion?: number | null;
 }
@@ -108,6 +158,7 @@ export interface BatchListItemDto {
   currentStepIndex: number;
   createdAt: string;
   startedAt?: string | null;
+  pendingFinalSample?: boolean;
 }
 
 export interface SnapshotParameter {
@@ -120,6 +171,9 @@ export interface SnapshotParameter {
   writeToPlc: boolean;
   archiveAsQuality: boolean;
   scaleWithBatch?: boolean;
+  semantic?: ParameterSemantic;
+  /** 归档时读取的实测点键名，对应设备点表 Measured 的 key；空则由后端按名称/单位推断。 */
+  measuredTag?: string | null;
 }
 
 export interface SnapshotStep {
@@ -129,6 +183,7 @@ export interface SnapshotStep {
   type: StepType;
   ordinal: number;
   watchdogSeconds: number;
+  plcProgramId?: number | null;
   unitProcedure?: string | null;
   operation?: string | null;
   parameters: SnapshotParameter[];
@@ -162,7 +217,7 @@ export interface StepExecutionDto {
   stepName: string;
   stepType: StepType;
   ordinal: number;
-  outcome: string;
+  outcome: StepOutcome;
   startedAt?: string | null;
   completedAt?: string | null;
   qualityJson?: string | null;
@@ -175,7 +230,7 @@ export interface LaneHandshakeDto {
   stepId?: string | null;
   stepCode: string;
   phase: string;
-  outcome: string;
+  outcome: StepOutcome;
 }
 
 export interface BatchDetailDto {
@@ -200,6 +255,9 @@ export interface BatchDetailDto {
   releasedBy?: string | null;
   releasedAt?: string | null;
   releaseComment?: string | null;
+  pendingHoldReason?: string | null;
+  pendingSkipReason?: string | null;
+  pendingConfirmComment?: string | null;
 }
 
 export interface PlcWritePlanDto {
@@ -232,6 +290,9 @@ export interface PhaseParameterDto {
   writeToPlc: boolean;
   archiveAsQuality: boolean;
   scaleWithBatch?: boolean;
+  semantic?: ParameterSemantic;
+  /** 归档时读取的实测点键名，对应设备点表 Measured 的 key；空则由后端按名称/单位推断。 */
+  measuredTag?: string | null;
 }
 
 export interface PhaseTemplateDto {
@@ -243,6 +304,7 @@ export interface PhaseTemplateDto {
   watchdogSeconds: number;
   classCode: string;
   parameters: PhaseParameterDto[];
+  plcProgramId?: number | null;
 }
 
 export interface EquipmentClassDto {
@@ -251,6 +313,32 @@ export interface EquipmentClassDto {
   name: string;
   description?: string | null;
   templates: PhaseTemplateDto[];
+}
+
+export interface UpsertEquipmentRequest {
+  code: string;
+  name: string;
+  protocol: PlcProtocol;
+  host: string;
+  port: number;
+  plcModel: string;
+  rack: number;
+  slot: number;
+  enabled: boolean;
+  tagMapJson: string;
+  description?: string | null;
+  watchdogJson?: string | null;
+  equipmentClassCode?: string | null;
+}
+
+export interface UpsertPhaseTemplateRequest {
+  code: string;
+  name: string;
+  stepType: StepType;
+  plcProgramId: number;
+  watchdogSeconds: number;
+  operation?: string | null;
+  parameters: PhaseParameterDto[];
 }
 
 export interface EquipmentDto {
@@ -298,6 +386,7 @@ export interface DashboardDto {
   equipmentOccupancy?: EquipmentOccupancyDto[];
   pendingReleaseBatches?: number;
   pendingLabSamples?: number;
+  heldBatches?: number;
 }
 
 export interface AuditLogDto {
@@ -313,6 +402,56 @@ export interface AuditLogDto {
 export interface AuditLogPageDto {
   total: number;
   items: AuditLogDto[];
+}
+
+/** 服务端分页的列表信封：total 是筛选后的全量行数，不是本页行数。 */
+export interface BatchListPageDto {
+  total: number;
+  items: BatchListItemDto[];
+}
+
+export interface MaterialLotPageDto {
+  total: number;
+  items: MaterialLotDto[];
+}
+
+export interface ProcessAlarmPageDto {
+  total: number;
+  items: ProcessAlarmDto[];
+}
+
+/** 一份留在服务器上的日常快照。name 里的时间是定宽 UTC，字典序即时间序。 */
+export interface BackupFileDto {
+  name: string;
+  bytes: number;
+  createdAt: string;
+}
+
+/**
+ * 备份现状。lastError 只反映本进程这一轮，历史失败去操作审计查 system.backup.failed。
+ */
+export interface BackupStatusDto {
+  directory: string;
+  enabled: boolean;
+  keep: number;
+  atUtc: string;
+  nextRunAtUtc: string;
+  files: BackupFileDto[];
+  lastRunAtUtc?: string | null;
+  lastFile?: string | null;
+  lastError?: string | null;
+}
+
+/**
+ * 趋势样本：points 是按 step 等间隔抽稀后的点集，total 是原始行数，readRows 是本次真正读回的最近行数。
+ * step > 1 或 readRows < total 时界面必须写明口径——抽稀与开窗只能发生在读的一侧，原始样本一行都不删。
+ */
+export interface SampleSeriesDto {
+  points: SampleDto[];
+  total: number;
+  readRows: number;
+  step: number;
+  maxPoints: number;
 }
 
 export interface RecipeFieldChangeDto {
@@ -404,6 +543,15 @@ export interface BatchRecordDto {
   releaseComment?: string | null;
   materials?: BatchMaterialUseDto[];
   labSamples?: LabSampleDto[];
+  esigns?: BatchEsignDto[];
+}
+
+export interface BatchEsignDto {
+  action: string;
+  meaning: string;
+  userName?: string | null;
+  at: string;
+  extra?: string | null;
 }
 
 export type MaterialLotSource = "Received" | "Produced" | "Split";

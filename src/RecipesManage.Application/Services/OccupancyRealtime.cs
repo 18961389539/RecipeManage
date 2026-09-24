@@ -7,15 +7,16 @@ using RecipesManage.Domain.Equipment;
 namespace RecipesManage.Application.Services;
 
 /// <summary>
-/// 设备占用快照：排队/运行/保持占用，完成/中止/故障释放。通过 SignalR execution/occupancy 推到总览，禁止双批盲写。
+/// 设备占用快照：租约与占用中批次都是候选人，同设备多批时运行/排队/保持优先于故障。通过 SignalR execution/occupancy 推到总览。
 /// </summary>
 public static class OccupancyRealtime
 {
     public static IReadOnlyList<EquipmentOccupancyDto> Snapshot(
         IEnumerable<EquipmentLine> equipment,
-        IEnumerable<ProductionBatch> live)
+        IEnumerable<ProductionBatch> live,
+        IEnumerable<EquipmentLease>? leases = null)
     {
-        var occ = EquipmentOccupancy.Index(live, BatchService.BoundEquipmentIds);
+        var occ = EquipmentOccupancy.Index(live, BatchService.BoundEquipmentIds, leases);
         return equipment
             .OrderBy(e => e.Code)
             .Select(e =>
@@ -35,16 +36,15 @@ public static class OccupancyRealtime
         Guid batchId,
         CancellationToken ct)
     {
-        // Faulted 也计入占用：故障批次仍压在设备上，必须操作员介入后才能释放
-        // （与 EquipmentLeasePolicy / 设备租约一致）。
         var live = await db.Batches.AsNoTracking()
             .Where(b => b.Status == BatchStatus.Queued
                         || b.Status == BatchStatus.Running
                         || b.Status == BatchStatus.Held
                         || b.Status == BatchStatus.Faulted)
             .ToListAsync(ct);
+        var leases = await db.EquipmentLeases.AsNoTracking().ToListAsync(ct);
         var equipment = await db.Equipment.AsNoTracking().ToListAsync(ct);
         await publisher.PublishAsync(
-            new ExecutionEvent(batchId, "occupancy", Snapshot(equipment, live)), ct);
+            new ExecutionEvent(batchId, "occupancy", Snapshot(equipment, live, leases)), ct);
     }
 }

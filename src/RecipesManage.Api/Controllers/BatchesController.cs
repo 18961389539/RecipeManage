@@ -11,13 +11,23 @@ namespace RecipesManage.Api.Controllers;
 public sealed class BatchesController(BatchService batches, MaterialLotService lots) : ControllerBase
 {
     [HttpGet]
-    public Task<IReadOnlyList<BatchListItemDto>> List(CancellationToken ct) => batches.ListAsync(ct);
+    public Task<BatchListPageDto> List(
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 50,
+        [FromQuery] string? sort = null,
+        [FromQuery] string? dir = null,
+        [FromQuery] string? q = null,
+        [FromQuery] string? status = null,
+        [FromQuery] bool onlyLabPending = false,
+        CancellationToken ct = default) =>
+        batches.ListAsync(skip, take, sort, dir, q, status, onlyLabPending, ct);
 
     [HttpGet("{id:guid}")]
     public Task<BatchDetailDto> Get(Guid id, CancellationToken ct) => batches.GetAsync(id, ct);
 
     [HttpGet("{id:guid}/samples")]
-    public Task<IReadOnlyList<SampleDto>> Samples(Guid id, CancellationToken ct) => batches.SamplesAsync(id, ct);
+    public Task<SampleSeriesDto> Samples(Guid id, [FromQuery] int maxPoints = 1500, CancellationToken ct = default) =>
+        batches.SamplesAsync(id, maxPoints, ct);
 
     [HttpGet("{id:guid}/handshake-log")]
     public Task<IReadOnlyList<HandshakeLogDto>> HandshakeLog(Guid id, CancellationToken ct) =>
@@ -39,42 +49,59 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
     }
 
     [HttpGet("{id:guid}/alarms")]
-    public Task<IReadOnlyList<ProcessAlarmDto>> Alarms(Guid id, CancellationToken ct) =>
-        batches.AlarmsAsync(id, ct);
+    public Task<ProcessAlarmPageDto> Alarms(
+        Guid id,
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 50,
+        [FromQuery] string? sort = null,
+        [FromQuery] string? dir = null,
+        [FromQuery] string? q = null,
+        [FromQuery] bool onlyOpen = false,
+        CancellationToken ct = default) =>
+        batches.AlarmsAsync(id, skip, take, sort, dir, q, onlyOpen, ct);
 
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
     public Task<BatchDetailDto> Create(CreateBatchRequest request, CancellationToken ct) =>
         batches.CreateAsync(request, ct);
 
     [HttpPost("{id:guid}/start")]
+    [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
     public Task<BatchDetailDto> Start(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.StartAsync(id, request.Password, ct);
 
     [HttpPost("{id:guid}/abort")]
+    [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
     public Task<BatchDetailDto> Abort(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.AbortAsync(id, request.Reason ?? "操作员中止", request.Password, ct);
 
     [HttpPost("{id:guid}/hold")]
+    [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
     public Task<BatchDetailDto> Hold(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.HoldAsync(id, request.Reason ?? "操作员保持", request.Password, ct);
 
     [HttpPost("{id:guid}/resume")]
+    [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
     public Task<BatchDetailDto> Resume(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.ResumeAsync(id, request.Password, ct);
 
     [HttpPost("{id:guid}/skip")]
+    [Authorize(Policy = AuthorizationPolicies.BatchSkip)]
     public Task<BatchDetailDto> Skip(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.SkipAsync(id, request.Reason ?? "主管跳步", request.Password, request.StepId, ct);
 
     [HttpPost("{id:guid}/confirm")]
+    [Authorize(Policy = AuthorizationPolicies.BatchConfirm)]
     public Task<BatchDetailDto> Confirm(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.ConfirmAsync(id, request.Reason ?? "操作员确认", request.Password, request.StepId, ct);
 
     [HttpPost("{id:guid}/release")]
+    [Authorize(Policy = AuthorizationPolicies.QualityDisposition)]
     public Task<BatchDetailDto> Release(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.ReleaseAsync(id, request.Reason ?? "质量放行", request.Password, ct);
 
     [HttpPost("{id:guid}/reject-disposition")]
+    [Authorize(Policy = AuthorizationPolicies.QualityDisposition)]
     public Task<BatchDetailDto> RejectDisposition(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
         batches.RejectDispositionAsync(id, request.Reason ?? "", request.Password, ct);
 
@@ -83,10 +110,12 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
         lots.SamplesForBatchAsync(id, ct);
 
     [HttpPost("{id:guid}/lab-samples")]
+    [Authorize(Policy = AuthorizationPolicies.LotHandle)]
     public Task<LabSampleDto> CreateLabSample(Guid id, CreateLabSampleRequest request, CancellationToken ct) =>
         lots.CreateSampleAsync(id, request, ct);
 
     [HttpPost("{id:guid}/lab-samples/{sampleId:guid}/disposition")]
+    [Authorize(Policy = AuthorizationPolicies.QualityDisposition)]
     public Task<LabSampleDto> DisposeLabSample(Guid id, Guid sampleId, [FromBody] LabSampleDispositionRequest request, CancellationToken ct) =>
         lots.DisposeSampleAsync(sampleId, request, ct, id);
 }
@@ -97,8 +126,15 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
 public sealed class AlarmsController(BatchService batches) : ControllerBase
 {
     [HttpGet]
-    public Task<IReadOnlyList<ProcessAlarmDto>> List(CancellationToken ct) =>
-        batches.AlarmsAsync(null, ct);
+    public Task<ProcessAlarmPageDto> List(
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 50,
+        [FromQuery] string? sort = null,
+        [FromQuery] string? dir = null,
+        [FromQuery] string? q = null,
+        [FromQuery] bool onlyOpen = false,
+        CancellationToken ct = default) =>
+        batches.AlarmsAsync(null, skip, take, sort, dir, q, onlyOpen, ct);
 
     [HttpPost("{id:guid}/ack")]
     public Task<ProcessAlarmDto> Ack(Guid id, CancellationToken ct) =>

@@ -7,7 +7,8 @@ import {
   handshakeRows,
   loginAs,
   passwords,
-  uniqueStamp
+  uniqueStamp,
+  esignReasonAndWait,
 } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -15,7 +16,7 @@ test.describe.configure({ mode: "serial" });
 test("IOTClient loopback connection tests and Modbus handshake", async ({ page }) => {
   const health = await page.request.get("/health");
   expect(health.ok()).toBeTruthy();
-  expect((await health.json()).controlRecipe).toBe("jsonb");
+  expect((await health.json()).controlRecipe).toBe("TEXT");
   await abortActiveBatches(page.request);
 
   await loginAs(page, "车间操作员");
@@ -32,7 +33,7 @@ test("IOTClient loopback connection tests and Modbus handshake", async ({ page }
   await createBatchFromApproved(page, batchNo, "AL-HT-WAIT", "MB-01");
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 90_000 });
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 90_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write" && (r.detail ?? "").includes("Step_Type=1"))).toBeTruthy();
@@ -51,9 +52,8 @@ test("IOTClient Siemens S7 four-step handshake does not write ManualConfirm", as
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
   await expect(page.getByRole("button", { name: "人工确认" })).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "人工确认" }).click();
-  await fillPrompt(page, "人工确认本工步（禁止写 PLC）", "S7 环回确认");
-  await esignAndWait(page, "/confirm", "POST", "人工确认本工步（禁止写 PLC）", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Completed ·", { timeout: 30_000 });
+  await esignReasonAndWait(page, "/confirm", "POST", "人工确认本工步（禁止写 PLC）", "S7 环回确认", passwords["车间操作员"]);
+  await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 30_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.stepCode === "S10" && r.kind === "write" && (r.detail ?? "").includes("Step_Type=1"))).toBeTruthy();

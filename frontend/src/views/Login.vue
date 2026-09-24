@@ -1,25 +1,28 @@
 <template>
   <div class="login">
     <el-card class="card">
-      <h2>工艺配方管理与实时执行系统</h2>
-      <p>离散制造 Batch Recipe Management & Execution</p>
+      <h2>{{ $t("工艺配方管理与实时执行系统") }}</h2>
+      <p>{{ $t("离散制造 · 批次配方管理与执行") }}</p>
       <el-form @submit.prevent="onSubmit" label-position="top">
-        <el-form-item label="用户名">
-          <el-input v-model="userName" autocomplete="username" />
+        <el-form-item :label="$t('用户名')">
+          <el-input v-model="userName" autocomplete="username" autofocus />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item :label="$t('密码')">
           <el-input v-model="password" type="password" autocomplete="current-password" show-password />
         </el-form-item>
-        <el-button type="primary" native-type="submit" :loading="loading" style="width:100%">登录</el-button>
+        <el-button type="primary" native-type="submit" :loading="loading" style="width:100%">{{ $t("登录") }}</el-button>
       </el-form>
-      <div class="roles">
-        <el-button v-for="a in accounts" :key="a.user" size="small" text @click="pick(a)">{{ a.label }}</el-button>
+      <!-- 只在 dev 有内容：生产构建里 accounts 是空数组（明文口令被摇树掉），不留空占位。 -->
+      <div v-if="accounts.length" class="roles">
+        <span class="roles-label">{{ $t("演示账号 · 点一下填入用户名与密码") }}</span>
+        <el-button v-for="a in accounts" :key="a.user" size="small" text @click="pick(a)">{{ $t(a.label) }}</el-button>
       </div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
+import { t } from "../i18n";
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
@@ -65,6 +68,10 @@ function pick(a: (typeof accounts)[number]) {
 }
 
 async function onSubmit() {
+  if (!userName.value.trim() || !password.value) {
+    ElMessage.warning(t("请输入用户名和密码"));
+    return;
+  }
   loading.value = true;
   try {
     await auth.login(userName.value, password.value);
@@ -84,4 +91,6 @@ async function onSubmit() {
 h2 { margin: 0 0 var(--space-2); }
 p { color: var(--muted); margin: 0 0 var(--space-4); }
 .roles { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-1); }
+/* 演示账号是 dev 专属入口；不写清"点一下会填入"，五个角色名看着像一组导航链接。 */
+.roles-label { flex-basis: 100%; color: var(--muted); font-size: 11px; }
 </style>

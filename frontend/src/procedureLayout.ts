@@ -1,6 +1,7 @@
-/** ISA-88 单元规程泳道排布。设计态保存坐标；执行快照不含 canvas，以免破坏完整性哈希。 */
+/** ISA-88 单元规程泳道排布。设计器与监控共用 layoutProcedure；执行快照不含 canvas，以免破坏完整性哈希。 */
 
-export const DEFAULT_UNIT_LANE = "UP-01 热处理单元";
+/** 与后端 Isa88.DefaultUnitProcedure 同值：单元规程为空时的兜底泳道名。 */
+export const DEFAULT_UNIT_LANE = "UP-01";
 export const LAYOUT_X0 = 80;
 export const LAYOUT_Y0 = 48;
 export const LAYOUT_DX = 210;
@@ -10,6 +11,19 @@ export interface ProcedureLayoutStep {
   id: string;
   unitProcedure?: string | null;
   ordinal: number;
+}
+
+/**
+ * 画布真正需要的节点形状。原先声明在 ProcedureFlow.vue 内部，
+ * 但快照投影（useBatchSnapshotView）与电子批记录的归档区都要按同一形状传参，
+ * 声明在组件里就导不出去，只能各处再抄一份字段表——抄一份就会漂一份。
+ */
+export interface ProcedureFlowStep extends ProcedureLayoutStep {
+  code: string;
+  name: string;
+  type: string;
+  operation?: string | null;
+  plcProgramId?: number | null;
 }
 
 export interface ProcedureLayoutEdge {
@@ -31,21 +45,9 @@ export function collectLanes(steps: ProcedureLayoutStep[]): string[] {
   return lanes;
 }
 
-/** 设计态「ISA-88 泳道排布」：按单元内 ordinal 从左到右。 */
+/** 无拓扑边时的泳道排布：与执行态同一套算法，避免设计器/监控两套坐标。 */
 export function layoutByLaneOrdinal(steps: ProcedureLayoutStep[]): Record<string, { x: number; y: number }> {
-  const lanes = collectLanes(steps);
-  const indexInLane: Record<string, number> = {};
-  const pos: Record<string, { x: number; y: number }> = {};
-  for (const step of [...steps].sort((a, b) => a.ordinal - b.ordinal)) {
-    const lane = unitLane(step.unitProcedure);
-    const i = indexInLane[lane] ?? 0;
-    pos[step.id] = {
-      x: LAYOUT_X0 + i * LAYOUT_DX,
-      y: LAYOUT_Y0 + Math.max(0, lanes.indexOf(lane)) * LAYOUT_DY
-    };
-    indexInLane[lane] = i + 1;
-  }
-  return pos;
+  return layoutProcedure(steps, []);
 }
 
 /** 执行态：按冻结边做最长路径分层；无边时回退到泳道 ordinal。 */

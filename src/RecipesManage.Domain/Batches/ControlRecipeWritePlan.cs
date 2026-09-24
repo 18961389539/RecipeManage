@@ -9,26 +9,47 @@ namespace RecipesManage.Domain.Batches;
 /// </summary>
 public static class ControlRecipeWritePlan
 {
-    public static bool WritesToPlc(StepType type) =>
-        type is not (StepType.Wait or StepType.ManualConfirm or StepType.QualityCheck);
+    public static bool WritesToPlc(StepType type) => PlcProgram.WritesToPlc(type);
+
+    /// <summary>写参帧里承载工艺时长的槽位。点表槽数不足时，它是最容易被静默丢掉的一个。</summary>
+    public const int DurationSlot = RecipeParameter.MaxSlots - 1;
 
     public static float[] PackParameters(SnapshotStep step)
     {
-        var parameters = new float[16];
+        var parameters = new float[RecipeParameter.MaxSlots];
         if (!WritesToPlc(step.Type))
             return parameters;
 
-        foreach (var parameter in step.Parameters.Where(p => p.WriteToPlc && (uint)p.SlotIndex < 16))
+        foreach (var parameter in step.Parameters.Where(p => p.WriteToPlc && (uint)p.SlotIndex < RecipeParameter.MaxSlots))
             parameters[parameter.SlotIndex] = (float)parameter.Setpoint;
-        if (ProcessDuration.TryFrom(step) is { } processDuration && parameters[15] == 0)
-            parameters[15] = (float)Math.Clamp(processDuration.TotalSeconds, 0.2, 7200);
+        if (ProcessDuration.TryFrom(step) is { } processDuration && parameters[DurationSlot] == 0)
+            parameters[DurationSlot] = (float)Math.Clamp(processDuration.TotalSeconds, 0.2, 7200);
         return parameters;
+    }
+
+    /// <summary>
+    /// 这一步真正会打进写参帧的槽位。
+    /// 驱动只写点表里有的前 N 槽，所以点表短于这里任何一个槽位，
+    /// 对应设定值就会静默留在 PLC 的上一步值上——开批前必须比对，不能靠事后看趋势发现。
+    /// </summary>
+    public static IReadOnlyList<int> WrittenSlots(SnapshotStep step)
+    {
+        if (!WritesToPlc(step.Type))
+            return [];
+        var slots = step.Parameters
+            .Where(p => p.WriteToPlc && (uint)p.SlotIndex < RecipeParameter.MaxSlots)
+            .Select(p => p.SlotIndex)
+            .ToHashSet();
+        // 时长要么落在显式参数槽上，要么由这里补进 DurationSlot，两种情况这一槽都会被写。
+        if (ProcessDuration.TryFrom(step) is not null)
+            slots.Add(DurationSlot);
+        return slots.Order().ToList();
     }
 
     public static HandshakeWorkContext ToWorkContext(SnapshotStep step) =>
         new(
             PlcStepIdentity.FromCode(step.Code, step.Ordinal),
-            (int)step.Type,
+            PlcProgram.Resolve(step.Type, step.PlcProgramId),
             PackParameters(step),
             TimeSpan.FromSeconds(Math.Max(step.WatchdogSeconds, 5)),
             ProcessDuration.TryFrom(step));
@@ -42,7 +63,7 @@ public static class ControlRecipeWritePlan
             step.Name,
             step.Type,
             PlcStepIdentity.FromCode(step.Code, step.Ordinal),
-            (int)step.Type,
+            PlcProgram.Resolve(step.Type, step.PlcProgramId),
             PackParameters(step),
             writes,
             writes

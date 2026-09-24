@@ -7,25 +7,44 @@
       show-icon
       :closable="false"
       :title="`批次详情加载失败：${error}`"
-      description="请确认该批次是否存在，或返回批次列表重试。"
+      :description="$t('请确认该批次是否存在，或返回批次列表重试。')"
     />
     <el-skeleton v-else :rows="8" animated />
   </div>
   <div v-if="batch">
-    <div class="page-title">
+    <div class="page-title sticky-actions">
       <div>
         <h2>{{ batch.batchNo }} · {{ batch.snapshot.recipeName }} v{{ batch.snapshot.versionNumber }}</h2>
-        <span>{{ batch.equipmentName }} · {{ batchStatusLabel(batch.status) }} · {{ handshakeSummary }}{{ livePlcLabel }} · 快照 {{ integrityLabel }}{{ scaleLabel }}</span>
+        <span>{{ batch.equipmentName }} · {{ batchStatusLabel(batch.status) }} · {{ summaryText }}{{ livePlcLabel }} · {{ $t("快照：{0}", [integrityLabel]) }}{{ scaleLabel }}</span>
       </div>
       <div>
-        <el-button v-if="canConfirm && batch.status === 'Running' && awaitingConfirm" type="primary" :loading="busyAction === 'confirm'" @click="confirmStep">人工确认</el-button>
-        <el-button v-if="canOperate && (batch.status === 'Created' || batch.status === 'Faulted')" type="primary" :loading="busyAction === 'start'" @click="start">{{ batch.status === 'Faulted' ? '故障后重新排队' : '启动执行' }}</el-button>
-        <el-button v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued')" :loading="busyAction === 'hold'" @click="hold">保持</el-button>
-        <el-button v-if="canResume && batch.status === 'Held'" type="primary" :loading="busyAction === 'resume'" @click="resume">恢复执行</el-button>
-        <el-button v-if="canSkip && (batch.status === 'Held' || batch.status === 'Faulted' || (batch.status === 'Running' && skipReady))" :loading="busyAction === 'skip'" @click="skip">跳过当前工步</el-button>
-        <el-button v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued' || batch.status === 'Held')" type="danger" :loading="busyAction === 'abort'" @click="abort">中止</el-button>
-        <el-button @click="$router.push('/batches')">返回批次列表</el-button>
-        <el-button @click="$router.push(`/batches/${batch.id}/record`)">电子批记录</el-button>
+        <HelpTip v-if="canConfirm && batch.status === 'Running' && awaitingConfirm" term="人工确认" chord="ctrl+enter" allow-in-input plain placement="bottom">
+          <el-button type="primary" :loading="busyAction === 'confirm'" @click="confirmStep">{{ $t("人工确认") }}</el-button>
+        </HelpTip>
+        <HelpTip v-if="canOperate && (batch.status === 'Created' || batch.status === 'Faulted')" :term="batch.status === 'Faulted' ? '故障后重新排队' : '启动执行'" chord="ctrl+enter" allow-in-input plain placement="bottom">
+          <el-button type="primary" :loading="busyAction === 'start'" @click="start">{{ batch.status === 'Faulted' ? '故障后重新排队' : '启动执行' }}</el-button>
+        </HelpTip>
+        <HelpTip v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued')" :term="batch.pendingHoldReason ? '待保持' : '保持'" :chord="batch.pendingHoldReason ? '' : 'f8'" plain placement="bottom">
+          <el-button :loading="busyAction === 'hold'" :disabled="!!batch.pendingHoldReason" @click="hold">{{ batch.pendingHoldReason ? '保持已请求' : '保持' }}</el-button>
+        </HelpTip>
+        <HelpTip v-if="canResume && batch.status === 'Held'" term="恢复执行" chord="ctrl+enter" allow-in-input plain placement="bottom">
+          <el-button type="primary" :loading="busyAction === 'resume'" @click="resume">{{ $t("恢复执行") }}</el-button>
+        </HelpTip>
+        <HelpTip
+          v-if="canSkip && skipVisible"
+          term="跳过当前工步"
+          :chord="skipAllowed ? 'f9' : ''"
+          :extra="skipAllowed ? '' : skipBlockedReason"
+          plain
+          placement="bottom"
+        >
+          <el-button :loading="busyAction === 'skip'" :disabled="!skipAllowed" @click="skip">{{ $t("跳过当前工步") }}</el-button>
+        </HelpTip>
+        <HelpTip v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued' || batch.status === 'Held')" term="中止" plain placement="bottom">
+          <el-button type="danger" :loading="busyAction === 'abort'" @click="abort">{{ $t("中止") }}</el-button>
+        </HelpTip>
+        <el-button @click="$router.push('/batches')">{{ $t("返回批次列表") }}</el-button>
+        <el-button @click="$router.push(`/batches/${batch.id}/record`)">{{ $t("电子批记录") }}</el-button>
       </div>
     </div>
     <el-alert class="gap-after"
@@ -33,8 +52,7 @@
       :closable="false"
       type="warning"
       show-icon
-      title="工艺执行与四步握手已完成。请质量在电子批记录对照归档质检后电子签名放行。"
-     
+      :title="$t('工艺执行与四步握手已完成。请质量在电子批记录对照归档质检后电子签名放行。')"
     />
     <el-alert class="gap-after"
       v-if="batch.status === 'Released'"
@@ -42,7 +60,6 @@
       type="success"
       show-icon
       :title="`质量已放行${batch.releasedBy ? ` · ${batch.releasedBy}` : ''}${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
-     
     />
     <el-alert class="gap-after"
       v-if="batch.status === 'DispositionRejected'"
@@ -50,278 +67,342 @@
       type="error"
       show-icon
       :title="`质量拒收${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
-     
     />
 
-    <div class="handshake-steps" :class="{ faulted: handshakeFaulted }">
-      <template v-for="(s, i) in handshakeSteps" :key="s.key">
-        <div v-if="i > 0" class="step-link" :class="{ done: s.state === 'done' || s.state === 'active' }" />
-        <div class="handshake-step" :class="s.state">
-          <i class="step-node">{{ s.state === "done" ? "✓" : s.key }}</i>
-          <div class="step-text">
-            <b>{{ s.title }}</b>
-            <span>{{ s.hint }}</span>
-          </div>
-        </div>
-      </template>
+    <HandshakeStepsBar :steps="progress.steps" :text="statusText" :faulted="progress.faulted" />
+
+    <div v-if="displayLanes.length > 1" class="lane-tabs gap-before">
+      <button
+        v-for="lane in displayLanes"
+        :key="lane.equipmentCode"
+        type="button"
+        class="lane-tab"
+        :class="{ active: (selectedLaneCode || displayLanes[0].equipmentCode) === lane.equipmentCode }"
+        @click="selectLane(lane.equipmentCode)"
+      >{{ lane.equipmentCode }}</button>
     </div>
-    <div class="handshake-status">{{ handshakeStatusText }}</div>
+    <LaneSignalsCard v-if="selectedLane" class="gap-before" :lane="selectedLane" :signals="laneSignals" />
+    <el-alert class="gap-before" v-if="awaitingConfirm && batch.status === 'Running' && !batch.pendingConfirmComment" type="info" :closable="false" :title="$t('等待人工确认')" :description="$t('本工步禁止写 PLC。操作员 / 质量电子签名确认后才进入下一步。')" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingHoldReason" type="warning" :closable="false" :title="`保持已请求：${batch.pendingHoldReason}`" :description="$t('批次仍在运行。调度会写 Host_Hold，待 PLC_Held 后再暂停；刷新或重启不会丢掉这条已签名指令。')" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingSkipReason" type="info" :closable="false" :title="`跳步已请求：${batch.pendingSkipReason}`" :description="$t('等待当前工步回到可跳相位后执行，重启后仍会继续。')" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingConfirmComment" type="info" :closable="false" :title="$t('人工确认已提交')" :description="batch.pendingConfirmComment" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Held'" type="warning" :closable="false" :title="batch.faultMessage || '批次保持'" :description="heldHint" />
+    <el-alert class="gap-before-sm" v-else-if="batch.faultMessage" type="error" :closable="false" :title="batch.faultMessage" :description="faultHint" />
+    <el-alert
+      v-if="unackedAlarms.length"
+      class="gap-before-sm"
+      type="error"
+      :closable="false"
+      :title="`本批 ${unackedAlarms.length} 条未确认过程报警`"
+    >
+      <el-button size="small" type="danger" plain @click="monitorPane = 'alarm'">{{ $t("查看报警") }}</el-button>
+    </el-alert>
 
-    <el-card class="gap-before" header="控制配方快照 · 工艺画布（冻结拓扑，禁止盲写）">
-      <p class="muted">与设计态同一套 Vue Flow 节点。坐标按快照 Procedure/Edges 自动排布（不写入完整性哈希）。点击工步可筛选质检。</p>
-      <ProcedureFlow
-        flow-id="batch-monitor-flow"
-        :steps="flowSteps"
-        :edges="flowEdges"
-        :outcomes="flowOutcomes"
-        :current-step-id="batch.currentStepId"
-        :selected-step-id="pickedStep"
-        :height="300"
-        @select="pickedStep = $event"
-      />
-    </el-card>
+    <el-tabs v-model="monitorPane" class="monitor-tabs">
+      <el-tab-pane name="run">
+        <template #label>
+          <span class="tab-label"><HelpTip term="监控工步">{{ $t("工步") }}</HelpTip></span>
+        </template>
+        <el-card :header="$t('控制配方快照 · 工艺画布（冻结拓扑，禁止盲写）')">
+          <p class="muted">{{ $t("与设计态同一套工艺画布。坐标按快照连线自动排布（不写入完整性哈希）。点击工步可筛选质检。") }}</p>
+          <ProcedureFlow
+            flow-id="batch-monitor-flow"
+            :steps="flowSteps"
+            :edges="flowEdges"
+            :outcomes="flowOutcomes"
+            :current-step-id="batch.currentStepId"
+            :selected-step-id="pickedStep"
+            :height="300"
+            @select="pickedStep = $event"
+          />
+        </el-card>
 
-    <el-card class="gap-before" header="冻结 Setpoints 矩阵（Control Recipe Snapshot · 设定 vs 归档实测）">
-      <p class="muted">批次创建时从生效主配方冻结，执行中禁止改写。工步完成握手步骤 D 后，单元格显示归档实测并对照规格判定超差。</p>
-      <SetpointMatrix
-        :steps="matrixSteps"
-        :selected-id="pickedStep"
-        :current-step-id="batch.currentStepId"
-        :measured="measured"
-        readonly
-        :max-height="280"
-        @select="pickedStep = $event"
-      />
-    </el-card>
+        <el-card class="gap-before" :header="$t('冻结设定矩阵（快照 vs 归档实测）')">
+          <p class="muted">{{ $t("批次创建时从生效主配方冻结，执行中禁止改写。工步完成握手步骤 D 后，单元格显示归档实测并对照规格判定超差。") }}</p>
+          <SetpointMatrix
+            :steps="matrixSteps"
+            :selected-id="pickedStep"
+            :current-step-id="batch.currentStepId"
+            :measured="measured"
+            readonly
+            :max-height="280"
+            @select="pickedStep = $event"
+          />
+        </el-card>
 
-    <el-card class="gap-before" header="PLC 写参计划（与调度引擎同源 · 拓扑顺序）">
-      <p class="muted">启动前即可核对 Step_ID / Params。Wait、人工确认、质检工步禁止写 PLC；写参工步仅在 PLC_Ready 后下发并回读。</p>
-      <PlcWritePlan :items="batch.writePlan ?? []" :current-step-id="batch.currentStepId" />
-    </el-card>
+        <el-card class="gap-before" :header="$t('PLC 写参计划（与调度引擎同源 · 拓扑顺序）')">
+          <p class="muted">{{ $t("启动前即可核对 Step_ID / Params。Wait、人工确认、质检工步禁止写 PLC；写参工步仅在 PLC_Ready 后下发并回读。") }}</p>
+          <PlcWritePlan :items="batch.writePlan ?? []" :current-step-id="batch.currentStepId" />
+        </el-card>
 
-    <el-row class="gap-before" :gutter="12">
-      <el-col :span="8" :xs="24">
-        <el-card header="ISA-88 工步（按 Unit Procedure）">
+        <el-card class="gap-before" :header="$t('ISA-88 工步（按单元规程）')">
           <div v-for="group in unitGroups" :key="group.name" class="up-group">
             <div class="up-title">{{ group.name }}{{ unitEquipmentLabel(group.name) }}</div>
             <el-timeline>
               <el-timeline-item v-for="s in group.steps" :key="s.stepId" :type="timelineType(s.stepId)">
                 <div class="step-line" @click="pickedStep = s.stepId">
                   {{ s.code }} {{ s.name }} · {{ stepOutcomeLabel(outcome(s.stepId)) }}
-                  <div class="muted">{{ s.operation || s.type }}</div>
+                  <div class="muted">{{ phaseTypeLabel(s) }}</div>
                 </div>
               </el-timeline-item>
             </el-timeline>
           </div>
           <el-divider />
           <div v-if="qualityRows.length">
-            <b>工步归档质检</b>
+            <b>{{ $t("工步归档质检") }}</b>
             <el-table class="gap-before-sm" :data="qualityRows" size="small">
-              <el-table-column prop="step" label="工步" width="70" fixed />
-              <el-table-column prop="tag" label="测点" />
-              <el-table-column prop="value" label="实测" />
-              <el-table-column prop="spec" label="规格" width="90">
+              <el-table-column prop="step" :label="$t('工步')" width="70" fixed />
+              <el-table-column :label="$t('测点')">
+                <template #default="{ row }">{{ signalLabel(row.tag) }}</template>
+              </el-table-column>
+              <el-table-column prop="value" :label="$t('实测')" />
+              <el-table-column prop="spec" :label="$t('规格')" width="90">
                 <template #default="{ row }">
                   <span :style="{ color: row.oos ? 'var(--err)' : 'var(--ok)' }">{{ row.spec }}</span>
                 </template>
               </el-table-column>
             </el-table>
           </div>
-          <div v-else class="muted">完成握手步骤 D 后，此处显示该工步归档实测。点击时间线工步可筛选。</div>
+          <div v-else class="muted">{{ $t("完成握手步骤 D 后，此处显示该工步归档实测。点击时间线工步可筛选。") }}</div>
         </el-card>
-      </el-col>
-      <el-col :span="8" :xs="24">
-        <div v-if="displayLanes.length > 1" class="lane-tabs">
-          <button
-            v-for="lane in displayLanes"
-            :key="lane.equipmentCode"
-            type="button"
-            class="lane-tab"
-            :class="{ active: (selectedLaneCode || displayLanes[0].equipmentCode) === lane.equipmentCode }"
-            @click="selectLane(lane.equipmentCode)"
-          >{{ lane.equipmentCode }}</button>
-        </div>
-        <el-card class="gap-after" v-if="selectedLane">
+      </el-tab-pane>
+
+      <el-tab-pane name="trend">
+        <template #label>
+          <span class="tab-label"><HelpTip term="实时工艺趋势">{{ $t("趋势") }}</HelpTip></span>
+        </template>
+        <BatchTrendCharts ref="charts" :series="series" :active="monitorPane === 'trend'" :note="trendNote" />
+      </el-tab-pane>
+
+      <el-tab-pane name="alarm">
+        <template #label>
+          <span class="tab-label">
+            <HelpTip term="过程报警">{{ $t("报警") }}</HelpTip>
+            <el-tag v-if="unackedAlarms.length" type="danger" size="small">{{ unackedAlarms.length }}</el-tag>
+          </span>
+        </template>
+        <el-card>
           <template #header>
             <div class="trend-head">
-              <span>PLC 握手位 · {{ selectedLane.equipmentCode }}</span>
-              <span class="muted"><HelpTip :term="handshakePhaseLabel(selectedLane.phase)">{{ handshakePhaseLabel(selectedLane.phase) }}</HelpTip></span>
+              <span>{{ $t("过程报警") }}</span>
+              <el-button
+                v-if="unackedAlarms.length && canAckAlarm"
+                size="small"
+                :loading="ackingId === 'bulk'"
+                :disabled="!!ackingId"
+                @click="ackAllAlarms"
+              >{{ $t("确认全部 {0} 条", [unackedAlarms.length]) }}</el-button>
             </div>
           </template>
-          <div class="muted gap-after-sm">{{ selectedLane.unitProcedure }} · {{ selectedLane.stepCode }} · {{ stepOutcomeLabel(selectedLane.outcome) }}</div>
-          <div class="signal-grid">
-            <div v-for="cell in laneSignalCells" :key="cell.label" class="signal-cell">
-              <span>{{ cell.label }}</span>
-              <i v-if="cell.kind" class="dot" :class="{ [cell.kind]: cell.on }" />
-              <span v-else class="signal-value">{{ cell.text }}</span>
-            </div>
-          </div>
-        </el-card>
-        <el-alert class="gap-after" v-if="awaitingConfirm && batch.status === 'Running'" type="info" title="等待人工确认" description="本工步禁止写 PLC。操作员 / 质量电子签名确认后才进入下一步。" />
-        <el-alert v-if="batch.status === 'Held'" type="warning" :title="batch.faultMessage || '批次保持'" :description="heldHint" />
-        <el-alert v-else-if="batch.faultMessage" type="error" :title="batch.faultMessage" :description="faultHint" />
-        <el-card class="gap-before" v-if="alarms.length" header="过程报警">
-          <el-table :data="alarms" size="small">
-            <el-table-column prop="stepCode" label="工步" width="70" fixed />
-            <el-table-column prop="code" label="代码" width="120" />
-            <el-table-column prop="message" label="说明" />
-            <el-table-column label="确认" width="100">
+          <el-table v-if="alarms.length" :data="alarms" size="small">
+            <el-table-column :label="$t('时间')" width="170" fixed>
+              <template #default="{ row }">{{ formatDateTime(row.raisedAt) }}</template>
+            </el-table-column>
+            <el-table-column prop="stepCode" :label="$t('工步')" width="70" />
+            <el-table-column prop="code" :label="$t('代码')" width="120" />
+            <el-table-column prop="message" :label="$t('说明')" />
+            <el-table-column :label="$t('确认')" width="100">
               <template #default="{ row }">
-                <el-button v-if="!row.acknowledgedAt && canAckAlarm" link type="primary" :loading="acking" @click="ackAlarm(row)">确认</el-button>
+                <el-button v-if="!row.acknowledgedAt && canAckAlarm" link type="primary" :loading="ackingId === row.id" :disabled="!!ackingId" @click="ackAlarm(row)">{{ $t("确认") }}</el-button>
                 <span v-else>{{ row.acknowledgedBy || "—" }}</span>
               </template>
             </el-table-column>
           </el-table>
+          <p v-else class="none-note">{{ $t("本批无过程报警。") }}</p>
+          <p v-if="alarmTotal > alarms.length" class="none-note">
+            {{ $t("仅显示最近 {0} 条，本批共 {1} 条报警；「确认全部」只作用于上面列出的这些。", [alarms.length, alarmTotal]) }}
+          </p>
         </el-card>
-      </el-col>
-      <el-col :span="8" :xs="24">
-        <el-card>
-          <template #header>
-            <div class="trend-head">
-              <span>实时工艺趋势</span>
-              <el-radio-group v-model="chartKind" size="small">
-                <el-radio-button value="echarts">ECharts</el-radio-button>
-                <el-radio-button value="uplot">uPlot</el-radio-button>
-              </el-radio-group>
-            </div>
-          </template>
-          <div v-show="chartKind === 'echarts'" ref="chartEl" style="height:260px" />
-          <div v-show="chartKind === 'uplot'" ref="uplotEl" style="height:260px" />
-        </el-card>
-      </el-col>
-    </el-row>
-    <el-row class="gap-before" :gutter="12">
-      <el-col :span="14" :xs="24">
-        <el-card header="握手时序（禁止盲写）">
-          <el-table :data="handshakeLog" size="small" max-height="240">
-            <el-table-column prop="stepCode" label="工步" width="70" fixed />
-            <el-table-column prop="phase" label="阶段" width="150" />
-            <el-table-column prop="kind" label="动作" width="90" />
-            <el-table-column prop="detail" label="说明" />
-            <el-table-column prop="remainingSeconds" label="剩余s" width="70">
-              <template #default="{ row }">{{ row.remainingSeconds == null ? "—" : Number(row.remainingSeconds).toFixed(0) }}</template>
-            </el-table-column>
-          </el-table>
-          <div v-if="!handshakeLog.length" class="muted">启动批次后，此处按 PLC_Ready → Trigger_Write → Step_Running → Step_Complete 记录每一次合法动作。</div>
-        </el-card>
-      </el-col>
-      <el-col :span="10" :xs="24">
-        <el-card header="快照 vs 当前生效主配方">
-          <el-alert class="gap-after-sm"
-            v-if="hasDrift"
-            :closable="false"
-            type="warning"
-            show-icon
-            title="控制配方快照已冻结。主配方升版只体现在漂移列，禁止改写本批次写参。"
-           
-          />
-          <el-table :data="drifts" size="small" max-height="240" :row-class-name="driftRowClass">
-            <el-table-column prop="stepCode" label="工步" width="70" fixed />
-            <el-table-column prop="parameter" label="参数" />
-            <el-table-column prop="frozenSetpoint" label="快照" width="80" />
-            <el-table-column prop="masterSetpoint" label="主配方" width="80" />
-            <el-table-column label="漂移" width="70">
-              <template #default="{ row }">{{ row.drifted ? "是" : "否" }}</template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+      </el-tab-pane>
+
+      <el-tab-pane name="log">
+        <template #label>
+          <span class="tab-label"><HelpTip term="握手履历">{{ $t("履历") }}</HelpTip></span>
+        </template>
+        <el-row :gutter="12">
+          <el-col :span="14" :xs="24">
+            <el-card :header="$t('握手时序（禁止盲写）')">
+              <el-table :data="handshakeLog" size="small" max-height="360">
+                <el-table-column prop="stepCode" :label="$t('工步')" width="70" fixed />
+                <el-table-column :label="$t('时间')" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.at) }}</template>
+                </el-table-column>
+                <el-table-column :label="$t('阶段')" width="130">
+                  <template #default="{ row }">{{ handshakePhaseLabel(row.phase) }}</template>
+                </el-table-column>
+                <el-table-column :label="$t('动作')" width="80">
+                  <template #default="{ row }">{{ handshakeKindLabel(row.kind) }}</template>
+                </el-table-column>
+                <el-table-column prop="detail" :label="$t('说明')" />
+                <el-table-column prop="remainingSeconds" :label="$t('剩余s')" width="70">
+                  <template #default="{ row }">{{ row.remainingSeconds == null ? "—" : Number(row.remainingSeconds).toFixed(0) }}</template>
+                </el-table-column>
+              </el-table>
+              <div v-if="!handshakeLog.length" class="muted">{{ $t("启动批次后，此处按 PLC_Ready → Trigger_Write → Step_Running → Step_Complete 记录每一次合法动作。") }}</div>
+            </el-card>
+          </el-col>
+          <el-col :span="10" :xs="24">
+            <el-card :header="$t('快照 vs 当前生效主配方')">
+              <el-alert class="gap-after-sm"
+                v-if="hasDrift"
+                :closable="false"
+                type="warning"
+                show-icon
+                :title="$t('控制配方快照已冻结。主配方升版只体现在漂移列，禁止改写本批次写参。')"
+              />
+              <el-table :data="drifts" size="small" max-height="360" :row-class-name="driftRowClass">
+                <el-table-column prop="stepCode" :label="$t('工步')" width="70" fixed />
+                <el-table-column prop="parameter" :label="$t('参数')" />
+                <el-table-column prop="frozenSetpoint" :label="$t('快照')" width="80" />
+                <el-table-column prop="masterSetpoint" :label="$t('主配方')" width="80" />
+                <el-table-column :label="$t('漂移')" width="70">
+                  <template #default="{ row }">{{ row.drifted ? "是" : "否" }}</template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import echarts, { type EChartsType } from "../../utils/echarts";
-import uPlot from "uplot";
-import "uplot/dist/uPlot.min.css";
+import { t } from "../../i18n";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import http from "../../api/http";
-import { esignPassword } from "../../utils/esign";
-import type { BatchDetailDto, EquipmentDto, ExecutionEvent, HandshakeLogDto, LaneHandshakeDto, ProcessAlarmDto, SampleDto, SnapshotDriftDto } from "../../api/types";
+import { acknowledgeAlarm, esignBatchAction } from "../../api/batches";
+import type { ExecutionEvent, ProcessAlarmDto, SnapshotDriftDto } from "../../api/types";
 import { useAuthStore } from "../../stores/auth";
 import { useExecutionHub } from "../../realtime/executionHub";
 import ProcedureFlow from "../../components/ProcedureFlow.vue";
 import SetpointMatrix from "../../components/SetpointMatrix.vue";
 import PlcWritePlan from "../../components/PlcWritePlan.vue";
-import { snapshotToMatrixSteps, measuredFromExecutions, qualityReadings, formatReadingSpec, formatReadingValue } from "../../setpointMatrix";
-import { batchStatusLabel, handshakePhaseLabel, signalLabel, signalUnit, stepOutcomeLabel } from "../../utils/labels";
-import { snapshotIntegrityLabel } from "../../utils/integrity";
-import { useLoad } from "../../utils/useLoad";
+import HandshakeStepsBar from "../../components/HandshakeStepsBar.vue";
+import LaneSignalsCard from "../../components/LaneSignalsCard.vue";
+import BatchTrendCharts from "../../components/BatchTrendCharts.vue";
+import { useBatchFeed } from "../../utils/useBatchFeed";
+import { useBatchSnapshotView } from "../../utils/useBatchSnapshotView";
+import { handshakeProgress, handshakeStatusText, handshakeSummary } from "../../utils/handshakeProgress";
+import { handshakeDisplayPhase, handshakePhaseToken } from "../../utils/handshake";
+import { handshakePhaseLabel, handshakeKindLabel, batchStatusLabel, esignMeaning, phaseTypeLabel, signalLabel, stepOutcomeLabel } from "../../utils/labels";
+import { formatDateTime } from "../../utils/format";
+import { esignPassword, esignWithReason } from "../../utils/esign";
 import { useCoalescedReload } from "../../utils/useCoalescedReload";
 import { usePolling } from "../../utils/usePolling";
-import { palette } from "../../utils/theme";
 import HelpTip from "../../components/HelpTip.vue";
+import { usePageShortcuts } from "../../shortcuts/registry";
 
+/**
+ * 批次实时监控。
+ *
+ * 数据面在 utils/useBatchFeed（详情 + 附表 + 实时事件打补丁），快照投影在 utils/useBatchSnapshotView，
+ * 四步进度在 utils/handshakeProgress，握手位在 utils/plcSignals；本页只剩"看哪个车道/工步"、
+ * 能不能按这个按钮，以及六个电子签名动作。
+ */
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
-const batch = ref<BatchDetailDto | null>(null);
-const phase = ref("");
-const chartEl = ref<HTMLDivElement | null>(null);
-const uplotEl = ref<HTMLDivElement | null>(null);
-const chartKind = ref<"echarts" | "uplot">("uplot");
-type PlcSignals = { plcReady: boolean; stepRunning: boolean; stepComplete: boolean; stepError: boolean; errorCode: number; heartbeat: number; triggerWriteEcho: boolean; plcHeld: boolean; hostHoldEcho: boolean };
-const emptySignals = (): PlcSignals => ({ plcReady: false, stepRunning: false, stepComplete: false, stepError: false, errorCode: 0, heartbeat: 0, triggerWriteEcho: false, plcHeld: false, hostHoldEcho: false });
-const signals = reactive(emptySignals());
-const laneSignals = reactive<Record<string, PlcSignals>>({});
-const lanes = ref<LaneHandshakeDto[]>([]);
-const selectedLaneCode = ref("");
-const remainingByLane = reactive<Record<string, number | null>>({});
-const series: Record<string, [number, number][]> = { Temperature: [], Pressure: [] };
 const pickedStep = ref<string | null>(null);
-const remainingSeconds = ref<number | null>(null);
-const handshakeLog = ref<HandshakeLogDto[]>([]);
-const alarms = ref<ProcessAlarmDto[]>([]);
-const drifts = ref<SnapshotDriftDto[]>([]);
-const livePlc = ref("");
-const equipmentIndex = ref<Record<string, string>>({});
-const { loading, error } = useLoad();
-// 操作按钮防重入：任一签名+请求在途时，对应按钮显示 loading 且禁用，避免重复提交。
-const busyAction = ref<string>("");
-const acking = ref(false);
-let chart: EChartsType | null = null;
-let plot: uPlot | null = null;
-// 事件与兜底轮询都走这条：合并窗口 + 在途去重，避免一串握手事件把详情接口打满。
-const scheduleReload = useCoalescedReload(load);
-const poll = usePolling(scheduleReload);
+const charts = ref<InstanceType<typeof BatchTrendCharts> | null>(null);
 
-function outcome(stepId: string) {
-  return batch.value?.stepExecutions.find((s) => s.stepId === stepId)?.outcome ?? "Pending";
-}
+const feed = useBatchFeed({
+  batchId: () => String(route.params.id ?? ""),
+  paint: () => charts.value?.refresh(),
+  onStepFocused: (stepId) => (pickedStep.value = stepId)
+});
+const alarms = feed.alarms;
+const drifts = feed.drifts;
+const handshakeLog = feed.handshakeLog;
+const displayLanes = feed.displayLanes;
+const selectedLane = feed.selectedLane;
+const view = useBatchSnapshotView(feed.batch, pickedStep, feed.equipmentIndex);
 
-function timelineType(stepId: string) {
-  const o = outcome(stepId);
-  if (o === "Running") return "primary";
-  if (o === "AwaitingConfirm") return "warning";
-  if (o === "Held") return "warning";
-  if (o === "Completed") return "success";
-  if (o === "Skipped") return "warning";
-  if (o === "Faulted") return "danger";
-  return "info";
-}
+/**
+ * 解构只是为了让模板能读到解包后的值：Vue 只会自动解包 setup 顶层绑定，
+ * `feed.error.value` / `view.integrityLabel.value` 这种写法留在模板里既难读也容易被改成漏掉 .value。
+ */
+const { batch, phase, loading, error, livePlc, remainingSeconds, selectedLaneCode, series, sampleMeta, alarmTotal, selectLane, signalsOf, load, applyExecution } = feed;
+const {
+  outcome, timelineType, flowSteps, flowEdges, flowOutcomes, matrixSteps, measured,
+  unitGroups, qualityRows, integrityLabel, scaleLabel, unitEquipmentLabel
+} = view;
 
-const displayLanes = computed(() => {
-  if (lanes.value.length) return lanes.value;
-  if (!batch.value) return [];
-  return [{
-    equipmentCode: livePlc.value || batch.value.equipmentName,
-    equipmentId: batch.value.equipmentId,
-    unitProcedure: "",
-    stepId: batch.value.currentStepId,
-    stepCode: batch.value.snapshot.steps[batch.value.currentStepIndex]?.code ?? "",
-    phase: phase.value || batch.value.handshakePhase,
-    outcome: "Running"
-  } satisfies LaneHandshakeDto];
+/**
+ * 取数口径要写在图上：长批次一次轮询能拉回几十万行，后端按步长抽稀到 1500 点以内。
+ * 不标注的话用户会拿抽稀曲线当全量履历读——批记录用的仍是全量数据。
+ */
+const trendNote = computed(() => {
+  const { total, readRows, step } = sampleMeta.value;
+  if (!total) return "";
+  if (step > 1 && readRows < total)
+    return t("趋势仅覆盖最近 {0} 条样本，并每 {1} 条取 1 点绘出（本批共 {2} 条）。样本不删除，电子批记录仍用全量数据。", readRows, step, total);
+  if (step > 1)
+    return t("趋势每 {0} 条样本取 1 点绘出（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。", step, total);
+  if (readRows < total)
+    return t("趋势仅覆盖最近 {0} 条样本（本批共 {1} 条）。样本不删除，电子批记录仍用全量数据。", readRows, total);
+  return t("共 {0} 条样本，全部绘出。", total);
 });
 
-const selectedLane = computed(() =>
-  displayLanes.value.find((l) => l.equipmentCode === selectedLaneCode.value) ?? displayLanes.value[0]);
+const laneSignals = computed(() => signalsOf(selectedLane.value?.equipmentCode ?? ""));
+
+type MonitorPane = "run" | "trend" | "alarm" | "log";
+const monitorPanes = new Set<MonitorPane>(["run", "trend", "alarm", "log"]);
+const monitorPane = computed<MonitorPane>({
+  get: () => {
+    const raw = route.query.tab;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    const key = typeof value === "string" ? value : "";
+    return monitorPanes.has(key as MonitorPane) ? (key as MonitorPane) : "run";
+  },
+  set: (value) => {
+    const next = { ...route.query };
+    if (value === "run") delete next.tab;
+    else next.tab = value;
+    void router.replace({ query: next });
+  }
+});
+
+/** 操作按钮防重入：任一签名+请求在途时，对应按钮显示 loading 且禁用，避免重复提交。 */
+const busyAction = ref<string>("");
+const ackingId = ref("");
+
+/** 当前相位：保持/故障/完成态优先，其次看选中车道，最后回落到批次汇总串。 */
+const currentPhase = computed(() =>
+  handshakePhaseToken(handshakeDisplayPhase(batch.value?.status, selectedLane.value?.phase, phase.value))
+);
+const progress = computed(() =>
+  handshakeProgress(batch.value?.status, selectedLane.value?.phase, phase.value || batch.value?.handshakePhase)
+);
+const statusText = computed(() =>
+  handshakeStatusText(
+    batch.value?.status,
+    selectedLane.value?.phase,
+    phase.value || batch.value?.handshakePhase,
+    remainingSeconds.value,
+    batch.value?.faultMessage
+  )
+);
+const summaryText = computed(() =>
+  handshakeSummary(batch.value?.status, displayLanes.value, currentPhase.value)
+);
+const livePlcLabel = computed(() => (livePlc.value ? ` · ${livePlc.value}` : ""));
 
 const skipReady = computed(() => {
-  const p = selectedLane.value?.phase || phase.value || batch.value?.handshakePhase || "";
+  const p = currentPhase.value;
   return p === "WaitingPlcReady" || p === "Held" || p === "AwaitingConfirm" || p === "HostWait";
 });
+const skipVisible = computed(() => {
+  const st = batch.value?.status;
+  return st === "Held" || st === "Faulted" || st === "Running";
+});
+const skipAllowed = computed(() => {
+  if (!batch.value) return false;
+  if (batch.value.status === "Held" || batch.value.status === "Faulted") return true;
+  return batch.value.status === "Running" && skipReady.value;
+});
+const skipBlockedReason = "当前握手阶段不可跳过：等到等待 PLC 就绪、保持、人工确认或主控等待后再试。";
 
 const awaitingConfirm = computed(() => {
   const currentId = selectedLane.value?.stepId || batch.value?.currentStepId;
@@ -335,129 +416,21 @@ const heldHint = computed(() => {
   const msg = batch.value?.faultMessage ?? "";
   if (msg.includes("质检超差"))
     return "归档实测超出规格，已保持批次且禁止写下一步。质量/主管审核后恢复执行。";
-  const p = selectedLane.value?.phase || phase.value || batch.value?.handshakePhase || "";
+  const p = currentPhase.value;
   if (p === "AwaitingConfirm" || awaitingConfirm.value)
     return "人工确认等待中被保持，未写 PLC。恢复后继续等待电子签名确认。";
   return "已写 Host_Hold 并收到 PLC_Held。恢复执行将清位并继续剩余工步时长，禁止盲写下一步。";
 });
 
-const handshakeSummary = computed(() => {
-  // 多通道时按设备列出各自阶段。此前直接拼原始字符串（WaitingPlcReady），操作员看不懂。
-  if (displayLanes.value.length > 1)
-    return displayLanes.value.map((l) => `${l.equipmentCode}:${handshakePhaseLabel(l.phase)}`).join(" · ");
-  return handshakePhaseLabel(selectedLane.value?.phase || phase.value || batch.value?.handshakePhase || "");
-});
-
-function signalsOf(code: string): PlcSignals {
-  return laneSignals[code] ?? (selectedLaneCode.value === code || !code ? signals : emptySignals());
-}
-
-function selectLane(code: string) {
-  selectedLaneCode.value = code;
-  const inbound = laneSignals[code];
-  if (inbound) Object.assign(signals, inbound);
-  const lane = lanes.value.find((l) => l.equipmentCode === code);
-  if (lane?.phase) phase.value = lane.phase;
-  remainingSeconds.value = remainingByLane[code] ?? remainingSeconds.value;
-}
-
-interface SignalCell {
-  label: string;
-  /** 灯的类型；缺省表示这是一格纯数值（Error_Code / Heartbeat）。 */
-  kind?: "on" | "run" | "err";
-  on?: boolean;
-  text?: string;
-}
-
-/** 选中车道的 PLC 信号，按 2 列网格铺开，避免 8 行竖排把卡片拉长。 */
-const laneSignalCells = computed<SignalCell[]>(() => {
-  const s = signalsOf(selectedLane.value?.equipmentCode ?? "");
-  return [
-    { label: "PLC_Ready", kind: "on", on: !!s.plcReady },
-    { label: "Trigger_Write", kind: "run", on: !!s.triggerWriteEcho },
-    { label: "Step_Running", kind: "run", on: !!s.stepRunning },
-    { label: "Step_Complete", kind: "on", on: !!s.stepComplete },
-    { label: "Step_Error", kind: "err", on: !!s.stepError },
-    { label: "Host_Hold", kind: "run", on: !!s.hostHoldEcho },
-    { label: "PLC_Held", kind: "on", on: !!s.plcHeld },
-    { label: "Error_Code", text: s.errorCode == null ? "—" : String(s.errorCode) },
-    { label: "Heartbeat", text: s.heartbeat == null ? "—" : String(s.heartbeat) }
-  ];
-});
-
-const flowSteps = computed(() =>
-  (batch.value?.snapshot.steps ?? []).map((s) => ({
-    id: s.stepId,
-    code: s.code,
-    name: s.name,
-    type: s.type,
-    unitProcedure: s.unitProcedure,
-    operation: s.operation,
-    ordinal: s.ordinal
-  }))
-);
-const flowEdges = computed(() => batch.value?.snapshot.edges ?? []);
-const flowOutcomes = computed(() =>
-  Object.fromEntries((batch.value?.stepExecutions ?? []).map((e) => [e.stepId, e.outcome]))
-);
-const matrixSteps = computed(() => snapshotToMatrixSteps(batch.value?.snapshot.steps ?? []));
-const measured = computed(() =>
-  measuredFromExecutions(matrixSteps.value, batch.value?.stepExecutions ?? [])
-);
-
-const unitGroups = computed(() => {
-  const map = new Map<string, NonNullable<typeof batch.value>["snapshot"]["steps"]>();
-  for (const s of batch.value?.snapshot.steps ?? []) {
-    const name = s.unitProcedure?.trim() || "UP-01 热处理单元";
-    const list = map.get(name);
-    if (list) list.push(s);
-    else map.set(name, [s]);
-  }
-  return [...map.entries()].map(([name, steps]) => ({ name, steps }));
-});
-
-const qualityRows = computed(() => {
-  const execs = batch.value?.stepExecutions ?? [];
-  const focused = pickedStep.value ? execs.filter((s) => s.stepId === pickedStep.value) : execs;
-  return qualityReadings(matrixSteps.value, focused).map((r) => ({
-    step: r.stepCode,
-    tag: r.tag,
-    value: formatReadingValue(r),
-    spec: formatReadingSpec(r),
-    oos: r.oos
-  }));
-});
-
 const canOperate = computed(() => auth.can("Operator", "Supervisor"));
 const canSkip = computed(() => auth.can("Supervisor"));
 const canConfirm = computed(() => auth.can("Operator", "Supervisor", "Quality"));
-const canResume = computed(() => auth.can("Operator", "Supervisor", "Quality"));
+const canResume = computed(() => auth.can("Operator", "Supervisor"));
 const canAckAlarm = computed(() => auth.can("Operator", "Supervisor", "Quality"));
+const unackedAlarms = computed(() => alarms.value.filter((a) => !a.acknowledgedAt));
 const hasDrift = computed(() => drifts.value.some((d) => d.drifted));
 function driftRowClass({ row }: { row: SnapshotDriftDto }) {
   return row.drifted ? "drift-row" : "";
-}
-const integrityLabel = computed(() => snapshotIntegrityLabel(batch.value?.snapshotIntegrity));
-const scaleLabel = computed(() => {
-  const snap = batch.value?.snapshot;
-  if (!snap) return "";
-  const parts: string[] = [];
-  if (snap.scaleFactor != null && snap.scaleFactor !== 1) parts.push(`缩放 ×${snap.scaleFactor}`);
-  if (snap.lotNumber) parts.push(`物料 ${snap.lotNumber}`);
-  const bindings = snap.unitEquipment
-    ? Object.entries(snap.unitEquipment).map(([unit, id]) => `${unit}→${equipmentIndex.value[id] ?? id.slice(0, 8)}`)
-    : [];
-  if (bindings.length) parts.push(bindings.join("，"));
-  return parts.length ? ` · ${parts.join(" · ")}` : "";
-});
-
-const livePlcLabel = computed(() => livePlc.value ? ` · ${livePlc.value}` : "");
-
-function unitEquipmentLabel(unit: string) {
-  const id = batch.value?.snapshot.unitEquipment?.[unit];
-  if (!id) return "";
-  const code = equipmentIndex.value[id];
-  return code ? ` · ${code}` : "";
 }
 
 const faultHint = computed(() => {
@@ -475,172 +448,24 @@ const faultHint = computed(() => {
   return map[code] ?? "可在故障清除后重新排队，调度将从当前工步索引恢复握手。";
 });
 
-/** 握手相位 → 四步中的第几步。4 表示全部走完；-1 表示该相位不属于任何一步（保持、人工确认、未开始）。 */
-const PHASE_STEP_INDEX: Record<string, number> = {
-  WaitingPlcReady: 0,
-  WritingParameters: 0,
-  AwaitingPlcAck: 1,
-  StepRunning: 2,
-  HostWait: 2,
-  Completing: 3,
-  ReadyToAdvance: 3,
-  Completed: 4,
-  Released: 4,
-  DispositionRejected: 4
-};
-
-const PHASE_STEP_DEFS = [
-  { key: "A", title: "A 写参", hint: "写入并回读一致" },
-  { key: "B", title: "B 应答", hint: "等待 Step_Running" },
-  { key: "C", title: "C 看门狗", hint: "心跳与超时监控" },
-  { key: "D", title: "D 归档步进", hint: "读实测、复位、步进" }
-];
-
-const currentPhase = computed(
-  () => selectedLane.value?.phase || phase.value || batch.value?.handshakePhase || ""
-);
-
-const handshakeFaulted = computed(() => currentPhase.value === "Faulted");
-const activeStepIndex = computed(() => PHASE_STEP_INDEX[currentPhase.value] ?? -1);
-
-/** 四步握手进度：已完成 / 进行中 / 未开始。相位不在映射内时全部置为未开始，由状态行说明原因。 */
-const handshakeSteps = computed(() => {
-  const idx = activeStepIndex.value;
-  return PHASE_STEP_DEFS.map((def, i) => {
-    let state: "done" | "active" | "todo" = "todo";
-    if (handshakeFaulted.value) state = "todo";
-    else if (idx >= PHASE_STEP_DEFS.length) state = "done";
-    else if (idx >= 0) state = i < idx ? "done" : i === idx ? "active" : "todo";
-    return { ...def, state };
-  });
-});
-
-const handshakeStatusText = computed(() => {
-  if (handshakeFaulted.value)
-    return `握手故障${batch.value?.faultMessage ? ` · ${batch.value.faultMessage}` : ""}`;
-  const label = handshakePhaseLabel(currentPhase.value);
-  if (!label) return "尚未开始四步握手";
-  const left = remainingSeconds.value != null ? ` · 剩余 ${remainingSeconds.value.toFixed(0)}s` : "";
-  const which = PHASE_STEP_DEFS[activeStepIndex.value];
-  return `${which ? `${which.title} · ` : ""}${label}${left}`;
-});
-
-async function load() {
-  try {
-    batch.value = (await http.get<BatchDetailDto>(`/batches/${route.params.id}`)).data;
-    phase.value = batch.value.handshakePhase;
-    lanes.value = batch.value.lanes ?? [];
-    if (!selectedLaneCode.value && lanes.value[0]) selectedLaneCode.value = lanes.value[0].equipmentCode;
-    if (selectedLane.value?.phase) phase.value = selectedLane.value.phase;
-    const samples = (await http.get<SampleDto[]>(`/batches/${route.params.id}/samples`)).data;
-    handshakeLog.value = (await http.get<HandshakeLogDto[]>(`/batches/${route.params.id}/handshake-log`)).data;
-    alarms.value = (await http.get<ProcessAlarmDto[]>(`/batches/${route.params.id}/alarms`)).data;
-    drifts.value = (await http.get<SnapshotDriftDto[]>(`/batches/${route.params.id}/snapshot-drift`)).data;
-    equipmentIndex.value = Object.fromEntries(
-      (await http.get<EquipmentDto[]>("/equipment")).data.map((e) => [e.id, e.code]));
-    series.Temperature = [];
-    series.Pressure = [];
-    for (const s of samples) {
-      if (!series[s.tag]) series[s.tag] = [];
-      series[s.tag].push([new Date(s.sampledAt).getTime(), s.value]);
-    }
-    renderChart();
-    error.value = "";
-  } catch (e) {
-    // 原先取数失败会留下空白页且无任何提示（根节点 v-if="batch"），这里显式报错。
-    error.value = (e as Error).message || "批次详情加载失败";
-  } finally {
-    loading.value = false;
-  }
-}
-
-function renderChart() {
-  if (chartKind.value === "uplot") {
-    renderUplot();
-    return;
-  }
-  if (!chartEl.value) return;
-  chart ??= echarts.init(chartEl.value);
-  const entries = Object.entries(series);
-  // 温度约 530、压力约 1.01，同一条 y 轴上压力会被压成一条直线，必须分左右轴。
-  const isTemp = (tag: string) => signalUnit(tag) === "℃";
-  const rightUnits = [...new Set(entries.filter(([t]) => !isTemp(t)).map(([t]) => signalUnit(t)).filter(Boolean))];
-  chart.setOption({
-    backgroundColor: "transparent",
-    // containLabel：右轴是这次新加的，轴名「bar / s」和首个时间标签都会被默认 grid 裁掉。
-    grid: { left: 8, right: 8, top: 46, bottom: 6, containLabel: true },
-    tooltip: { trigger: "axis" },
-    legend: { top: 4, data: entries.map(([tag]) => signalLabel(tag)), textStyle: { color: palette("--text-body") } },
-    // hideOverlap：窄卡里时间标签会互相压成一片。默认模板在亚秒窗口里带毫秒，是有效信息，不要改掉。
-    xAxis: { type: "time", axisLabel: { color: palette("--muted"), hideOverlap: true } },
-    yAxis: [
-      { type: "value", name: "℃", nameTextStyle: { color: palette("--muted") }, axisLabel: { color: palette("--muted") }, splitLine: { lineStyle: { color: palette("--line") } } },
-      { type: "value", name: rightUnits.join(" / "), nameTextStyle: { color: palette("--muted") }, position: "right", axisLabel: { color: palette("--muted") }, splitLine: { show: false } }
-    ],
-    series: entries.map(([tag, data]) => ({
-      name: signalLabel(tag),
-      type: "line",
-      showSymbol: false,
-      yAxisIndex: isTemp(tag) ? 0 : 1,
-      data
-    }))
-  });
-}
-
-function renderUplot() {
-  if (!uplotEl.value) return;
-  const names = Object.keys(series);
-  const xs: number[] = [];
-  const seen = new Set<number>();
-  for (const pts of Object.values(series)) {
-    for (const [t] of pts) {
-      if (!seen.has(t)) {
-        seen.add(t);
-        xs.push(t);
-      }
-    }
-  }
-  xs.sort((a, b) => a - b);
-  const data: uPlot.AlignedData = [new Float64Array(xs)];
-  for (const name of names) {
-    const map = new Map(series[name]);
-    data.push(xs.map((t) => map.get(t) ?? null) as unknown as Float64Array);
-  }
-  plot?.destroy();
-  plot = new uPlot({
-    width: Math.max(uplotEl.value.clientWidth || 360, 240),
-    height: 260,
-    legend: { show: true },
-    axes: [
-      { stroke: palette("--muted"), grid: { stroke: palette("--line") } },
-      { stroke: palette("--muted"), grid: { stroke: palette("--line") } }
-    ],
-    series: [
-      {},
-      ...names.map((name, i) => ({
-        label: `${signalLabel(name)}${signalUnit(name) ? ` (${signalUnit(name)})` : ""}`,
-        stroke: i === 0 ? palette("--warn") : palette("--cool"),
-        width: 1.4
-      }))
-    ]
-  }, data, uplotEl.value);
-}
-
-async function esign(title: string, needReason = false) {
-  let reason: string | undefined;
-  if (needReason) {
-    const box = await ElMessageBox.prompt("原因 / 意见", title);
-    reason = box.value;
-  }
-  const password = await esignPassword(title);
+async function esign(title: string, action: string, needReason = false) {
+  if (!needReason) return { password: await esignPassword(title, esignMeaning(action)), reason: undefined };
+  const { reason, password } = await esignWithReason(title, esignMeaning(action), "原因 / 意见");
   return { password, reason };
 }
 
-async function start() {
-  busyAction.value = "start";
+/**
+ * 六个签名动作共用的外壳：置忙 → 签名+提交 → 重拉 → 复位。
+ *
+ * 取消签名时 esign 抛的是字符串 "cancel"，不是 Error——那不算失败，不能弹红条。
+ * 成功后的重拉放在这里，六个动作就不各自记得补一次 load()。
+ */
+async function runAction(name: string, action: (id: string) => Promise<void>) {
+  const id = batch.value?.id;
+  if (!id) return;
+  busyAction.value = name;
   try {
-    const { password } = await esign(batch.value?.status === "Faulted" ? "故障后重新排队" : "启动批次");
-    await http.post(`/batches/${batch.value!.id}/start`, { password });
+    await action(id);
     await load();
   } catch (e) {
     if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
@@ -649,46 +474,40 @@ async function start() {
   }
 }
 
-async function abort() {
-  busyAction.value = "abort";
-  try {
-    const { password, reason } = await esign("中止批次", true);
-    await http.post(`/batches/${batch.value!.id}/abort`, { password, reason: reason ?? "操作员中止" });
-    await load();
-  } catch (e) {
-    if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
-  } finally {
-    busyAction.value = "";
-  }
+function start() {
+  const retry = batch.value?.status === "Faulted";
+  return runAction("start", async (id) => {
+    const { password } = await esign(
+      retry ? "故障后重新排队" : "启动批次",
+      retry ? "batch.retry.esign" : "batch.start.esign"
+    );
+    await esignBatchAction(id, "start", { password });
+  });
 }
 
-async function hold() {
-  busyAction.value = "hold";
-  try {
-    const { password, reason } = await esign("保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", true);
-    await http.post(`/batches/${batch.value!.id}/hold`, { password, reason: reason ?? "操作员保持" });
+function abort() {
+  return runAction("abort", async (id) => {
+    const { password, reason } = await esign("中止批次", "batch.abort.esign", true);
+    await esignBatchAction(id, "abort", { password, reason: reason ?? "操作员中止" });
+  });
+}
+
+function hold() {
+  return runAction("hold", async (id) => {
+    const { password, reason } = await esign("保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "batch.hold.esign", true);
+    await esignBatchAction(id, "hold", { password, reason: reason ?? "操作员保持" });
     ElMessage.success("已请求保持：上位机写 Host_Hold，等待 PLC_Held 后暂停剩余时长。");
-    await load();
-  } catch (e) {
-    if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
-  } finally {
-    busyAction.value = "";
-  }
+  });
 }
 
-async function resume() {
-  busyAction.value = "resume";
-  try {
-    const { password } = await esign("恢复执行");
-    await http.post(`/batches/${batch.value!.id}/resume`, { password });
-    await load();
-  } catch (e) {
-    if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
-  } finally {
-    busyAction.value = "";
-  }
+function resume() {
+  return runAction("resume", async (id) => {
+    const { password } = await esign("恢复执行", "batch.resume.esign");
+    await esignBatchAction(id, "resume", { password });
+  });
 }
 
+/** 跳步/确认都要落到"这一条车道当前这一步"，否则会跳到隔壁车道的工步上。 */
 function skipTargetStepId(): string | undefined {
   const execs = batch.value?.stepExecutions ?? [];
   const live = (id?: string | null) => {
@@ -701,146 +520,125 @@ function skipTargetStepId(): string | undefined {
     ?? execs.find((s) => ["Running", "AwaitingConfirm", "Held", "Faulted"].includes(s.outcome))?.stepId;
 }
 
-async function skip() {
-  busyAction.value = "skip";
-  try {
-    const { password, reason } = await esign("跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", true);
-    await http.post(`/batches/${batch.value!.id}/skip`, {
-      password,
-      reason: reason ?? "主管跳步",
-      stepId: skipTargetStepId()
-    });
-    await load();
-  } catch (e) {
-    if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
-  } finally {
-    busyAction.value = "";
-  }
+function skip() {
+  if (!skipAllowed.value) return Promise.resolve();
+  return runAction("skip", async (id) => {
+    const { password, reason } = await esign("跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", "batch.skip.esign", true);
+    await esignBatchAction(id, "skip", { password, reason: reason ?? "主管跳步", stepId: skipTargetStepId() });
+  });
+}
+
+function confirmStep() {
+  return runAction("confirm", async (id) => {
+    const currentId = selectedLane.value?.stepId || batch.value?.currentStepId;
+    const { password, reason } = await esign("人工确认本工步（禁止写 PLC）", "batch.confirm.esign", true);
+    await esignBatchAction(id, "confirm", { password, reason: reason ?? "操作员确认", stepId: currentId });
+    ElMessage.success("已提交人工确认，调度将完成该工步且不写 PLC。");
+  });
 }
 
 async function ackAlarm(row: ProcessAlarmDto) {
-  acking.value = true;
+  if (ackingId.value) return;
+  ackingId.value = row.id;
   try {
-    await http.post(`/alarms/${row.id}/ack`);
+    await acknowledgeAlarm(row.id);
     await load();
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
-    acking.value = false;
+    ackingId.value = "";
   }
 }
 
-async function confirmStep() {
-  busyAction.value = "confirm";
+async function ackAllAlarms() {
+  if (ackingId.value) return;
+  const pending = unackedAlarms.value;
+  if (!pending.length) return;
   try {
-    const currentId = selectedLane.value?.stepId || batch.value?.currentStepId;
-    const { password, reason } = await esign("人工确认本工步（禁止写 PLC）", true);
-    await http.post(`/batches/${batch.value!.id}/confirm`, {
-      password,
-      reason: reason ?? "操作员确认",
-      stepId: currentId
-    });
-    ElMessage.success("已提交人工确认，调度将完成该工步且不写 PLC。");
+    await ElMessageBox.confirm(
+      t("确认本批次 {0} 条未确认报警？确认后仍保留履历。", pending.length),
+      t("批量确认报警"),
+      { type: "warning", confirmButtonText: t("全部确认"), cancelButtonText: t("取消") }
+    );
+  } catch {
+    return;
+  }
+  ackingId.value = "bulk";
+  let ok = 0;
+  try {
+    for (const row of pending) {
+      await acknowledgeAlarm(row.id);
+      ok += 1;
+    }
     await load();
+    ElMessage.success(t("已确认 {0} 条报警", ok));
   } catch (e) {
-    if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
+    await load();
+    ElMessage.error(t("已确认 {0} 条，其余失败：{1}", ok, (e as Error).message));
   } finally {
-    busyAction.value = "";
+    ackingId.value = "";
   }
 }
 
-watch(chartKind, async () => {
-  await nextTick();
-  renderChart();
-});
+usePageShortcuts(() => [
+  {
+    id: "batch.primary",
+    chord: "ctrl+enter",
+    group: "批次监控",
+    label: awaitingConfirm.value
+      ? "人工确认"
+      : batch.value?.status === "Held"
+        ? "恢复执行"
+        : "启动执行",
+    allowInInput: true,
+    when: () => {
+      if (!batch.value || busyAction.value) return false;
+      if (canConfirm.value && batch.value.status === "Running" && awaitingConfirm.value) return true;
+      if (canOperate.value && (batch.value.status === "Created" || batch.value.status === "Faulted")) return true;
+      if (canResume.value && batch.value.status === "Held") return true;
+      return false;
+    },
+    run: () => {
+      if (!batch.value) return;
+      if (canConfirm.value && batch.value.status === "Running" && awaitingConfirm.value) void confirmStep();
+      else if (canOperate.value && (batch.value.status === "Created" || batch.value.status === "Faulted")) void start();
+      else if (canResume.value && batch.value.status === "Held") void resume();
+    }
+  },
+  {
+    id: "batch.hold",
+    chord: "f8",
+    group: "批次监控",
+    label: "保持",
+    when: () =>
+      !!batch.value
+      && canOperate.value
+      && (batch.value.status === "Running" || batch.value.status === "Queued")
+      && !batch.value.pendingHoldReason
+      && !busyAction.value,
+    run: () => { void hold(); }
+  },
+  {
+    id: "batch.skip",
+    chord: "f9",
+    group: "批次监控",
+    label: "跳过当前工步",
+    when: () =>
+      !!batch.value
+      && canSkip.value
+      && skipAllowed.value
+      && !busyAction.value,
+    run: () => { void skip(); }
+  }
+]);
 
-function onExecution(evt: ExecutionEvent) {
-  if (evt.batchId !== batch.value?.id) return;
-  if (evt.type === "handshake") {
-    const payload = evt.payload as {
-      phase: string;
-      inbound: typeof signals;
-      status: string;
-      stepId: string;
-      stepIndex: number;
-      remainingSeconds?: number | null;
-      equipmentCode?: string;
-      unitProcedure?: string;
-      stepCode?: string;
-      stepName?: string;
-    };
-    if (payload.equipmentCode) {
-      livePlc.value = payload.equipmentCode;
-      if (!selectedLaneCode.value) selectedLaneCode.value = payload.equipmentCode;
-      remainingByLane[payload.equipmentCode] = payload.remainingSeconds ?? null;
-      if (payload.inbound)
-        laneSignals[payload.equipmentCode] = { ...payload.inbound };
-      const idx = lanes.value.findIndex((l) => l.equipmentCode === payload.equipmentCode);
-      const next: LaneHandshakeDto = {
-        equipmentCode: payload.equipmentCode,
-        equipmentId: idx >= 0 ? lanes.value[idx].equipmentId : "",
-        unitProcedure: payload.unitProcedure ?? (idx >= 0 ? lanes.value[idx].unitProcedure : ""),
-        stepId: payload.stepId,
-        stepCode: payload.stepCode ?? (idx >= 0 ? lanes.value[idx].stepCode : ""),
-        phase: payload.phase,
-        outcome: "Running"
-      };
-      if (idx >= 0) lanes.value[idx] = { ...lanes.value[idx], ...next };
-      else lanes.value = [...lanes.value, next];
-      if (payload.equipmentCode === selectedLaneCode.value || displayLanes.value.length <= 1) {
-        phase.value = payload.phase;
-        remainingSeconds.value = payload.remainingSeconds ?? null;
-        Object.assign(signals, payload.inbound);
-      }
-    } else {
-      phase.value = payload.phase;
-      remainingSeconds.value = payload.remainingSeconds ?? null;
-      Object.assign(signals, payload.inbound);
-    }
-    if (batch.value) {
-      batch.value.status = payload.status as BatchDetailDto["status"];
-      batch.value.currentStepIndex = payload.stepIndex;
-      batch.value.currentStepId = payload.stepId;
-      const exec = batch.value.stepExecutions.find((s) => s.stepId === payload.stepId);
-      if (exec) {
-        if (payload.status === "Held") exec.outcome = "Held";
-        else if (payload.phase === "AwaitingConfirm") exec.outcome = "AwaitingConfirm";
-        else if (exec.outcome === "Pending") exec.outcome = "Running";
-      }
-    }
-  }
-  if (evt.type === "step") {
-    const payload = evt.payload as { stepId: string; stepIndex: number; outcome: string; qualityJson?: string };
-    if (batch.value) {
-      batch.value.currentStepIndex = payload.stepIndex;
-      batch.value.currentStepId = payload.stepId;
-      pickedStep.value = payload.stepId;
-      const exec = batch.value.stepExecutions.find((s) => s.stepId === payload.stepId);
-      if (exec) {
-        exec.outcome = payload.outcome;
-        if (payload.qualityJson) exec.qualityJson = payload.qualityJson;
-      }
-      const lane = lanes.value.find((l) => l.stepId === payload.stepId);
-      if (lane) lane.outcome = payload.outcome;
-    }
-  }
-  if (evt.type === "sample") {
-    const measured = evt.payload as Record<string, number>;
-    const t = Date.now();
-    for (const [tag, value] of Object.entries(measured)) {
-      series[tag] ??= [];
-      series[tag].push([t, value]);
-    }
-    renderChart();
-  }
-  // 这几类事件会改变服务端状态、又不带完整数据，只能重拉；合并窗口避免一串事件打出十几个请求。
-  if (evt.type === "completed" || evt.type === "fault" || evt.type === "aborted" || evt.type === "held" || evt.type === "alarm")
-    scheduleReload();
-}
+// 事件与兜底轮询都走这条：合并窗口 + 在途去重，避免一串握手事件把详情接口打满。
+const scheduleReload = useCoalescedReload(load);
+const poll = usePolling(scheduleReload);
 
 // 本页只关心这一个批次：订 dashboard 组会把全站事件灌进这条连接。
 const hub = useExecutionHub({
-  onExecution,
+  onExecution: (evt: ExecutionEvent) => { if (applyExecution(evt)) scheduleReload(); },
   subscribeDashboard: false,
   subscribeBatch: () => batch.value?.id
 });
@@ -849,22 +647,7 @@ onMounted(async () => {
   await load();
   // 连接起来时详情往往还没回来，subscribeBatch 取到的是 null，要靠这次补订。
   await hub.resubscribe();
-  await nextTick();
-  renderChart();
   poll.start();
-  // uPlot 自带 autoResize，ECharts 没有：窄屏抽屉开合与手机转屏后实例仍是旧宽度。
-  window.addEventListener("resize", onResize);
-});
-
-function onResize() {
-  chart?.resize();
-}
-
-onUnmounted(() => {
-  window.removeEventListener("resize", onResize);
-  plot?.destroy();
-  chart?.dispose();
-  chart = null;
 });
 </script>
 
@@ -872,6 +655,10 @@ onUnmounted(() => {
 .step-line { cursor: pointer; }
 .muted { color: var(--muted); font-size: 12px; }
 .trend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.monitor-tabs { margin-top: var(--space-3); }
+.monitor-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-3); }
+.monitor-tabs :deep(.el-tabs__item) { padding: 0 16px; }
+.tab-label { display: inline-flex; align-items: center; gap: 6px; }
 .up-group { margin-bottom: var(--space-3); }
 .up-title { font-size: 12px; color: var(--accent-bright); margin: 0 0 var(--space-2); letter-spacing: 0.3px; }
 .lane-tabs { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); flex-wrap: wrap; }
@@ -883,31 +670,5 @@ onUnmounted(() => {
 }
 .lane-tab:hover { background: var(--hover); }
 .lane-tab.active { border-color: var(--accent); background: var(--tint); color: var(--accent-bright); }
-.signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: var(--space-2); }
-.signal-cell {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  padding: 6px 10px; border-radius: 8px;
-  background: var(--sunken); border: 1px solid var(--line);
-  font-size: 12px; color: var(--muted);
-}
-.signal-value { color: var(--text-body); font-variant-numeric: tabular-nums; }
-
-.handshake-steps { display: flex; align-items: flex-start; flex-wrap: wrap; }
-.handshake-step { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.step-node {
-  flex: none; width: 26px; height: 26px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; font-style: normal;
-  background: var(--sunken); border: 1px solid var(--line); color: var(--muted);
-}
-.handshake-step.done .step-node { background: var(--tint); border-color: var(--accent); color: var(--accent-bright); }
-.handshake-step.active .step-node { background: var(--accent); border-color: var(--accent-bright); color: var(--bg); }
-.step-text { display: flex; flex-direction: column; min-width: 0; }
-.step-text b { font-size: 12px; font-weight: 500; color: var(--text); }
-.step-text span { font-size: 11px; color: var(--muted); }
-.step-link { flex: none; width: 26px; height: 1px; background: var(--line); margin: 13px 4px 0; }
-.step-link.done { background: var(--accent); }
-.handshake-status { margin-top: var(--space-2); font-size: 12px; color: var(--text-body); }
-.handshake-steps.faulted + .handshake-status { color: var(--err); }
 :deep(.drift-row) { color: var(--warn); }
 </style>

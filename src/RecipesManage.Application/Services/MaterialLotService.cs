@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
@@ -5,6 +6,7 @@ using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Common;
 using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Materials;
+using RecipesManage.Domain.Recipes;
 
 namespace RecipesManage.Application.Services;
 
@@ -21,21 +23,78 @@ public sealed class MaterialLotService
         _esign = new EsignGuard(db, user, passwords);
     }
 
-    public async Task<IReadOnlyList<MaterialLotDto>> ListAsync(CancellationToken ct)
+    /// <summary>
+    /// 状态名次按前端 labels.ts 的 lotStatusOrder（Open → Quarantine → Released → Consumed → Void），
+    /// 库里存的是枚举底序，直接 ORDER BY 会把 Consumed 排在 Quarantine 前面。
+    /// 写成表达式复用给升/降两个分支，改次序只有一处。
+    /// </summary>
+    private static readonly Expression<Func<MaterialLot, int>> StatusRank = l =>
+        l.Status == MaterialLotStatus.Open ? 0 :
+        l.Status == MaterialLotStatus.Quarantine ? 1 :
+        l.Status == MaterialLotStatus.Released ? 2 :
+        l.Status == MaterialLotStatus.Consumed ? 3 : 4;
+
+    /// <summary>
+    /// 物料批列表：服务端排序分页 + 搜索。以前截 400 条，来料登记多了以后旧批号在界面上
+    /// 直接消失（谱系追溯恰恰要查那些老批号）。
+    /// </summary>
+    public async Task<MaterialLotPageDto> ListAsync(
+        int skip,
+        int take,
+        string? sort,
+        string? dir,
+        string? q,
+        string? status,
+        CancellationToken ct)
     {
-        if (_db.SupportsServerDateOrdering)
+        take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
+        skip = Math.Max(0, skip);
+        var query = _db.MaterialLots.AsNoTracking();
+        var wanted = ParseStatuses(status);
+        if (wanted.Count > 0) query = query.Where(l => wanted.Contains(l.Status));
+        if (!string.IsNullOrWhiteSpace(q))
         {
-            var pushed = await _db.MaterialLots.AsNoTracking()
-                .OrderByDescending(l => l.CreatedAt).Take(400)
-                .Select(l => new MaterialLotDto(
-                    l.Id, l.LotNumber, l.MaterialCode, l.MaterialName, l.ParentLotId, l.Source, l.Status,
-                    l.Quantity, l.Uom, l.ProducedBatchId, l.CreatedAt))
-                .ToListAsync(ct);
-            return pushed;
+            var like = $"%{q.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
+            query = query.Where(l =>
+                EF.Functions.Like(l.LotNumber, like, "\\") || EF.Functions.Like(l.MaterialCode, like, "\\") ||
+                EF.Functions.Like(l.MaterialName, like, "\\"));
         }
-        var rows = await _db.MaterialLots.AsNoTracking().ToListAsync(ct);
-        return rows.OrderByDescending(l => l.CreatedAt).Take(400).Select(MapLot).ToList();
+
+        var ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase);
+        var ordered = (sort?.ToLowerInvariant(), ascending) switch
+        {
+            ("lotnumber", true) => query.OrderBy(l => l.LotNumber).ThenBy(l => l.Id),
+            ("lotnumber", false) => query.OrderByDescending(l => l.LotNumber).ThenBy(l => l.Id),
+            ("materialcode", true) => query.OrderBy(l => l.MaterialCode).ThenBy(l => l.Id),
+            ("materialcode", false) => query.OrderByDescending(l => l.MaterialCode).ThenBy(l => l.Id),
+            ("materialname", true) => query.OrderBy(l => l.MaterialName).ThenBy(l => l.Id),
+            ("materialname", false) => query.OrderByDescending(l => l.MaterialName).ThenBy(l => l.Id),
+            ("quantity", true) => query.OrderBy(l => l.Quantity).ThenBy(l => l.Id),
+            ("quantity", false) => query.OrderByDescending(l => l.Quantity).ThenBy(l => l.Id),
+            ("status", true) => query.OrderBy(StatusRank).ThenBy(l => l.Id),
+            ("status", false) => query.OrderByDescending(StatusRank).ThenBy(l => l.Id),
+            ("source", true) => query.OrderBy(l => l.Source).ThenBy(l => l.Id),
+            ("source", false) => query.OrderByDescending(l => l.Source).ThenBy(l => l.Id),
+            (_, true) => query.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id),
+            _ => query.OrderByDescending(l => l.CreatedAt).ThenBy(l => l.Id),
+        };
+
+        var total = await query.CountAsync(ct);
+        var rows = await ordered.Skip(skip).Take(take).ToListAsync(ct);
+        return new MaterialLotPageDto(total, rows.Select(MapLot).ToList());
     }
+
+    /// <summary>
+    /// 状态筛选：逗号分隔多值（创建批次只要「可投料」的 Open/Released，列表页要看全部）。
+    /// 非法值忽略而不是抛——筛选串由前端拼，脏值不该让列表 500。
+    /// </summary>
+    private static List<MaterialLotStatus> ParseStatuses(string? status) =>
+        (status ?? "")
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(s => Enum.TryParse<MaterialLotStatus>(s, true, out var parsed) ? (MaterialLotStatus?)parsed : null)
+        .Where(s => s is not null)
+        .Select(s => s!.Value)
+        .ToList();
 
     public async Task<MaterialLotDto> CreateReceivedAsync(CreateMaterialLotRequest request, CancellationToken ct)
     {
@@ -160,14 +219,15 @@ public sealed class MaterialLotService
             request.SampleCode, batchId, request.SampleType, _user.DisplayName ?? _user.UserName, DateTimeOffset.UtcNow,
             request.MaterialLotId, request.ParentSampleId, request.StepId, request.ResultsJson);
         _db.LabSamples.Add(sample);
-        _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "lab.sample.create", "LabSample", sample.Id.ToString(), sample.SampleCode));
+        _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "lab.sample.create", "LabSample", sample.Id.ToString(),
+            $"batch={batchId} {sample.SampleCode}"));
         await _db.SaveChangesAsync(ct);
         return MapSample(sample, null);
     }
 
     public async Task<LabSampleDto> DisposeSampleAsync(Guid sampleId, LabSampleDispositionRequest request, CancellationToken ct, Guid? expectedBatchId = null)
     {
-        EnsureRole(UserRole.Quality);
+        EnsureExactRole(UserRole.Quality);
         await RequireEsignAsync(request.Password, ct);
         var sample = await _db.LabSamples.FirstOrDefaultAsync(s => s.Id == sampleId, ct)
                      ?? throw new DomainException("NOT_FOUND", "样品不存在。");
@@ -175,7 +235,7 @@ public sealed class MaterialLotService
             throw new DomainException("NOT_FOUND", "样品不属于该生产批次。");
         sample.RecordDisposition(request.Disposition, _user.DisplayName ?? "quality", request.Comment, DateTimeOffset.UtcNow);
         _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "lab.sample.dispose.esign", "LabSample", sample.Id.ToString(),
-            $"{sample.SampleCode}:{sample.Disposition}"));
+            ElectronicSignature.AuditDetail("lab.sample.dispose.esign", $"batch={sample.BatchId} {sample.SampleCode}:{sample.Disposition}")));
         await _db.SaveChangesAsync(ct);
         return MapSample(sample, null);
     }
@@ -220,4 +280,5 @@ public sealed class MaterialLotService
         await _esign.RequireAsync(password, ct);
 
     private void EnsureRole(params UserRole[] allowed) => _esign.EnsureRole(allowed);
+    private void EnsureExactRole(params UserRole[] allowed) => _esign.EnsureExactRole(allowed);
 }

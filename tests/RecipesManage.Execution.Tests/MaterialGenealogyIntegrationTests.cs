@@ -12,6 +12,8 @@ using RecipesManage.Domain.Recipes;
 using RecipesManage.Infrastructure.Persistence;
 using Xunit;
 
+using static RecipesManage.Execution.Tests.ServiceHarness;
+
 namespace RecipesManage.Execution.Tests;
 
 public sealed class MaterialGenealogyIntegrationTests
@@ -31,9 +33,9 @@ public sealed class MaterialGenealogyIntegrationTests
         var s1 = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true)]);
         draft.ReplaceProcedure([s1], []);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, op.Id, "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, qa.Id, "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+        draft.Decide(op.Id, "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+        draft.Decide(qa.Id, "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
         recipe.MarkApproved(draft);
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
@@ -46,7 +48,7 @@ public sealed class MaterialGenealogyIntegrationTests
         var child = await opLots.SplitAsync(charge.Id, new SplitLotRequest("INGOT-IT-01-S1", 30), CancellationToken.None);
         Assert.Equal(MaterialLotSource.Split, child.Source);
 
-        var batches = new BatchService(db, opUser, new NoopScheduler(), hasher, new NoopPdf(), new NoopPublisher(), opLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+        var batches = new BatchService(db, opUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), opLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest(
             "BLOT1", recipe.Id, equipment.Id, 1, "PROD-IT-01", null, [child.Id]), CancellationToken.None);
         Assert.Equal("Valid", created.SnapshotIntegrity);
@@ -57,7 +59,7 @@ public sealed class MaterialGenealogyIntegrationTests
         await db.SaveChangesAsync();
 
         var sample = await opLots.CreateSampleAsync(created.Id, new CreateLabSampleRequest("QC-IT-1", LabSampleType.Final, child.Id), CancellationToken.None);
-        var qaBatches = new BatchService(db, qaUser, new NoopScheduler(), hasher, new NoopPdf(), new NoopPublisher(), qaLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+        var qaBatches = new BatchService(db, qaUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), qaLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var pending = await Assert.ThrowsAsync<DomainException>(() =>
             qaBatches.ReleaseAsync(created.Id, "放行", "Quality@123", CancellationToken.None));
         Assert.Equal("LAB_PENDING", pending.Code);
@@ -77,43 +79,5 @@ public sealed class MaterialGenealogyIntegrationTests
         Assert.Equal(MaterialLotStatus.Released, produced.Status);
         var charged = await db.MaterialLots.SingleAsync(l => l.LotNumber == "INGOT-IT-01-S1");
         Assert.Equal(MaterialLotStatus.Consumed, charged.Status);
-    }
-
-    private static AppDbContext OpenDb()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(Path.GetTempPath(), $"brmes-lot-{Guid.NewGuid():N}.db")}")
-            .Options;
-        var db = new AppDbContext(options);
-        db.Database.EnsureCreated();
-        return db;
-    }
-
-    private sealed class RoleUser(Guid id, UserRole role, string userName, string displayName) : ICurrentUser
-    {
-        public Guid? UserId { get; } = id;
-        public string UserName { get; } = userName;
-        public string DisplayName { get; } = displayName;
-        public UserRole? Role { get; } = role;
-        public bool IsAuthenticated => true;
-    }
-
-    private sealed class NoopScheduler : IBatchScheduler
-    {
-        public ValueTask EnqueueStartAsync(Guid batchId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueAbortAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueHoldAsync(Guid batchId, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueSkipAsync(Guid batchId, string reason, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-        public ValueTask EnqueueConfirmAsync(Guid batchId, string comment, Guid? stepId = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-    }
-
-    private sealed class NoopPdf : IBatchRecordPdf
-    {
-        public byte[] Render(BatchRecordDto record) => [0x25, 0x50, 0x44, 0x46];
-    }
-
-    private sealed class NoopPublisher : IExecutionPublisher
-    {
-        public Task PublishAsync(ExecutionEvent evt, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

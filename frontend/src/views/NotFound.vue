@@ -1,11 +1,11 @@
 <template>
-  <el-result icon="warning" title="页面不存在">
+  <el-result icon="warning" :title="$t('页面不存在')">
     <template #sub-title>
-      <p>没有找到地址 <code>{{ path }}</code> 对应的页面，可能是链接已过时或地址输入有误。</p>
+      <p>{{ $t("没有找到地址") }} <code>{{ path }}</code> {{ $t("对应的页面，可能是链接已过时或地址输入有误。") }}</p>
     </template>
     <template #extra>
-      <el-button type="primary" @click="$router.replace('/dashboard')">回到运行总览</el-button>
-      <el-button @click="back">返回上一页</el-button>
+      <el-button type="primary" @click="$router.replace('/dashboard')">{{ $t("回到运行总览") }}</el-button>
+      <el-button @click="back">{{ $t("返回上一页") }}</el-button>
     </template>
   </el-result>
 </template>

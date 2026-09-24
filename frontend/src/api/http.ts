@@ -1,10 +1,15 @@
 import axios from "axios";
+import { lastSyncAt } from "../realtime/syncClock";
+import { currentLocale } from "../i18n";
 
 const http = axios.create({ baseURL: "/api" });
 
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem("rm_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // 带上界面语言，后端才知道该把校验/权限提示译成哪种语言。
+  // 只影响瞬时提示：审计与电子签名原文不经过这条路径，不会因此被改写。
+  config.headers["Accept-Language"] = currentLocale();
   return config;
 });
 
@@ -24,6 +29,8 @@ let expiredHandled = false;
 http.interceptors.response.use(
   (r) => {
     expiredHandled = false;
+    // 只有成功的读请求才算"页面又拿到一次新数据"；写请求不算（它不刷新屏幕上的数字）。
+    if (r.config?.method === "get") lastSyncAt.value = Date.now();
     return r;
   },
   (err) => {

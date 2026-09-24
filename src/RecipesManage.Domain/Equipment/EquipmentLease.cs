@@ -26,6 +26,15 @@ public sealed class EquipmentLease : Entity
         BatchNo = batchNo;
         LeasedAt = leasedAt;
     }
+
+    /// <summary>同一行改挂到另一批次，避免删插撞上 EquipmentId 唯一索引。</summary>
+    public void TransferTo(Guid batchId, string batchNo, DateTimeOffset at)
+    {
+        BatchId = batchId;
+        BatchNo = batchNo;
+        LeasedAt = at;
+        Touch();
+    }
 }
 
 public static class EquipmentLeasePolicy
@@ -43,4 +52,17 @@ public static class EquipmentLeasePolicy
              or Batches.BatchStatus.Aborted
              or Batches.BatchStatus.Released
              or Batches.BatchStatus.DispositionRejected;
+
+    /// <summary>
+    /// 多批同时声称占用同一设备时的投影/对账优先级：正在跑的先于排队、保持，故障垫底。
+    /// 历史故障批若仍握着租约，不能把正在保持的批次从总览上挤掉。
+    /// </summary>
+    public static int OccupancyRank(Batches.BatchStatus status) => status switch
+    {
+        Batches.BatchStatus.Running => 0,
+        Batches.BatchStatus.Queued => 1,
+        Batches.BatchStatus.Held => 2,
+        Batches.BatchStatus.Faulted => 3,
+        _ => 4
+    };
 }

@@ -13,9 +13,14 @@ using RecipesManage.Execution;
 using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using Xunit;
+using static RecipesManage.Execution.Tests.SchedulerHarness;
 
 namespace RecipesManage.Execution.Tests;
 
+/// <summary>
+/// 引擎闭环测试。建 host / 批准配方 / 封存快照 / 排队批次这些工装在 <see cref="SchedulerHarness"/>，
+/// 与 <see cref="PhaseGateMatrixTests"/> 共用一份，不再逐条测试各抄一遍。
+/// </summary>
 public sealed class BatchSchedulerIntegrationTests
 {
     [Fact]
@@ -24,20 +29,7 @@ public sealed class BatchSchedulerIntegrationTests
         var dbPath = Path.Combine(Path.GetTempPath(), $"brmes-{Guid.NewGuid():N}.db");
         Guid batchId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = Host.CreateDefaultBuilder()
-            .ConfigureLogging(l => l.ClearProviders())
-            .ConfigureServices(services =>
-            {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
-                services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
-                services.AddSingleton<SimulatedPlcRack>();
-                services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
-                services.AddSingleton<IExecutionPublisher>(new CapturingPublisher(events));
-                services.AddSingleton<BatchSchedulerHostedService>();
-                services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-                services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-            })
-            .Build();
+        var host = CreateHost(dbPath, events);
 
         try
         {
@@ -59,9 +51,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "保温温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "保温时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -92,7 +84,7 @@ public sealed class BatchSchedulerIntegrationTests
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
             Assert.Equal(2, live.StepExecutions.Count);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -123,20 +115,7 @@ public sealed class BatchSchedulerIntegrationTests
         Guid batchId;
         Guid equipmentId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = Host.CreateDefaultBuilder()
-            .ConfigureLogging(l => l.ClearProviders())
-            .ConfigureServices(services =>
-            {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
-                services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
-                services.AddSingleton<SimulatedPlcRack>();
-                services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
-                services.AddSingleton<IExecutionPublisher>(new CapturingPublisher(events));
-                services.AddSingleton<BatchSchedulerHostedService>();
-                services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-                services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-            })
-            .Build();
+        var host = CreateHost(dbPath, events);
 
         try
         {
@@ -157,9 +136,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "保温温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "保温时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -205,8 +184,8 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.Equal("Skipped", live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.Equal("Completed", live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.Equal(StepOutcome.Skipped, live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.Equal(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
 
             using (var alarmScope = host.Services.CreateScope())
             {
@@ -267,7 +246,7 @@ public sealed class BatchSchedulerIntegrationTests
             } while (live is { Status: not BatchStatus.Held } && DateTime.UtcNow < waitHeld);
 
             Assert.Equal(BatchStatus.Held, live?.Status);
-            Assert.Contains(live!.StepExecutions, s => s.Outcome == "Pending");
+            Assert.Contains(live!.StepExecutions, s => s.Outcome == StepOutcome.Pending);
 
             host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("None");
             using (var resumeScope = host.Services.CreateScope())
@@ -290,7 +269,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -336,9 +315,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "保温温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "保温时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -383,8 +362,8 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.Equal(BatchStatus.Held, live?.Status);
             Assert.True(DateTime.UtcNow - holdStarted < TimeSpan.FromSeconds(3), "运行中保持必须在 PLC_Held 应答后立即生效，不能等工步跑完。");
-            Assert.Equal("Held", live!.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.Equal("Pending", live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.Equal(StepOutcome.Held, live!.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.Equal(StepOutcome.Pending, live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
             Assert.True(host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).ReadSignals().PlcHeld);
 
             using (var resumeScope = host.Services.CreateScope())
@@ -406,7 +385,7 @@ public sealed class BatchSchedulerIntegrationTests
             } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
 
             Assert.Equal(BatchStatus.Completed, live?.Status);
-            Assert.All(live!.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -512,9 +491,9 @@ public sealed class BatchSchedulerIntegrationTests
                 draft.ReplaceProcedure(
                     [s10, s20, s30],
                     [new RecipeEdge(draft.Id, s10.Id, s30.Id), new RecipeEdge(draft.Id, s20.Id, s30.Id)]);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -547,12 +526,12 @@ public sealed class BatchSchedulerIntegrationTests
                 using var poll = host.Services.CreateScope();
                 var db = poll.ServiceProvider.GetRequiredService<AppDbContext>();
                 live = await db.Batches.AsNoTracking().Include(b => b.StepExecutions).SingleAsync(b => b.Id == batchId);
-            } while (live?.StepExecutions.Single(s => s.StepCode == "S20").Outcome != "Completed" && DateTime.UtcNow < waitPeer);
+            } while (live?.StepExecutions.Single(s => s.StepCode == "S20").Outcome != StepOutcome.Completed && DateTime.UtcNow < waitPeer);
 
             Assert.Equal(BatchStatus.Running, live?.Status);
-            Assert.Equal("Completed", live!.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
-            Assert.NotEqual("Completed", live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.NotEqual("Completed", live.StepExecutions.Single(s => s.StepCode == "S30").Outcome);
+            Assert.Equal(StepOutcome.Completed, live!.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.NotEqual(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.NotEqual(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S30").Outcome);
             Assert.Contains("HT-PA", live.HandshakePhase);
             Assert.Contains("HT-PB", live.HandshakePhase);
 
@@ -569,7 +548,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -622,9 +601,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1], []);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -653,7 +632,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
             using var logScope = host.Services.CreateScope();
             {
                 var db = logScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -699,9 +678,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1], []);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -730,7 +709,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
         }
         finally
         {
@@ -767,9 +746,9 @@ public sealed class BatchSchedulerIntegrationTests
                     [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true),
                      new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)]);
                 draft.ReplaceProcedure([s1], []);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -798,7 +777,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.All(live.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
         }
         finally
         {
@@ -847,9 +826,9 @@ public sealed class BatchSchedulerIntegrationTests
                 draft.ReplaceProcedure(
                     [s10, s20, s30],
                     [new RecipeEdge(draft.Id, s10.Id, s30.Id), new RecipeEdge(draft.Id, s20.Id, s30.Id)]);
-                draft.Submit(DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-                draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
+                draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
+                draft.Decide(Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
                 recipe.MarkApproved(draft);
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
@@ -903,9 +882,9 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.NotNull(live);
             Assert.Equal(BatchStatus.Completed, live.Status);
-            Assert.Equal("Skipped", live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.Equal("Completed", live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
-            Assert.Equal("Completed", live.StepExecutions.Single(s => s.StepCode == "S30").Outcome);
+            Assert.Equal(StepOutcome.Skipped, live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.Equal(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.Equal(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S30").Outcome);
         }
         finally
         {
@@ -948,12 +927,12 @@ public sealed class BatchSchedulerIntegrationTests
                 using var poll = host.Services.CreateScope();
                 var db = poll.ServiceProvider.GetRequiredService<AppDbContext>();
                 live = await db.Batches.AsNoTracking().Include(b => b.StepExecutions).SingleAsync(b => b.Id == batchId);
-            } while (live!.StepExecutions.Single(s => s.StepCode == "S20").Outcome != "AwaitingConfirm"
+            } while (live!.StepExecutions.Single(s => s.StepCode == "S20").Outcome != StepOutcome.AwaitingConfirm
                      && DateTime.UtcNow < waitConfirm);
 
             Assert.Equal(BatchStatus.Running, live.Status);
-            Assert.Equal("Completed", live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.Equal("AwaitingConfirm", live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.Equal(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.Equal(StepOutcome.AwaitingConfirm, live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -977,7 +956,7 @@ public sealed class BatchSchedulerIntegrationTests
             } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
 
             Assert.Equal(BatchStatus.Completed, live?.Status);
-            Assert.All(live!.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
+            Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1035,8 +1014,8 @@ public sealed class BatchSchedulerIntegrationTests
 
             Assert.Equal(BatchStatus.Held, live?.Status);
             Assert.Contains("质检超差", live!.FaultMessage);
-            Assert.Equal("Completed", live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
-            Assert.Equal("Pending", live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
+            Assert.Equal(StepOutcome.Completed, live.StepExecutions.Single(s => s.StepCode == "S10").Outcome);
+            Assert.Equal(StepOutcome.Pending, live.StepExecutions.Single(s => s.StepCode == "S20").Outcome);
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1097,8 +1076,11 @@ public sealed class BatchSchedulerIntegrationTests
             } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
 
             Assert.Equal(BatchStatus.Completed, live?.Status);
-            Assert.All(live!.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
-            Assert.Contains("硬度", live.StepExecutions.Single(s => s.StepCode == "S30").QualityJson);
+            Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
+            var qcJson = live.StepExecutions.Single(s => s.StepCode == "S30").QualityJson;
+            Assert.DoesNotContain("硬度", qcJson);
+            Assert.Contains("PLC:", qcJson, StringComparison.Ordinal);
+            Assert.True(QualityDisposition.HasOutOfSpec(BatchService.Deserialize(live.ControlRecipeJson)!, live.StepExecutions));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1165,8 +1147,11 @@ public sealed class BatchSchedulerIntegrationTests
             } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
 
             Assert.Equal(BatchStatus.Completed, live?.Status);
-            Assert.All(live!.StepExecutions, e => Assert.Equal("Completed", e.Outcome));
-            Assert.Contains("硬度", live.StepExecutions.Single(s => s.StepCode == "S40").QualityJson);
+            Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
+            var qcJson = live.StepExecutions.Single(s => s.StepCode == "S40").QualityJson;
+            Assert.DoesNotContain("硬度", qcJson);
+            Assert.Contains("PLC:", qcJson, StringComparison.Ordinal);
+            Assert.True(QualityDisposition.HasOutOfSpec(BatchService.Deserialize(live.ControlRecipeJson)!, live.StepExecutions));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1180,6 +1165,70 @@ public sealed class BatchSchedulerIntegrationTests
                 Assert.DoesNotContain(log, e => e.StepCode == "S40" && e.Kind == "write");
                 var writes = log.Where(e => e.Kind == "write").Select(e => e.StepCode).ToList();
                 Assert.Equal(["S10", "S20", "S30"], writes);
+            }
+        }
+        finally
+        {
+            await host.StopAsync(TimeSpan.FromSeconds(3));
+            host.Dispose();
+            try { File.Delete(dbPath); } catch { /* temp db */ }
+        }
+    }
+
+    [Fact]
+    public async Task Scheduler_CustomPlcProgramId_WritesStepType21And22()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"brmes-pgm-{Guid.NewGuid():N}.db");
+        Guid batchId;
+        var events = new ConcurrentBag<ExecutionEvent>();
+        var host = CreateHost(dbPath, events);
+
+        try
+        {
+            using (var scope = host.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await SchemaBootstrap.ApplyAsync(db);
+                (batchId, _) = await SeedApprovedBatchAsync(db, "PR-PGM", "ITPGM", "BITPGM", draftId =>
+                [
+                    new RecipeStep(draftId, "S10", "水冲洗", StepType.Transfer, 0, 0, 0, 30, null,
+                        [new RecipeParameter(0, "冲洗流量", "L/min", 12, 1, 40, true, false),
+                         new RecipeParameter(1, "冲洗时长", "s", 1, 0.5, 5, true, false)],
+                        null, "UP-冲洗", "OP-Rinse 水冲洗", 21),
+                    new RecipeStep(draftId, "S20", "气缸保压", StepType.Pressure, 1, 100, 0, 30, null,
+                        [new RecipeParameter(0, "气缸压力", "bar", 4, 1, 10, true, true),
+                         new RecipeParameter(1, "保压时长", "s", 1, 0.5, 5, true, false)],
+                        null, "UP-冲洗", "OP-Cyl 气缸保压", 22),
+                    new RecipeStep(draftId, "S30", "qc", StepType.QualityCheck, 2, 200, 0, 30, null,
+                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)],
+                        null, "UP-QC", Isa88.DefaultOperation(StepType.QualityCheck))
+                ]);
+            }
+
+            await host.StartAsync();
+            ProductionBatch? live = null;
+            var deadline = DateTime.UtcNow.AddSeconds(25);
+            do
+            {
+                await Task.Delay(200);
+                using var poll = host.Services.CreateScope();
+                var db = poll.ServiceProvider.GetRequiredService<AppDbContext>();
+                live = await db.Batches.AsNoTracking().Include(b => b.StepExecutions).SingleAsync(b => b.Id == batchId);
+            } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
+
+            Assert.Equal(BatchStatus.Completed, live?.Status);
+            Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
+
+            using (var logScope = host.Services.CreateScope())
+            {
+                var db = logScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var log = await db.HandshakeEvents.AsNoTracking().Where(e => e.BatchId == batchId).ToListAsync();
+                Assert.Contains(log, e => e.StepCode == "S10" && e.Kind == "write" && e.Detail != null && e.Detail.Contains("Step_Type=21"));
+                Assert.Contains(log, e => e.StepCode == "S10" && e.Kind == "trigger" && e.Detail != null && e.Detail.Contains("Trigger_Write=1"));
+                Assert.Contains(log, e => e.StepCode == "S20" && e.Kind == "write" && e.Detail != null && e.Detail.Contains("Step_Type=22"));
+                Assert.DoesNotContain(log, e => e.Kind == "write" && e.Detail != null && e.Detail.Contains("Step_Type=6"));
+                Assert.DoesNotContain(log, e => e.Kind == "write" && e.Detail != null && e.Detail.Contains("Step_Type=5"));
+                Assert.Contains(log, e => e.StepCode == "S30" && e.Kind == "quality" && e.Detail != null && e.Detail.Contains("禁止写 PLC"));
             }
         }
         finally
@@ -1442,104 +1491,47 @@ public sealed class BatchSchedulerIntegrationTests
         }
     }
 
-    private static IHost CreateHost(string dbPath, ConcurrentBag<ExecutionEvent> events, SimulatedPlcRack? rack = null) =>
-        Host.CreateDefaultBuilder()
-            .ConfigureLogging(l => l.ClearProviders())
-            .ConfigureServices(services =>
-            {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
-                services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
-                services.AddSingleton(rack ?? new SimulatedPlcRack());
-                services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
-                services.AddSingleton<IExecutionPublisher>(new CapturingPublisher(events));
-                services.AddSingleton<BatchSchedulerHostedService>();
-                services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-                services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
-            })
-            .Build();
-
-    private static async Task<(Guid BatchId, Guid EquipmentId)> SeedTwoStepBatchAsync(
-        AppDbContext db, string eqCode, string recipeCode, string batchNo)
+    [Fact]
+    public async Task Scheduler_RecoverRunning_ReplaysPersistedHold()
     {
-        var equipment = new EquipmentLine(
-            eqCode, "test furnace", PlcProtocol.Simulator, "127.0.0.1", 102,
-            "S7_1200", 0, 1, "{}", "it");
-        db.Equipment.Add(equipment);
-        var recipe = MasterRecipe.Create(recipeCode, "it", "P", "part", null, Guid.NewGuid());
-        var draft = recipe.RequireDraft();
-        var s1 = new RecipeStep(draft.Id, "S10", "heat", StepType.Heat, 0, 0, 0, 30, null,
-            [new RecipeParameter(0, "目标温度", "℃", 120, 100, 200, true, true),
-             new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)]);
-        var s2 = new RecipeStep(draft.Id, "S20", "hold", StepType.Hold, 1, 100, 0, 30, null,
-            [new RecipeParameter(0, "保温温度", "℃", 120, 100, 200, true, true),
-             new RecipeParameter(1, "保温时长", "s", 1, 0.5, 5, true, true)]);
-        draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        recipe.MarkApproved(draft);
-        db.Recipes.Add(recipe);
-        await db.SaveChangesAsync();
+        var dbPath = Path.Combine(Path.GetTempPath(), $"brmes-recover-hold-{Guid.NewGuid():N}.db");
+        Guid batchId;
+        Guid equipmentId;
+        var events = new ConcurrentBag<ExecutionEvent>();
+        var host = CreateHost(dbPath, events);
 
-        var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-        SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
-        var batch = ProductionBatch.Create(batchNo, equipment.Id, snapshot, json, Guid.NewGuid());
-        foreach (var step in snapshot.Steps)
-            batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
-        batch.Queue();
-        db.Batches.Add(batch);
-        await db.SaveChangesAsync();
-        return (batch.Id, equipment.Id);
-    }
-
-    private static async Task<(Guid BatchId, Guid EquipmentId)> SeedApprovedBatchAsync(
-        AppDbContext db,
-        string eqCode,
-        string recipeCode,
-        string batchNo,
-        Func<Guid, IReadOnlyList<RecipeStep>> stepsFactory)
-    {
-        var equipment = new EquipmentLine(
-            eqCode, "test furnace", PlcProtocol.Simulator, "127.0.0.1", 102,
-            "S7_1200", 0, 1, "{}", "it");
-        db.Equipment.Add(equipment);
-        var recipe = MasterRecipe.Create(recipeCode, "it", "P", "part", null, Guid.NewGuid());
-        var draft = recipe.RequireDraft();
-        var steps = stepsFactory(draft.Id).ToList();
-        var edges = steps.Count < 2
-            ? new List<RecipeEdge>()
-            : steps.Zip(steps.Skip(1), (a, b) => new RecipeEdge(draft.Id, a.Id, b.Id)).ToList();
-        draft.ReplaceProcedure(steps, edges);
-        draft.Submit(DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Supervisor, Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        draft.Decide(ApprovalLevel.Quality, Guid.NewGuid(), "质量", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
-        recipe.MarkApproved(draft);
-        db.Recipes.Add(recipe);
-        await db.SaveChangesAsync();
-
-        var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-        SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
-        var batch = ProductionBatch.Create(batchNo, equipment.Id, snapshot, json, Guid.NewGuid());
-        foreach (var step in snapshot.Steps)
-            batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
-        batch.Queue();
-        db.Batches.Add(batch);
-        await db.SaveChangesAsync();
-        return (batch.Id, equipment.Id);
-    }
-
-    private static string? EquipmentCodeOf(ExecutionEvent evt)
-    {
-        var property = evt.Payload?.GetType().GetProperty("equipmentCode");
-        return property?.GetValue(evt.Payload) as string;
-    }
-
-    private sealed class CapturingPublisher(ConcurrentBag<ExecutionEvent> sink) : IExecutionPublisher
-    {
-        public Task PublishAsync(ExecutionEvent evt, CancellationToken cancellationToken = default)
+        try
         {
-            sink.Add(evt);
-            return Task.CompletedTask;
+            using (var scope = host.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await SchemaBootstrap.ApplyAsync(db);
+                (batchId, equipmentId) = await SeedTwoStepBatchAsync(db, "HT-PH", "ITPH", "BITPHLD");
+                db.SchedulerIntents.Add(new SchedulerIntent(batchId, SchedulerIntentKinds.Hold, "重启后仍保持"));
+                await db.SaveChangesAsync();
+            }
+
+            host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("HoldNotReady");
+            await host.StartAsync();
+            host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("None");
+
+            ProductionBatch? live = null;
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            do
+            {
+                await Task.Delay(200);
+                using var poll = host.Services.CreateScope();
+                var db = poll.ServiceProvider.GetRequiredService<AppDbContext>();
+                live = await db.Batches.AsNoTracking().Include(b => b.StepExecutions).SingleAsync(b => b.Id == batchId);
+            } while (live is { Status: BatchStatus.Queued or BatchStatus.Running } && DateTime.UtcNow < deadline);
+
+            Assert.Equal(BatchStatus.Held, live?.Status);
+        }
+        finally
+        {
+            try { await host.StopAsync(TimeSpan.FromSeconds(3)); } catch { /* already stopped */ }
+            host.Dispose();
+            try { File.Delete(dbPath); } catch { /* temp db */ }
         }
     }
 }
