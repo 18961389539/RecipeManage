@@ -96,14 +96,15 @@ public sealed class DesignToHandshakeLoopTests
                     "Engineer@123",
                     "初版 Procedure / Setpoints"), CancellationToken.None);
 
-                var submitted = await recipes.SubmitAsync(header.Id, new SubmitRecipeRequest("Engineer@123", "提交多级审核"), CancellationToken.None);
+                var submitted = await ServiceHarness.NewRecipeApproval(db, new RoleUser(engineer.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher)
+                    .SubmitAsync(header.Id, new SubmitRecipeRequest("Engineer@123", "提交多级审核"), CancellationToken.None);
                 Assert.Equal(RecipeStatus.InReview, submitted.Draft!.Status);
 
-                var afterSupervisor = await ServiceHarness.NewRecipeService(db, new RoleUser(supervisor.Id, UserRole.Supervisor, "supervisor", "工艺主管"), hasher)
+                var afterSupervisor = await ServiceHarness.NewRecipeApproval(db, new RoleUser(supervisor.Id, UserRole.Supervisor, "supervisor", "工艺主管"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "路径可执行", "Supervisor@123"), CancellationToken.None);
                 Assert.Contains(afterSupervisor.Draft!.Approvals, a => a.Node == ApprovalNode.Quality && a.Decision == ApprovalDecision.Pending);
 
-                var approved = await ServiceHarness.NewRecipeService(db, new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师"), hasher)
+                var approved = await ServiceHarness.NewRecipeApproval(db, new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "窗口合格", "Quality@123"), CancellationToken.None);
                 Assert.NotNull(approved.Approved);
                 Assert.Equal(1, approved.Approved!.VersionNumber);

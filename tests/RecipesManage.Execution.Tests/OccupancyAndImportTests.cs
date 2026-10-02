@@ -203,7 +203,7 @@ public sealed class OccupancyAndImportTests
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var recipes = ServiceHarness.NewRecipeService(db, new RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
+        var recipes = ServiceHarness.NewRecipePackage(db, new RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
         var exported = await recipes.ExportAsync(CancellationToken.None);
         var cloneCode = "IMP-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         var package = exported with

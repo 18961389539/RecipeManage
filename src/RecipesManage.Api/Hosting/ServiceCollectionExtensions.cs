@@ -34,6 +34,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<AuthService>();
         services.AddScoped<RecipeService>();
+        services.AddScoped<RecipeQueryService>();
+        services.AddScoped<RecipeApprovalService>();
+        services.AddScoped<RecipePackageService>();
         services.AddScoped<ApprovalChainService>();
         services.AddScoped<MaterialLotService>();
         services.AddScoped<EsignGuard>();

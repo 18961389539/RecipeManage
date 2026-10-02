@@ -369,7 +369,7 @@ public sealed class BatchQueryService
             .FirstOrDefaultAsync(v => v.Id == detail.Snapshot.RecipeVersionId, ct);
         var approvals = version is null
             ? (IReadOnlyList<ApprovalDto>)[]
-            : version.Approvals.OrderBy(a => a.Seq).Select(RecipeService.MapApproval).ToList();
+            : version.Approvals.OrderBy(a => a.Seq).Select(RecipeSupport.MapApproval).ToList();
         var alarms = await AllAlarmsAsync(id, ct);
         var materials = await _lots.UsesForBatchAsync(id, ct);
         var labs = await _lots.SamplesForBatchAsync(id, ct);

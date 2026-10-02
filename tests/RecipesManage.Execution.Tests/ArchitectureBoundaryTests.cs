@@ -60,6 +60,8 @@ public sealed class ArchitectureBoundaryTests
     [Theory]
     [InlineData(typeof(BatchService))]
     [InlineData(typeof(RecipeService))]
+    [InlineData(typeof(RecipeApprovalService))]
+    [InlineData(typeof(RecipePackageService))]
     [InlineData(typeof(MaterialLotService))]
     [InlineData(typeof(ApprovalChainService))]
     public void ServicesThatSign_TakeEsignGuardFromTheContainer(Type service)
@@ -68,6 +70,34 @@ public sealed class ArchitectureBoundaryTests
         var deps = ctor.GetParameters().Select(p => p.ParameterType).ToHashSet();
         Assert.Contains(typeof(EsignGuard), deps);
         Assert.DoesNotContain(typeof(RecipesManage.Application.Contracts.IPasswordHasher), deps);
+    }
+
+    /// <summary>
+    /// 配方读路径只认数据库：没有当前用户、没有签名守卫，读路径里就不可能夹带权限判断或写操作。
+    /// 要给查询加依赖，先问一句它是不是其实该放进写路径的某个服务。
+    /// </summary>
+    [Fact]
+    public void RecipeQueryService_OnlyDependsOnTheDatabase()
+    {
+        var ctor = Assert.Single(typeof(RecipeQueryService).GetConstructors());
+        var deps = ctor.GetParameters().Select(p => p.ParameterType).ToList();
+        Assert.Equal([typeof(RecipesManage.Application.Contracts.IAppDbContext)], deps);
+    }
+
+    [Fact]
+    public void RecipeServices_DoNotDependOnEachOther()
+    {
+        // 四个配方服务只共享 RecipeSupport 里的无状态件；谁也不该持有另一个服务。
+        var recipeServices = new[]
+        {
+            typeof(RecipeService), typeof(RecipeQueryService),
+            typeof(RecipeApprovalService), typeof(RecipePackageService),
+        };
+        foreach (var service in recipeServices)
+        {
+            var deps = Assert.Single(service.GetConstructors()).GetParameters().Select(p => p.ParameterType);
+            Assert.Empty(deps.Intersect(recipeServices));
+        }
     }
 
     [Fact]

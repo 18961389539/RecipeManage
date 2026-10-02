@@ -80,10 +80,10 @@ public sealed class RecipeProcedureEsignTests
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var recipes = ServiceHarness.NewRecipeService(db, new ServiceHarness.RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
+        var recipes = ServiceHarness.NewRecipeApproval(db, new ServiceHarness.RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
         await recipes.SubmitAsync(recipe.Id, new SubmitRecipeRequest("Engineer@123", "提交审核"), CancellationToken.None);
 
-        var row = Assert.Single(await recipes.ListAsync(CancellationToken.None), r => r.Code == "AL-RV");
+        var row = Assert.Single(await ServiceHarness.NewRecipeQuery(db).ListAsync(CancellationToken.None), r => r.Code == "AL-RV");
         Assert.Equal(RecipeStatus.InReview, row.DraftStatus);
         Assert.Equal("工艺主管", row.PendingTitle);
         Assert.Equal(1, row.ReviewVersion);

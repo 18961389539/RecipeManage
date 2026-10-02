@@ -71,7 +71,7 @@ public sealed class DashboardCountTests
         await db.SaveChangesAsync();
 
         var dash = await Dashboard(db).DashboardAsync(CancellationToken.None);
-        var rows = await ServiceHarness.NewRecipeService(db, As(UserRole.ProcessEngineer), new BcryptPasswordHasher())
+        var rows = await ServiceHarness.NewRecipeQuery(db)
             .ListAsync(CancellationToken.None);
 
         Assert.Equal(rows.Count(r => r.ApprovedVersion is > 0), dash.ApprovedRecipes);

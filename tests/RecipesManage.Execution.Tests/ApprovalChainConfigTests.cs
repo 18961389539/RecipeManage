@@ -53,7 +53,7 @@ public sealed class ApprovalChainConfigTests
 
         await Recipes(db, supervisor).DecideAsync(recipeId, Decide("路径可执行"), CancellationToken.None);
         await Recipes(db, quality).DecideAsync(recipeId, Decide("窗口可接受"), CancellationToken.None);
-        var beforeRelease = await recipes.GetAsync(recipeId, CancellationToken.None);
+        var beforeRelease = await ServiceHarness.NewRecipeQuery(db).GetAsync(recipeId, CancellationToken.None);
         var still = InReview(beforeRelease)!;
         Assert.Equal("厂长放行", still.Approvals.Single(a => a.Decision == ApprovalDecision.Pending).Title);
         Assert.Equal(RecipeStatus.InReview, still.Status);
@@ -159,8 +159,8 @@ public sealed class ApprovalChainConfigTests
         ServiceHarness.NewApprovalChainService(
             db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
 
-    private static RecipeService Recipes(AppDbContext db, AppUser user) =>
-        ServiceHarness.NewRecipeService(
+    private static RecipeApprovalService Recipes(AppDbContext db, AppUser user) =>
+        ServiceHarness.NewRecipeApproval(
             db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
 
     private static async Task<AppUser> AddUserAsync(AppDbContext db, string name, string display, UserRole role)

@@ -53,6 +53,14 @@ internal static class ServiceHarness
     public static RecipeService NewRecipeService(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
         new(db, user, new EsignGuard(db, user, hasher));
 
+    public static RecipeQueryService NewRecipeQuery(IAppDbContext db) => new(db);
+
+    public static RecipeApprovalService NewRecipeApproval(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
+        new(db, user, new EsignGuard(db, user, hasher));
+
+    public static RecipePackageService NewRecipePackage(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
+        new(db, user, new EsignGuard(db, user, hasher));
+
     public static MaterialLotService NewMaterialLotService(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
         new(db, user, new EsignGuard(db, user, hasher));
 

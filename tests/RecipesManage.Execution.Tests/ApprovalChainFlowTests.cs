@@ -12,7 +12,7 @@ namespace RecipesManage.Execution.Tests;
 /// <summary>
 /// 审批链的行为基线。
 ///
-/// 断言刻意只走 RecipeService 的公开入口（SubmitAsync / DecideAsync / ListAsync），不碰域层签名——
+/// 断言刻意只走 RecipeApprovalService / RecipeQueryService 的公开入口（SubmitAsync / DecideAsync / ListAsync），不碰域层签名——
 /// "审批链数据化"要把 ApprovalLevel 枚举换掉，域层调用点必然跟着改，
 /// 但**链推进的语义一条都不许变**，所以钉子钉在服务层这一侧。
 /// 默认链 = 现行的 提交 → 工艺主管 → 质量，因此改前改后这些用例必须同样跑绿。
@@ -49,7 +49,7 @@ public sealed class ApprovalChainFlowTests
 
         await Service(db, fx.Supervisor).DecideAsync(fx.RecipeId,
             new DecideRequest(ApprovalDecision.Approved, "路径可执行", Pw), CancellationToken.None);
-        var reviewing = InReview(await engineer.GetAsync(fx.RecipeId, CancellationToken.None))!;
+        var reviewing = InReview(await ServiceHarness.NewRecipeQuery(db).GetAsync(fx.RecipeId, CancellationToken.None))!;
         Assert.Contains("质量", Head(reviewing).Meaning);
 
         var final = await Service(db, fx.Quality).DecideAsync(fx.RecipeId,
@@ -93,7 +93,7 @@ public sealed class ApprovalChainFlowTests
 
         // 职责分离是域层守卫：这里拿提交人的 UserId 披上主管角色进来，
         // 服务层的角色门会放行，必须靠域层那条"同一版本不得两人以上署名"拦下。
-        var asSupervisor = ServiceHarness.NewRecipeService(
+        var asSupervisor = ServiceHarness.NewRecipeApproval(
             db, new ServiceHarness.RoleUser(fx.Engineer.Id, UserRole.Supervisor, "CH-4-eng", "主管甲"),
             new BcryptPasswordHasher());
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
@@ -129,14 +129,14 @@ public sealed class ApprovalChainFlowTests
         var engineer = Service(db, fx.Engineer);
         await engineer.SubmitAsync(fx.RecipeId, new SubmitRecipeRequest(Pw, "提交"), CancellationToken.None);
 
-        var row = Assert.Single(await engineer.ListAsync(CancellationToken.None), r => r.Code == "CH-6");
+        var row = Assert.Single(await ServiceHarness.NewRecipeQuery(db).ListAsync(CancellationToken.None), r => r.Code == "CH-6");
         Assert.Equal(RecipeStatus.InReview, row.DraftStatus);
         Assert.Contains("工艺主管", row.PendingMeaning);
 
         // 主管签完，列表的待审节点必须换成质量：还报主管会把审核台往已处理的节点上引。
         await Service(db, fx.Supervisor).DecideAsync(fx.RecipeId,
             new DecideRequest(ApprovalDecision.Approved, "可执行", Pw), CancellationToken.None);
-        var after = Assert.Single(await engineer.ListAsync(CancellationToken.None), r => r.Code == "CH-6");
+        var after = Assert.Single(await ServiceHarness.NewRecipeQuery(db).ListAsync(CancellationToken.None), r => r.Code == "CH-6");
         Assert.Contains("质量", after.PendingMeaning);
     }
 
@@ -165,8 +165,8 @@ public sealed class ApprovalChainFlowTests
         return new Fixture(recipe.Id, engineer, supervisor, quality);
     }
 
-    private static RecipeService Service(AppDbContext db, AppUser user) =>
-        ServiceHarness.NewRecipeService(
+    private static RecipeApprovalService Service(AppDbContext db, AppUser user) =>
+        ServiceHarness.NewRecipeApproval(
             db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName),
             new BcryptPasswordHasher());
 
