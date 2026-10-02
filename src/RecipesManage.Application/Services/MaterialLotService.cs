@@ -16,11 +16,11 @@ public sealed class MaterialLotService
     private readonly ICurrentUser _user;
     private readonly EsignGuard _esign;
 
-    public MaterialLotService(IAppDbContext db, ICurrentUser user, IPasswordHasher passwords)
+    public MaterialLotService(IAppDbContext db, ICurrentUser user, EsignGuard esign)
     {
         _db = db;
         _user = user;
-        _esign = new EsignGuard(db, user, passwords);
+        _esign = esign;
     }
 
     /// <summary>

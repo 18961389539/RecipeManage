@@ -156,10 +156,12 @@ public sealed class ApprovalChainConfigTests
         detail.Versions.SingleOrDefault(v => v.Status == RecipeStatus.InReview);
 
     private static ApprovalChainService Chains(AppDbContext db, AppUser user) =>
-        new(db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
+        ServiceHarness.NewApprovalChainService(
+            db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
 
     private static RecipeService Recipes(AppDbContext db, AppUser user) =>
-        new(db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
+        ServiceHarness.NewRecipeService(
+            db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName), new BcryptPasswordHasher());
 
     private static async Task<AppUser> AddUserAsync(AppDbContext db, string name, string display, UserRole role)
     {

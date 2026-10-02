@@ -188,27 +188,15 @@ public sealed class BatchService
         var skipReason = string.IsNullOrWhiteSpace(reason) ? "主管跳步" : reason.Trim();
         var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson)
                        ?? throw new DomainException("SNAPSHOT", "控制配方快照损坏。");
-        var target = ResolveSkipTarget(batch, snapshot, stepId);
+        var target = StepSkip.ResolveTarget(batch, snapshot, stepId);
         var exec = batch.StepExecutions.Single(s => s.StepId == target.StepId);
         var equipmentId = UnitEquipmentBinding.Resolve(snapshot, target.UnitProcedure, batch.EquipmentId);
         var laneRow = await _db.Lanes.AsNoTracking()
             .FirstOrDefaultAsync(l => l.BatchId == batch.Id && l.EquipmentId == equipmentId, ct);
 
-        if (batch.Status == BatchStatus.Running)
+        // 能不能跳、走哪条路是领域规则（StepSkip）；这里只负责按结论落实副作用。
+        if (StepSkip.Decide(batch, exec, laneRow) == SkipMode.ForwardToEngine)
         {
-            if (exec.Outcome is StepOutcome.Completed or StepOutcome.Skipped)
-                throw new DomainException("SKIP_DONE", "当前工步已完成，不能跳过。");
-            if (exec.Outcome is not (StepOutcome.Running or StepOutcome.AwaitingConfirm))
-                throw new DomainException("SKIP_UNSAFE", "只能跳过正在等待 PLC_Ready、等待或人工确认的工步，禁止跨单元误跳邻道。");
-            // 车道相位的唯一真源是 batch_lanes 行：引擎在 MarkRunning 之前就给每条绑定设备建行
-            // （EnsureLaneRowsAsync），所以"在跑却没有行"只可能是数据被外力破坏。
-            // 这时一律按不可跳处理——宁可让操作员先保持再跳，也不能拿展示串或历史事件猜一个相位去盲写 PLC。
-            if (laneRow is null)
-                throw new DomainException("SKIP_UNSAFE",
-                    "该车道还没有被执行引擎接管，不能跳步。请等批次进入握手状态后再试。");
-            if (!BatchLanes.IsSkipSafePhase(laneRow.Phase))
-                throw new DomainException("SKIP_UNSAFE",
-                    $"车道 {laneRow.EquipmentCode} 当前相位 {laneRow.Phase}，禁止跳步盲写。请先保持，待 PLC_Ready / 等待 / 人工确认后再跳过。");
             await UpsertIntentAsync(batch.Id, SchedulerIntentKinds.Skip, skipReason, target.StepId, ct);
             AuditEsign("batch.skip.esign", batch.Id, $"{skipReason} step={target.Code}");
             await SaveBatchStateAsync(ct);
@@ -222,31 +210,14 @@ public sealed class BatchService
             return await GetAsync(id, ct);
         }
 
-        if (batch.Status is not BatchStatus.Held and not BatchStatus.Faulted)
-            throw new DomainException("CANNOT_SKIP", $"批次状态 {batch.Status} 不能跳步。");
-
-        if (exec.Outcome is StepOutcome.Completed)
-            throw new DomainException("SKIP_DONE", "当前工步已完成，不能跳过。");
         // 履历里的相位同样只认车道行；没有行（批次还没被接管）时按工步结论映射，
         // 绝不再写批次展示串——那是 "HT-A:Held · HT-B:…" 这种拼串，写进历史会污染按相位重建的读侧。
+        // 必须在 ApplyOffline 之前取：它会把工步结论改成 Skipped。
         var phaseForRecord = laneRow?.Phase ?? HandshakeView.FromStepOutcome(exec.Outcome);
-        exec.MarkSkipped(skipReason);
         _db.HandshakeEvents.Add(new HandshakeEvent(batch.Id, target.StepId, target.Code, phaseForRecord, "skip", skipReason, null));
-        var finished = false;
-        if (batch.StepExecutions.All(s => s.Outcome is StepOutcome.Completed or StepOutcome.Skipped))
-        {
-            batch.Complete(DateTimeOffset.UtcNow);
-            finished = true;
-        }
-        else
-        {
-            var next = snapshot.Steps.FirstOrDefault(s =>
-                batch.StepExecutions.Single(e => e.StepId == s.StepId).Outcome is StepOutcome.Pending or StepOutcome.Running or StepOutcome.Faulted or StepOutcome.Held);
-            if (next is not null)
-                batch.AdvanceTo(next.StepId, snapshot.Steps.ToList().FindIndex(s => s.StepId == next.StepId));
-            batch.Queue();
+        var finished = StepSkip.ApplyOffline(batch, snapshot, exec, skipReason, DateTimeOffset.UtcNow);
+        if (!finished)
             await _scheduler.EnqueueStartAsync(batch.Id, ct);
-        }
         AuditEsign("batch.skip.esign", batch.Id, $"{skipReason} step={target.Code}");
         await SaveBatchStateAsync(ct);
         if (finished)
@@ -335,26 +306,6 @@ public sealed class BatchService
         await SaveBatchStateAsync(ct);
         await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "disposition-rejected", new { batch.BatchNo, status = batch.Status.ToString() }), ct);
         return await GetAsync(id, ct);
-    }
-
-    private static SnapshotStep ResolveSkipTarget(ProductionBatch batch, ControlRecipeSnapshot snapshot, Guid? stepId)
-    {
-        if (stepId is Guid id)
-            return snapshot.Steps.FirstOrDefault(s => s.StepId == id)
-                   ?? throw new DomainException("SKIP_STEP", "指定工步不在本批次控制配方快照中。");
-        if (batch.CurrentStepId is Guid current)
-        {
-            var match = snapshot.Steps.FirstOrDefault(s => s.StepId == current);
-            if (match is not null)
-                return match;
-        }
-
-        var running = batch.StepExecutions.FirstOrDefault(s => s.Outcome is StepOutcome.Running or StepOutcome.AwaitingConfirm);
-        if (running is not null)
-            return snapshot.Steps.Single(s => s.StepId == running.StepId);
-
-        var index = Math.Clamp(batch.CurrentStepIndex, 0, Math.Max(snapshot.Steps.Count - 1, 0));
-        return snapshot.Steps[index];
     }
 
 

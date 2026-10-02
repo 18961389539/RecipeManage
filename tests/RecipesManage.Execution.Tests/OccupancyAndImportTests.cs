@@ -52,7 +52,7 @@ public sealed class OccupancyAndImportTests
             hasher,
             new NoopPdf(),
             new CapturingPublisher(events),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
         var created = await batches.CreateAsync(new CreateBatchRequest(
@@ -101,7 +101,7 @@ public sealed class OccupancyAndImportTests
             hasher,
             new NoopPdf(),
             new CapturingPublisher(new ConcurrentBag<ExecutionEvent>()),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
         var first = await batches.CreateAsync(new CreateBatchRequest("BBUSY1", recipe.Id, equipment.Id), CancellationToken.None);
@@ -203,7 +203,7 @@ public sealed class OccupancyAndImportTests
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
 
-        var recipes = new RecipeService(db, new RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
+        var recipes = ServiceHarness.NewRecipeService(db, new RoleUser(user.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
         var exported = await recipes.ExportAsync(CancellationToken.None);
         var cloneCode = "IMP-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         var package = exported with

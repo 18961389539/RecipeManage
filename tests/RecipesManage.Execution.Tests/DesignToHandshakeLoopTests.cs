@@ -71,7 +71,7 @@ public sealed class DesignToHandshakeLoopTests
                 db.Equipment.Add(equipment);
                 await db.SaveChangesAsync();
 
-                var recipes = new RecipeService(db, new RoleUser(engineer.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
+                var recipes = ServiceHarness.NewRecipeService(db, new RoleUser(engineer.Id, UserRole.ProcessEngineer, "engineer", "工艺工程师"), hasher);
                 var header = await recipes.CreateAsync(new CreateRecipeRequest(
                     "LOOP-HT", "闭环热处理", "AL6061", "锻件", "设计到握手"), CancellationToken.None);
                 header = await recipes.UpdateHeaderAsync(header.Id, new UpdateRecipeRequest(
@@ -99,11 +99,11 @@ public sealed class DesignToHandshakeLoopTests
                 var submitted = await recipes.SubmitAsync(header.Id, new SubmitRecipeRequest("Engineer@123", "提交多级审核"), CancellationToken.None);
                 Assert.Equal(RecipeStatus.InReview, submitted.Draft!.Status);
 
-                var afterSupervisor = await new RecipeService(db, new RoleUser(supervisor.Id, UserRole.Supervisor, "supervisor", "工艺主管"), hasher)
+                var afterSupervisor = await ServiceHarness.NewRecipeService(db, new RoleUser(supervisor.Id, UserRole.Supervisor, "supervisor", "工艺主管"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "路径可执行", "Supervisor@123"), CancellationToken.None);
                 Assert.Contains(afterSupervisor.Draft!.Approvals, a => a.Node == ApprovalNode.Quality && a.Decision == ApprovalDecision.Pending);
 
-                var approved = await new RecipeService(db, new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师"), hasher)
+                var approved = await ServiceHarness.NewRecipeService(db, new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师"), hasher)
                     .DecideAsync(header.Id, new DecideRequest(ApprovalDecision.Approved, "窗口合格", "Quality@123"), CancellationToken.None);
                 Assert.NotNull(approved.Approved);
                 Assert.Equal(1, approved.Approved!.VersionNumber);
@@ -118,7 +118,7 @@ public sealed class DesignToHandshakeLoopTests
                     hasher,
                     new BatchRecordPdf(),
                     publisher,
-                    new MaterialLotService(db, opUser, hasher),
+                    ServiceHarness.NewMaterialLotService(db, opUser, hasher),
                     new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
                 var created = await batches.CreateAsync(new CreateBatchRequest(
                     "BLOOP1", header.Id, equipment.Id, 1, "LOT-LOOP"), CancellationToken.None);
@@ -174,7 +174,7 @@ public sealed class DesignToHandshakeLoopTests
             var records = ServiceHarness.NewBatchQuery(
                 logDb,
                 recordUser,
-                new MaterialLotService(logDb, recordUser, hasher),
+                ServiceHarness.NewMaterialLotService(logDb, recordUser, hasher),
                 new BatchRecordPdf());
             var pdf = await records.ExportPdfAsync(batchId, CancellationToken.None);
             var ascii = Encoding.ASCII.GetString(pdf);

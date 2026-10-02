@@ -17,11 +17,11 @@ public sealed class ApprovalChainService
     private readonly ICurrentUser _user;
     private readonly EsignGuard _esign;
 
-    public ApprovalChainService(IAppDbContext db, ICurrentUser user, IPasswordHasher passwords)
+    public ApprovalChainService(IAppDbContext db, ICurrentUser user, EsignGuard esign)
     {
         _db = db;
         _user = user;
-        _esign = new EsignGuard(db, user, passwords);
+        _esign = esign;
     }
 
     public async Task<IReadOnlyList<ApprovalChainDto>> ListAsync(CancellationToken ct)

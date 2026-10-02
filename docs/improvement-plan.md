@@ -1,4 +1,4 @@
-﻿# BRMES / RecipesManage 架构改进计划
+# BRMES / RecipesManage 架构改进计划
 
 > 状态：已拟定，待按阶段实施  
 > 日期：2026-09-22  
@@ -252,7 +252,7 @@
 | 1 仿真 PLC 可关 | **已完成（2026-09-25，做法与计划不同）** | 没有加 `Plc:EnableSimulators` 配置开关，而是按**库里的设备行**判：`MB-01`/`S7-01`/`UA-01` 存在、启用、协议+端口对得上且 host 是回环才绑端口（`Simulation/PlcLoopbackGate.cs`；2026-10-02 起仿真独立成 `RecipesManage.Simulation` 项目）。理由：设备行是这台机器"要连什么"的唯一真源，再加一个配置项就会有两份真源（配置说开、库说没有 → 端口白占）。`Seed:Demo=false` 时那三条行本来就不写，所以生产机零占用；判据只在启动时跑一次。 |
 | 2 授权单轨化 | **部分完成（2026-10-02，做法与计划不同）** | 没有按计划"服务层去掉纯角色检查"：电子签名路径需要纵深防御，服务层被别处直接调用时也必须自保。改成**名单单轨**——14 项能力的角色名单只在 `Domain/Identity/Capabilities.cs` 写一次；`AuthorizationPolicies` 由它生成，服务层统一 `EnsureCan(Capabilities.X)`（`CapabilityExtensions`），约 30 处手写角色列表清零。这不是洁癖：注入仿真故障的策略放行 Admin 而服务层拒绝 Admin，已经漂移过；现拆成独立能力 `equipment.simulate`。`CapabilitiesTests` 把"角色 × 能力"矩阵与职责分离规则（仅质量可放行、仅主管可跳步、Admin 不碰产线）钉成测试。另补了 `ValidateTagMap`/`TestConnection` 缺失的服务层二次校验。**未做**：`recipes/{id}/decide` 的动态节点授权（仍在服务层，按审批节点的 `RequiredRole` 判）、`docs/auth-matrix.md`。 |
 | 2b 电子签名结构化 | **已完成（2026-10-02）** | 批次/化验签名从"audit_logs 里一行 含义+备注 的拼接文本"变成表 `signature_records`：**含义原文在签署时冻结**，备注单独成列；批记录读库里的文本，不再用当前代码的含义表反查（以前改一次措辞，历史批记录展示的就不是当时签的那句，不满足 21 CFR 11.50）。迁移 `20261002130000_SignatureRecords` 回填历史 `*.esign` 审计行：已知措辞拆成含义+备注，更早的措辞整段原样留作含义。写入统一经 `EsignGuard.Record`，同时保留审计行。**未做**：签名与被签对象内容哈希的绑定；配方侧签名（审核节点含义已冻在 `approval_records`，提交/升版等仍只在审计日志）。 |
-| 3 拆分 Application 服务 | **部分完成（2026-10-02）** | `BatchService`（原 ~930 行）按读写拆开：读路径（列表 / 详情 / 趋势 / 握手履历 / 快照漂移 / 批记录 / PDF / 报警列表）→ `BatchQueryService`，只依赖数据库、当前用户、物料服务、PDF 渲染器；`BatchService` 只剩写路径（创建 / 启动 / 中止 / 保持 / 恢复 / 跳步 / 确认 / 放行 / 拒收 / 报警确认），返回详情时委托查询服务，反向无依赖。`EsignGuard` 改为容器注入（此前三个服务各自 `new`，现在 `BatchService` 已改，`RecipeService` / `MaterialLotService` / `ApprovalChainService` 仍是旧写法）。`ArchitectureBoundaryTests` 钉住读路径不得依赖调度器 / 租约 / 密码校验。**未做**：`RecipeService` 拆分；跳步目标解析（`ResolveSkipTarget`）与状态迁移下沉到领域；放行 / 拒收没有单独成类（两个入口 ~45 行，拆出来只会多一份共享依赖）。 |
+| 3 拆分 Application 服务 | **部分完成（2026-10-02）** | `BatchService`（原 ~930 行）按读写拆开：读路径（列表 / 详情 / 趋势 / 握手履历 / 快照漂移 / 批记录 / PDF / 报警列表）→ `BatchQueryService`，只依赖数据库、当前用户、物料服务、PDF 渲染器；`BatchService` 只剩写路径（创建 / 启动 / 中止 / 保持 / 恢复 / 跳步 / 确认 / 放行 / 拒收 / 报警确认），返回详情时委托查询服务，反向无依赖。`EsignGuard` 改为容器注入（`BatchService` / `RecipeService` / `MaterialLotService` / `ApprovalChainService` 四个服务都不再自己 `new`，`ArchitectureBoundaryTests` 用 Theory 钉住）。跳步规则下沉到领域 `Domain/Batches/StepSkip`：目标解析（`ResolveTarget`）、放行判定矩阵（`Decide`：转发给握手引擎 / 离线直接应用 / 拒绝并带错误码）、离线状态迁移（`ApplyOffline`）都是纯函数，`StepSkipTests` 覆盖每个拒绝码与放行路径；`BatchService.SkipAsync` 只剩装载、落库、审计、发布。`ArchitectureBoundaryTests` 钉住读路径不得依赖调度器 / 租约 / 密码校验。**未做**：`RecipeService` 拆分；`recipes/{id}/decide` 的动态节点授权（仍在服务层按审批节点的 `RequiredRole` 判断，不属于静态能力表）；放行 / 拒收没有单独成类（两个入口 ~45 行，拆出来只会多一份共享依赖）。 |
 | 4 调度意图落库 | 待开始 | |
 | 5 巩固项 | 部分完成 | JWT/密钥一项已做（非 Dev 缺/弱占位密钥直接拒绝启动，实测）；其余待开始 |
 

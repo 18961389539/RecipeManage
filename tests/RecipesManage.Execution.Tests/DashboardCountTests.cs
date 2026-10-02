@@ -29,7 +29,7 @@ public sealed class DashboardCountTests
 
     private static BatchQueryService Batches(AppDbContext db) =>
         ServiceHarness.NewBatchQuery(db, As(UserRole.Operator),
-            new MaterialLotService(db, As(UserRole.Operator), new BcryptPasswordHasher()));
+            ServiceHarness.NewMaterialLotService(db, As(UserRole.Operator), new BcryptPasswordHasher()));
 
     [Fact]
     public async Task PendingLabTileCountsBatchesSoTheTileMatchesTheListItOpens()
@@ -71,7 +71,7 @@ public sealed class DashboardCountTests
         await db.SaveChangesAsync();
 
         var dash = await Dashboard(db).DashboardAsync(CancellationToken.None);
-        var rows = await new RecipeService(db, As(UserRole.ProcessEngineer), new BcryptPasswordHasher())
+        var rows = await ServiceHarness.NewRecipeService(db, As(UserRole.ProcessEngineer), new BcryptPasswordHasher())
             .ListAsync(CancellationToken.None);
 
         Assert.Equal(rows.Count(r => r.ApprovedVersion is > 0), dash.ApprovedRecipes);

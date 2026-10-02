@@ -104,7 +104,7 @@ public sealed class SkipPhaseGateTests
         var scheduler = new ServiceHarness.RecordingScheduler();
         var service = ServiceHarness.NewBatchService(
             db, user, scheduler, hasher, new ServiceHarness.NoopPdf(), new ServiceHarness.NoopPublisher(),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
         const string equipmentCode = "HT-GATE";

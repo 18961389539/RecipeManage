@@ -93,7 +93,7 @@ public sealed class ApprovalChainFlowTests
 
         // 职责分离是域层守卫：这里拿提交人的 UserId 披上主管角色进来，
         // 服务层的角色门会放行，必须靠域层那条"同一版本不得两人以上署名"拦下。
-        var asSupervisor = new RecipeService(
+        var asSupervisor = ServiceHarness.NewRecipeService(
             db, new ServiceHarness.RoleUser(fx.Engineer.Id, UserRole.Supervisor, "CH-4-eng", "主管甲"),
             new BcryptPasswordHasher());
         var ex = await Assert.ThrowsAsync<DomainException>(() =>
@@ -166,7 +166,8 @@ public sealed class ApprovalChainFlowTests
     }
 
     private static RecipeService Service(AppDbContext db, AppUser user) =>
-        new(db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName),
+        ServiceHarness.NewRecipeService(
+            db, new ServiceHarness.RoleUser(user.Id, user.Role, user.UserName, user.DisplayName),
             new BcryptPasswordHasher());
 
     private static RecipeVersionDto? InReview(RecipeDetailDto detail) =>

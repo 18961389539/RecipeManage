@@ -42,8 +42,8 @@ public sealed class MaterialGenealogyIntegrationTests
 
         var opUser = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
         var qaUser = new RoleUser(qa.Id, UserRole.Quality, "qa", "质量工程师");
-        var opLots = new MaterialLotService(db, opUser, hasher);
-        var qaLots = new MaterialLotService(db, qaUser, hasher);
+        var opLots = ServiceHarness.NewMaterialLotService(db, opUser, hasher);
+        var qaLots = ServiceHarness.NewMaterialLotService(db, qaUser, hasher);
         var charge = await opLots.CreateReceivedAsync(new CreateMaterialLotRequest("INGOT-IT-01", "AL6061", "铝锭", 80, "kg"), CancellationToken.None);
         var child = await opLots.SplitAsync(charge.Id, new SplitLotRequest("INGOT-IT-01-S1", 30), CancellationToken.None);
         Assert.Equal(MaterialLotSource.Split, child.Source);

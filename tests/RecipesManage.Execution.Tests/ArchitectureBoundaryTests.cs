@@ -52,15 +52,30 @@ public sealed class ArchitectureBoundaryTests
             deps);
     }
 
-    /// <summary>EsignGuard 由容器注入，不在服务构造函数里 new —— 否则签名校验没有替换与测试的接缝。</summary>
-    [Fact]
-    public void BatchService_TakesEsignGuardAndQueryServiceFromTheContainer()
+    /// <summary>
+    /// EsignGuard 由容器注入，不在服务构造函数里 new —— 否则签名校验没有替换与测试的接缝。
+    /// 此前 RecipeService / MaterialLotService / ApprovalChainService / BatchService 各自 new 一份，
+    /// 签名语义漂移一次就是 GMP 审计缺陷；现在四个服务共用同一个注入进来的实例。
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(BatchService))]
+    [InlineData(typeof(RecipeService))]
+    [InlineData(typeof(MaterialLotService))]
+    [InlineData(typeof(ApprovalChainService))]
+    public void ServicesThatSign_TakeEsignGuardFromTheContainer(Type service)
     {
-        var ctor = Assert.Single(typeof(BatchService).GetConstructors());
+        var ctor = Assert.Single(service.GetConstructors());
         var deps = ctor.GetParameters().Select(p => p.ParameterType).ToHashSet();
         Assert.Contains(typeof(EsignGuard), deps);
-        Assert.Contains(typeof(BatchQueryService), deps);
         Assert.DoesNotContain(typeof(RecipesManage.Application.Contracts.IPasswordHasher), deps);
+    }
+
+    [Fact]
+    public void BatchService_DelegatesReadsToTheQueryService()
+    {
+        var deps = Assert.Single(typeof(BatchService).GetConstructors())
+            .GetParameters().Select(p => p.ParameterType).ToHashSet();
+        Assert.Contains(typeof(BatchQueryService), deps);
         Assert.DoesNotContain(typeof(RecipesManage.Application.Contracts.IBatchRecordPdf), deps);
     }
 

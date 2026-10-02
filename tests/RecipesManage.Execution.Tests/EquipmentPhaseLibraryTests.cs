@@ -46,7 +46,7 @@ public sealed class EquipmentPhaseLibraryTests
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
         var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
         var ok = await batches.CreateAsync(new CreateBatchRequest("BHEAT1", heat.Id, equipment.Id), CancellationToken.None);
@@ -74,7 +74,7 @@ public sealed class EquipmentPhaseLibraryTests
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
         var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BNONE1", mix.Id, equipment.Id), CancellationToken.None);
         Assert.Equal("Valid", created.SnapshotIntegrity);
@@ -117,7 +117,7 @@ public sealed class EquipmentPhaseLibraryTests
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
         var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
-            new MaterialLotService(db, user, hasher),
+            ServiceHarness.NewMaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BQ1", recipe.Id, equipment.Id), CancellationToken.None);
         Assert.Equal("Valid", created.SnapshotIntegrity);

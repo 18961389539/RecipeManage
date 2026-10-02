@@ -30,7 +30,7 @@ public sealed class ListPagingTests
     }
 
     private static MaterialLotService Lots(AppDbContext db) =>
-        new MaterialLotService(db, new ServiceHarness.RoleUser(OperatorId, UserRole.Operator), new BcryptPasswordHasher());
+        ServiceHarness.NewMaterialLotService(db, new ServiceHarness.RoleUser(OperatorId, UserRole.Operator), new BcryptPasswordHasher());
 
     /// <summary>建一批批次，按给定顺序逐个推向目标状态。</summary>
     private static async Task<List<ProductionBatch>> SeedBatches(

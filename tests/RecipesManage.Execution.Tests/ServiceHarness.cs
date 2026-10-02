@@ -49,6 +49,16 @@ internal static class ServiceHarness
         new(db, user, scheduler, publisher, lots, leases, new EsignGuard(db, user, hasher),
             new BatchQueryService(db, user, lots, pdf));
 
+    /// <summary>EsignGuard 在容器里是注入的，这些工厂照同样的接法拼；参数顺序沿用拆分前的构造函数。</summary>
+    public static RecipeService NewRecipeService(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
+        new(db, user, new EsignGuard(db, user, hasher));
+
+    public static MaterialLotService NewMaterialLotService(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
+        new(db, user, new EsignGuard(db, user, hasher));
+
+    public static ApprovalChainService NewApprovalChainService(IAppDbContext db, ICurrentUser user, IPasswordHasher hasher) =>
+        new(db, user, new EsignGuard(db, user, hasher));
+
     /// <summary>批次读路径服务（列表 / 详情 / 趋势 / 批记录 / PDF / 报警列表）。</summary>
     public static BatchQueryService NewBatchQuery(
         IAppDbContext db, ICurrentUser user, MaterialLotService lots, IBatchRecordPdf? pdf = null) =>
