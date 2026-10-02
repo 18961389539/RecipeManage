@@ -57,7 +57,13 @@
       <el-table-column :label="$t('实测点')" min-width="120">
         <template #header><HelpTip term="实测点" /></template>
         <template #default="{ row }">
-          <el-input v-model="row.measuredTag" :disabled="!row.archiveAsQuality" :placeholder="$t('留空按名称推断')" />
+          <el-input
+            v-model="row.measuredTag"
+            :disabled="!row.archiveAsQuality"
+            :placeholder="measuredTagRequired(row.semantic)
+              ? $t('实测值必须填：点表 Measured 的键名')
+              : $t('留空按名称推断')"
+          />
         </template>
       </el-table-column>
     </el-table>
@@ -75,7 +81,7 @@ import { reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { savePhaseTemplate } from "../api/equipment";
 import type { EquipmentClassDto, PhaseParameterDto, PhaseTemplateDto, StepType } from "../api/types";
-import { parameterSemanticLabel, parameterSemanticOptions, stepTypeLabel } from "../utils/labels";
+import { measuredTagRequired, parameterSemanticLabel, parameterSemanticOptions, stepTypeLabel } from "../utils/labels";
 import { DEFAULT_PROGRAM, PROCESS_TYPES, defaultTemplateParams, programOutOfRange, templateProgram } from "../utils/phaseTemplate";
 import HelpTip from "./HelpTip.vue";
 

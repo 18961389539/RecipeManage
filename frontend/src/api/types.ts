@@ -11,7 +11,7 @@ export type RecipeLifecycle = "Active" | "Obsolete";
  * 参数语义。Unspecified 时后端按名称/单位推断（历史数据的回退路径），
  * 显式声明后归档取哪个实测点、哪个参数是工艺时长都由它说了算。
  */
-export type ParameterSemantic = "Unspecified" | "Duration" | "Rate";
+export type ParameterSemantic = "Unspecified" | "Duration" | "Rate" | "MeasuredValue";
 
 export interface UserDto {
   id: string;
@@ -545,6 +545,12 @@ export interface HealthDto {
   database?: string;
   engine?: string;
   controlRecipe?: string;
+  /** 出包时定的产品版本（含提交号），远程支持第一句要问的东西。 */
+  version?: string;
+  /** 已应用的最后一条迁移 id；连不上库时不出现。 */
+  migration?: string | null;
+  /** 还没应用的迁移条数，正常恒为 0；非 0 = 升级半途失败。 */
+  pendingMigrations?: number | null;
 }
 
 export interface BatchRecordDto {

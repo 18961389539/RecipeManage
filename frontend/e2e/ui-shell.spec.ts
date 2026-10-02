@@ -379,6 +379,38 @@ test.describe("运行总览的失败态（只读断言）", () => {
   });
 });
 
+test.describe("版本与库结构水位（只读）", () => {
+  /**
+   * 远程支持的第一句话是"你装的是哪版"。这两条钉的是同一条链的两端：探针把 version / migration /
+   * pendingMigrations 带回来，界面上真的能读出来——缺任何一端，操作员都得去开终端。
+   */
+  test("探针带版本、最后一条已应用迁移与待应用条数", async ({ page }) => {
+    const res = await page.request.get("/health");
+    expect(res.ok(), `/health → ${res.status()}`).toBeTruthy();
+    const body = await res.json();
+    expect(typeof body.version).toBe("string");
+    expect(body.version.length, "version 不能是空串").toBeGreaterThan(0);
+    expect(typeof body.migration).toBe("string");
+    expect(body.pendingMigrations, "开机就 Migrate，非 0 意味着升级半途失败").toBe(0);
+    // 这几项是既有看门狗契约的一部分，不能因为加字段而丢。
+    expect(body.database).toBe("sqlite");
+    expect(body.pid).toBeGreaterThan(0);
+  });
+
+  test("运行总览的徽标悬停里念得出版本", async ({ page }) => {
+    await loginAs(page, "管理员");
+    const body = await (await page.request.get("/health")).json();
+    await page.goto("/dashboard");
+    await expect(page.locator(".health-pill")).toContainText("服务正常");
+
+    await page.locator(".health-pill").hover();
+    // 全站有很多 HelpTip 的 popper，按内容选而不是按数量选，才不会撞 Playwright 的 strict mode。
+    const tip = page.locator(".help-tip-pop", { hasText: body.version as string });
+    await expect(tip).toBeVisible();
+    await expect(tip).toContainText(body.migration as string);
+  });
+});
+
 test.describe("取数口径要写在界面上（只读断言）", () => {
   test("趋势卡声明本次是抽稀还是全量，不让人把曲线当履历读", async ({ page }) => {
     await loginAs(page, "管理员");

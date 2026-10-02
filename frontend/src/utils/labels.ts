@@ -234,11 +234,19 @@ const executionKindDict: Dict = {
 const parameterSemanticDict: Dict = {
   Unspecified: "未声明",
   Duration: "工艺时长",
-  Rate: "速率"
+  Rate: "速率",
+  MeasuredValue: "实测值"
 };
 
 /** 下拉顺序：未声明排第一，因为历史参数都是这个值。 */
-export const parameterSemanticOptions: ParameterSemantic[] = ["Unspecified", "Duration", "Rate"];
+export const parameterSemanticOptions: ParameterSemantic[] = ["Unspecified", "Duration", "Rate", "MeasuredValue"];
+
+/**
+ * 这条参数还有别的办法拿到实测值吗？没有 —— 「实测值」语义下系统不再猜名字，
+ * 只能靠显式声明的实测点。设计器与相库共用这一条判断，界面上才不会出现两处说法不一。
+ */
+export const measuredTagRequired = (semantic?: ParameterSemantic | string | null) =>
+  semantic === "MeasuredValue";
 
 const labSampleTypeDict: Dict = {
   InProcess: "过程样",

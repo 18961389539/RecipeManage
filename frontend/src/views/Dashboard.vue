@@ -4,7 +4,7 @@
       <h2>{{ $t("运行总览") }}</h2>
       <div class="health-pill" :class="pillClass">
         <i class="dot" :class="pillDot" />
-        <HelpTip v-if="pillState === 'ok'" term="服务健康" :extra="databaseLabel(health?.database)" plain>
+        <HelpTip v-if="pillState === 'ok'" term="服务健康" :extra="healthDetail" plain>
           <span>{{ $t("服务正常") }}</span>
         </HelpTip>
         <span v-else-if="pillState === 'stale'">{{ $t("数据中断") }}</span>
@@ -207,6 +207,17 @@ interface KpiItem {
 }
 
 const healthOk = computed(() => health.value?.status === "ok");
+
+/**
+ * 健康徽标悬停里的版本与库结构水位。远程支持的第一句话是"你装的是哪版"，
+ * 操作员不该为了回答它去开终端或翻 exe 属性；两个值都是 /health 原样带回来的。
+ */
+const healthDetail = computed(() => {
+  const parts = [databaseLabel(health.value?.database)];
+  if (health.value?.version) parts.push(health.value.version);
+  if (health.value?.migration) parts.push(health.value.migration);
+  return parts.filter(Boolean).join(" · ");
+});
 
 /** 有没有拿到过一次数据。没有的时候计数一律画「—」，不能画 0。 */
 const hasData = computed(() => dash.value !== null);

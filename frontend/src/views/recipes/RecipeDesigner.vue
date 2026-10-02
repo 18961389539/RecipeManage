@@ -289,7 +289,9 @@
               <el-input
                 v-model="row.measuredTag"
                 :disabled="!editable || !row.archiveAsQuality"
-                :placeholder="$t('留空按名称推断')"
+                :placeholder="measuredTagRequired(row.semantic)
+                  ? $t('实测值必须填：点表 Measured 的键名')
+                  : $t('留空按名称推断')"
               />
             </template>
           </el-table-column>
@@ -344,6 +346,7 @@ import type {
 } from "../../api/types";
 import {
   recipeStatusLabel as statusLabel, approvalNodeLabel as nodeLabel, approvalDecisionLabel,
+  measuredTagRequired,
   stepTypeLabel, executionKindLabel, phaseTypeLabel, parameterSemanticLabel, parameterSemanticOptions,
   userRoleLabel,
   esignMeaning

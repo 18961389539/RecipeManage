@@ -129,6 +129,7 @@ const en: Record<string, string> = {
   "上限": "Max",
   "单位": "Unit",
   "留空按名称推断": "Leave blank to infer from the name",
+  "实测值必须填：点表 Measured 的键名": "Required for a measured value: the key in the point table's Measured map",
   "新增参数槽": "Add parameter slot",
   "删除末槽": "Remove last slot",
 
@@ -536,6 +537,7 @@ const en: Record<string, string> = {
   "未声明": "Unspecified",
   "工艺时长": "Duration",
   "速率": "Rate",
+  "实测值": "Measured value",
   // 趋势图测点名（图例与轴名共用，别出现两种叫法）
   "温度": "Temperature",
   "压力": "Pressure",
