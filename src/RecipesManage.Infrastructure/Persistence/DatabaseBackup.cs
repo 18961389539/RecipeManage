@@ -17,6 +17,12 @@ public sealed record BackupSettings
     /// <summary>保留份数。0 或负数视为"不裁剪"（见 <see cref="DatabaseBackup.PruneOldBackups"/>）。</summary>
     public int Keep { get; init; } = 7;
 
+    /// <summary>
+    /// 升级前快照留几份。默认 3：它们只是同一天那份数据的另一份拷贝，不是记录本身，
+    /// 每次升级都留一份、永久累积没有意义；<c>0</c> 表示全留。
+    /// </summary>
+    public int KeepPreMigration { get; init; } = 3;
+
     /// <summary>相对内容根的路径；也接受绝对路径。</summary>
     public string Directory { get; init; } = "App_Data/backups";
 }
@@ -64,11 +70,12 @@ public sealed class DatabaseBackup
     /// <summary>只认自己写过的文件名。裁剪不可逆，目录里的陌生文件一律不动。</summary>
     public static bool IsBackupName(string name) => BackupName.IsMatch(name);
 
-    /// <summary>由新到旧。</summary>
-    public IReadOnlyList<BackupFile> ListBackups()
+    /// <summary>由新到旧。传目录就只看那个目录（升级前快照在子目录里，与每日快照分开裁）。</summary>
+    public IReadOnlyList<BackupFile> ListBackups(string? directory = null)
     {
-        if (!System.IO.Directory.Exists(DirectoryPath)) return [];
-        return new DirectoryInfo(DirectoryPath)
+        var dir = directory ?? DirectoryPath;
+        if (!System.IO.Directory.Exists(dir)) return [];
+        return new DirectoryInfo(dir)
             .EnumerateFiles("*" + Suffix)
             .Where(f => IsBackupName(f.Name))
             .OrderByDescending(f => f.Name, StringComparer.Ordinal)
@@ -80,15 +87,31 @@ public sealed class DatabaseBackup
     /// 落一份备份：快照 → 校验 → 裁剪旧份。
     /// 校验失败会删掉坏文件并抛出，绝不会让"看着在、其实打不开"的备份冒充成功。
     /// </summary>
-    public BackupFile Run()
+    public BackupFile Run() => SnapshotInto(DirectoryPath, _settings.Keep);
+
+    /// <summary>
+    /// 升级（迁移）之前的那份快照，落在 <c>backups/pre-migration/</c> 里，与每日快照分开。
+    ///
+    /// 为什么要单独一个目录：每日快照按 Keep 裁剪，升级前那份要是混在一起，
+    /// 第 8 次升级就会把第 1 次的退路裁掉；而退路的价值恰恰只在"升坏了"的那一刻。
+    /// 为什么不递归进 <see cref="ListBackups"/>：目录不递归，所以界面的备份列表里看不到它们，
+    /// 也就不会被"下载/裁剪"这类日常动作误伤。
+    /// </summary>
+    public BackupFile SnapshotBeforeMigration() =>
+        SnapshotInto(PreMigrationDirectory, _settings.KeepPreMigration);
+
+    /// <summary>升级前快照目录。在备份目录之下，跟着它一起被机器自己的复制计划带走。</summary>
+    public string PreMigrationDirectory => Path.Combine(DirectoryPath, "pre-migration");
+
+    private BackupFile SnapshotInto(string directory, int keep)
     {
         var stamp = DateTimeOffset.UtcNow;
         var temp = RecipesDatabase.BackupToTempFile(_connectionString);
         try
         {
-            System.IO.Directory.CreateDirectory(DirectoryPath);
+            System.IO.Directory.CreateDirectory(directory);
             var name = FileNameFor(stamp);
-            var target = Path.Combine(DirectoryPath, name);
+            var target = Path.Combine(directory, name);
             // 同一秒内跑两次（手工点两下）会撞名：宁可报错也不覆盖上一份快照。
             if (File.Exists(target))
                 throw new IOException($"{name} 已经存在：同一秒内不要连跑两次备份。");
@@ -103,7 +126,10 @@ public sealed class DatabaseBackup
                 throw;
             }
 
-            PruneOldBackups();
+            if (keep > 0)
+                foreach (var victim in ListBackups(directory).Skip(keep).Select(f => f.Name))
+                    TryDelete(Path.Combine(directory, victim));
+
             var info = new FileInfo(target);
             return new BackupFile(name, info.Length, stamp.ToUniversalTime());
         }
@@ -136,6 +162,30 @@ public sealed class DatabaseBackup
         var today = new DateTimeOffset(utc.Date, TimeSpan.Zero).Add(_settings.AtUtc.ToTimeSpan());
         return today > utc ? today : today.AddDays(1);
     }
+
+    /// <summary>最近一个**已经过去**的计划时刻。每日一班，所以它就是 <see cref="NextRunAt"/> 的前一天。</summary>
+    public DateTimeOffset LastScheduledAt(DateTimeOffset now) => NextRunAt(now).AddDays(-1);
+
+    /// <summary>
+    /// 目录里是否已有落在某一天的快照。只看文件名里的日期，不看文件系统时间戳：
+    /// 快照拷进拷出、U 盘倒腾都会改 mtime，而文件名是 <see cref="FileNameFor"/> 写死的定宽 UTC。
+    /// </summary>
+    public bool HasBackupOn(DateOnly day) =>
+        ListBackups().Any(f =>
+            f.Name.Length >= Prefix.Length + 8
+            && DateOnly.TryParseExact(f.Name.AsSpan(Prefix.Length, 8), "yyyyMMdd", out var found)
+            && found == day);
+
+    /// <summary>
+    /// 开机要不要补跑：最近一个已过去的计划时刻那天没有快照就要。
+    ///
+    /// 为什么必须有：现场机器不是 7×24 的，晚上 02:15 大概率是关着的。只等"下一次"的话，
+    /// 天天在计划时刻关机的机器一份备份都不会产生——备份策略看起来在跑，其实从没兑现过。
+    /// 补跑只看"最近那一班"，缺几天也只补一份：这是每日快照，不是要补齐历史。
+    /// </summary>
+    public bool NeedsCatchUp(DateTimeOffset now) =>
+        !HasBackupOn(DateOnly.FromDateTime(LastScheduledAt(now).UtcDateTime));
+
 
     /// <summary>
     /// 打开副本跑 <c>PRAGMA integrity_check</c>，再数一张关键表的行数，最后把副本退回 rollback 日志模式。

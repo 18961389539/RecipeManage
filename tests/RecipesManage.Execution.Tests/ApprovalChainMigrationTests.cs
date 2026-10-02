@@ -70,10 +70,13 @@ public sealed class ApprovalChainMigrationTests
             Assert.False(await HasColumnAsync(db, "approval_records", "Level"));
 
             var chains = await db.ApprovalChains.AsNoTracking().ToListAsync();
-            var standard = Assert.Single(chains);
+            // 回填迁移自己只种 standard；single-review 是后来的预设迁移（20260925120000）补的。
+            // 这里守的是"默认链有且只有一条，并且是三级那条"，不是"世上只有一条链"。
+            var standard = Assert.Single(chains, c => c.IsDefault);
             Assert.Equal("standard", standard.Code);
-            Assert.True(standard.IsDefault);
+            Assert.True(standard.Enabled);
             Assert.Equal(ApprovalChain.Standard.Steps, standard.ToChain().Steps);
+            Assert.Equal("single-review", Assert.Single(chains, c => !c.IsDefault).Code);
         }
     }
 

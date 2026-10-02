@@ -1,8 +1,9 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using RecipesManage.Domain.Equipment;
 using RecipesManage.Domain.Handshake;
 using RecipesManage.Infrastructure.Plc;
 using Xunit;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Execution.Tests;
 

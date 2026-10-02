@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Domain.Batches;
@@ -16,7 +16,7 @@ public static class OccupancyRealtime
         IEnumerable<ProductionBatch> live,
         IEnumerable<EquipmentLease>? leases = null)
     {
-        var occ = EquipmentOccupancy.Index(live, BatchService.BoundEquipmentIds, leases);
+        var occ = EquipmentOccupancy.Index(live, SnapshotJson.BoundEquipmentIds, leases);
         return equipment
             .OrderBy(e => e.Code)
             .Select(e =>

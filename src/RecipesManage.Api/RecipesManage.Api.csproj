@@ -1,8 +1,9 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
     <ProjectReference Include="..\RecipesManage.Application\RecipesManage.Application.csproj" />
     <ProjectReference Include="..\RecipesManage.Infrastructure\RecipesManage.Infrastructure.csproj" />
     <ProjectReference Include="..\RecipesManage.Execution\RecipesManage.Execution.csproj" />
+    <ProjectReference Include="..\RecipesManage.Simulation\RecipesManage.Simulation.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <!-- 单机现场按 Windows 服务部署：接管服务控制事件与事件日志落点。 -->

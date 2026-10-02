@@ -128,8 +128,7 @@ public sealed class AuthService
 
     private void EnsureAdmin()
     {
-        if (_user.Role is not UserRole.Admin)
-            throw new DomainException("FORBIDDEN", "仅管理员可以管理用户。");
+        _user.EnsureCan(Capabilities.Admin, "仅管理员可以管理用户。");
     }
 
     public static UserDto ToDto(AppUser user) =>

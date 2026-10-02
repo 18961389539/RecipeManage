@@ -35,9 +35,19 @@ public static class ParameterSemantics
         var u = unit ?? string.Empty;
         return u.Equals("s", StringComparison.OrdinalIgnoreCase) ||
                u.Equals("sec", StringComparison.OrdinalIgnoreCase) ||
+               // 这组 token 必须与 ProcessDuration.ToTimeSpan 认的单位一致：这里少认一个，
+               // 那条时长就既不算时长、也不换算，看门狗与"剩余秒数"双双失真。
+               u.Equals("ms", StringComparison.OrdinalIgnoreCase) ||
                u.Equals("min", StringComparison.OrdinalIgnoreCase) ||
                u.Equals("h", StringComparison.OrdinalIgnoreCase) ||
                u.Equals("hr", StringComparison.OrdinalIgnoreCase) ||
+               u.Equals("d", StringComparison.OrdinalIgnoreCase) ||
+               u.Equals("day", StringComparison.OrdinalIgnoreCase) ||
+               u.Equals("days", StringComparison.OrdinalIgnoreCase) ||
+               u.Equals("毫秒", StringComparison.Ordinal) ||
+               u.Equals("分钟", StringComparison.Ordinal) ||
+               u.Equals("小时", StringComparison.Ordinal) ||
+               u.Equals("天", StringComparison.Ordinal) ||
                n.Contains("时长", StringComparison.Ordinal) ||
                n.Contains("时间", StringComparison.Ordinal) ||
                n.Contains("等待", StringComparison.Ordinal);

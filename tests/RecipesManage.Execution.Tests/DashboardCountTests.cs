@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging.Abstractions;
+﻿using Microsoft.Extensions.Logging.Abstractions;
 using RecipesManage.Application.Services;
 using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Identity;
@@ -6,6 +6,7 @@ using RecipesManage.Domain.Recipes;
 using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using Xunit;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Execution.Tests;
 
@@ -24,13 +25,11 @@ public sealed class DashboardCountTests
 
     private static EquipmentService Dashboard(AppDbContext db) =>
         new EquipmentService(db, As(UserRole.Admin),
-            new PlcDriverFactory(new SimulatedPlcRack()), NullLogger<EquipmentService>.Instance);
+            new PlcDriverFactory([new SimulatedDriverProvider(new SimulatedPlcRack())]), NullLogger<EquipmentService>.Instance);
 
-    private static BatchService Batches(AppDbContext db) =>
-        new BatchService(db, As(UserRole.Operator), new ServiceHarness.RecordingScheduler(),
-            new BcryptPasswordHasher(), new ServiceHarness.NoopPdf(), new ServiceHarness.NoopPublisher(),
-            new MaterialLotService(db, As(UserRole.Operator), new BcryptPasswordHasher()),
-            new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+    private static BatchQueryService Batches(AppDbContext db) =>
+        ServiceHarness.NewBatchQuery(db, As(UserRole.Operator),
+            new MaterialLotService(db, As(UserRole.Operator), new BcryptPasswordHasher()));
 
     [Fact]
     public async Task PendingLabTileCountsBatchesSoTheTileMatchesTheListItOpens()

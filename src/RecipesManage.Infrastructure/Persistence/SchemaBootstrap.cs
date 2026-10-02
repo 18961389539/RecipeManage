@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 
 namespace RecipesManage.Infrastructure.Persistence;
 
@@ -11,10 +12,49 @@ namespace RecipesManage.Infrastructure.Persistence;
 /// </summary>
 public static class SchemaBootstrap
 {
-    public static async Task ApplyAsync(AppDbContext db, CancellationToken ct = default)
+    /// <summary>
+    /// 开机升结构。<paramref name="backup"/> 给了就必须先落一份**已校验**的升级前快照才允许动手。
+    ///
+    /// 为什么这条防线不能省：这个库的迁移是手写的，<c>Down()</c> 写好了却没有任何路径会去调它，
+    /// 所以"回滚"实际等于"恢复快照"。没有快照的升级是一次单程票——升到一半 SQL 失败，
+    /// 库就停在半应用状态，而那台设备当天可能还在跑批。
+    /// 全新空库不在此列：没有旧结构可破坏，也没必要为一堆 0 字节的文件留快照。
+    /// </summary>
+    public static async Task ApplyAsync(
+        AppDbContext db,
+        DatabaseBackup? backup = null,
+        ILogger? log = null,
+        CancellationToken ct = default)
     {
         if (await IsLegacyEnsureCreatedAsync(db, ct))
             await BaselineAsync(db, ct);
+
+        var pending = (await db.Database.GetPendingMigrationsAsync(ct)).ToArray();
+        if (pending.Length > 0 && (await ListTablesAsync(db, ct)).Count > 0)
+        {
+            if (backup is null)
+                throw new InvalidOperationException(
+                    $"有 {pending.Length} 条待应用迁移，但没有可用的备份组件：拒绝在没有升级前快照的情况下改库结构。");
+
+            BackupFile snapshot;
+            try
+            {
+                snapshot = backup.SnapshotBeforeMigration();
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // 快照写不成（盘满、目录不可写、源库打不开）就停在这儿：
+                // 宁可今天不升级，也不要拿一个没有退路的库去改结构。
+                throw new InvalidOperationException(
+                    $"升级前快照没写成，因此拒绝执行 {pending.Length} 条迁移。请先解决备份目录 " +
+                    $"\u201c{backup.PreMigrationDirectory}\u201d 的写入问题，再重启服务。", e);
+            }
+
+            log?.LogWarning(
+                "即将应用 {Count} 条迁移（先到 {Last}）。升级前快照 {File}（{Bytes} 字节）已校验，" +
+                "升坏了请停应用后用该文件覆盖数据库文件恢复。",
+                pending.Length, pending.Last(), snapshot.Name, snapshot.Bytes);
+        }
 
         await db.Database.MigrateAsync(ct);
     }

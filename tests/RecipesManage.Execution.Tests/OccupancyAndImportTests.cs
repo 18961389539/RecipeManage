@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,7 +45,7 @@ public sealed class OccupancyAndImportTests
 
         var events = new ConcurrentBag<ExecutionEvent>();
         var user = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
-        var batches = new BatchService(
+        var batches = ServiceHarness.NewBatchService(
             db,
             user,
             new RecordingScheduler(),
@@ -94,7 +94,7 @@ public sealed class OccupancyAndImportTests
         await db.SaveChangesAsync();
 
         var user = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
-        var batches = new BatchService(
+        var batches = ServiceHarness.NewBatchService(
             db,
             user,
             new RecordingScheduler(),
@@ -179,7 +179,7 @@ public sealed class OccupancyAndImportTests
                 }
             ]
         };
-        var json = JsonSerializer.Serialize(snapshot, BatchService.JsonOptions);
+        var json = JsonSerializer.Serialize(snapshot, SnapshotJson.Options);
         var batch = ProductionBatch.Create(batchNo, equipmentId, snapshot, json, userId);
         batch.StepExecutions.Add(new BatchStepExecution(batch.Id, stepId, "S10", "heat", StepType.Heat, 0));
         batch.Queue();

@@ -11,7 +11,6 @@ using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Handshake;
 using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Recipes;
-using RecipesManage.Infrastructure.Persistence;
 
 namespace RecipesManage.Execution;
 
@@ -31,10 +30,17 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         new UnboundedChannelOptions { SingleReader = true });
     // 会话写入在命令循环线程、移除在会话工作线程 finally —— 必须用并发集合，
     // 普通 Dictionary 跨线程读写会损坏内部结构。
-    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
     private readonly ConcurrentDictionary<Guid, string> _holdReasons = new();
-    private readonly ConcurrentDictionary<Guid, SkipRequest> _skipRequests = new();
-    private readonly ConcurrentDictionary<Guid, ConfirmRequest> _confirmRequests = new();
+    // 跳步 / 确认按工步存：并行车道可能同时有两个工步在等。StepId 为空的是"当前工步"通配。
+    private readonly ConcurrentDictionary<StepKey, SkipRequest> _skipRequests = new();
+    private readonly ConcurrentDictionary<StepKey, ConfirmRequest> _confirmRequests = new();
+
+    /// <summary>
+    /// 中止要等会话真的停下才能复位握手位、放租约。超时说明会话卡在某个不响应取消的 PLC 调用里，
+    /// 这时宁可让设备继续被占，也不能把它交给下一批。
+    /// </summary>
+    private static readonly TimeSpan SessionStopTimeout = TimeSpan.FromSeconds(15);
     private readonly IServiceScopeFactory _scopes;
     private readonly IPlcDriverFactory _drivers;
     private readonly IExecutionPublisher _publisher;
@@ -80,22 +86,32 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
                     StartSession(start.BatchId, stoppingToken);
                     break;
                 case ConfirmStepCommand confirm:
-                    _confirmRequests[confirm.BatchId] = new ConfirmRequest(confirm.Comment, confirm.StepId);
+                    _confirmRequests[new StepKey(confirm.BatchId, confirm.StepId)] =
+                        new ConfirmRequest(confirm.Comment);
                     break;
                 case HoldBatchCommand hold:
                     _holdReasons[hold.BatchId] = hold.Reason;
                     break;
                 case SkipStepCommand skip:
-                    _skipRequests[skip.BatchId] = new SkipRequest(skip.Reason, skip.StepId);
+                    _skipRequests[new StepKey(skip.BatchId, skip.StepId)] = new SkipRequest(skip.Reason);
                     break;
                 case AbortBatchCommand abort:
                     _holdReasons.TryRemove(abort.BatchId, out _);
-                    _skipRequests.TryRemove(abort.BatchId, out _);
-                    _confirmRequests.TryRemove(abort.BatchId, out _);
-                    if (_sessions.TryRemove(abort.BatchId, out var cts))
+                    ForgetStepRequests(abort.BatchId);
+                    if (_sessions.TryRemove(abort.BatchId, out var session))
                     {
-                        cts.Cancel();
-                        cts.Dispose();
+                        if (!await StopSessionAsync(abort.BatchId, session))
+                        {
+                            // 会话还没停：收尾挂到它真正结束之后，命令循环不能因一个批次卡住。
+                            _ = session.Run!.ContinueWith(
+                                _ =>
+                                {
+                                    session.Cts.Dispose();
+                                    return MarkAbortedAsync(abort.BatchId, abort.Reason, CancellationToken.None);
+                                },
+                                CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+                            break;
+                        }
                     }
                     await MarkAbortedAsync(abort.BatchId, abort.Reason, stoppingToken);
                     break;
@@ -103,14 +119,37 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         }
     }
 
+    /// <summary>取消并等会话退出。返回 false 表示超时，会话仍可能在驱动 PLC。</summary>
+    private async Task<bool> StopSessionAsync(Guid batchId, Session session)
+    {
+        session.Cts.Cancel();
+        try
+        {
+            await session.Run!.WaitAsync(SessionStopTimeout);
+        }
+        catch (TimeoutException)
+        {
+            _log.LogWarning("批次 {BatchId} 会话 {Timeout} 内未响应中止，延后复位设备与释放租约",
+                batchId, SessionStopTimeout);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "批次 {BatchId} 会话退出时异常", batchId);
+        }
+        session.Cts.Dispose();
+        return true;
+    }
+
     private void StartSession(Guid batchId, CancellationToken hostCt)
     {
         if (_sessions.ContainsKey(batchId))
             return;
 
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(hostCt);
-        _sessions[batchId] = cts;
-        _ = Task.Run(async () =>
+        var session = new Session(CancellationTokenSource.CreateLinkedTokenSource(hostCt));
+        _sessions[batchId] = session;
+        var cts = session.Cts;
+        session.Run = Task.Run(async () =>
         {
             try
             {
@@ -128,19 +167,28 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
             finally
             {
                 // 按 (key, value) 移除：批次中止后可能被重新排队并立刻重启会话，
-                // 按纯 key 删会误删新会话的 CTS，导致新会话无法被中止。
-                _sessions.TryRemove(KeyValuePair.Create(batchId, cts));
-                _skipRequests.TryRemove(batchId, out _);
-                _confirmRequests.TryRemove(batchId, out _);
-                cts.Dispose();
+                // 按纯 key 删会误删新会话。谁移除成功谁负责释放 CTS——中止路径移除后还要用它等会话退出。
+                if (_sessions.TryRemove(KeyValuePair.Create(batchId, session)))
+                {
+                    ForgetStepRequests(batchId);
+                    cts.Dispose();
+                }
             }
-        }, cts.Token);
+        }, CancellationToken.None);
+    }
+
+    private void ForgetStepRequests(Guid batchId)
+    {
+        foreach (var key in _skipRequests.Keys.Where(k => k.BatchId == batchId))
+            _skipRequests.TryRemove(key, out _);
+        foreach (var key in _confirmRequests.Keys.Where(k => k.BatchId == batchId))
+            _confirmRequests.TryRemove(key, out _);
     }
 
     private async Task RecoverRunningAsync(CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var intents = await db.SchedulerIntents.AsNoTracking().ToListAsync(ct);
         ApplyIntents(intents);
         var running = await db.Batches
@@ -154,7 +202,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     private async Task HydrateIntentsAsync(Guid batchId, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var rows = await db.SchedulerIntents.AsNoTracking()
             .Where(i => i.BatchId == batchId)
             .ToListAsync(ct);
@@ -171,10 +219,10 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
                     _holdReasons[row.BatchId] = row.Reason;
                     break;
                 case SchedulerIntentKinds.Skip:
-                    _skipRequests[row.BatchId] = new SkipRequest(row.Reason, row.StepId);
+                    _skipRequests[new StepKey(row.BatchId, row.StepId)] = new SkipRequest(row.Reason);
                     break;
                 case SchedulerIntentKinds.Confirm:
-                    _confirmRequests[row.BatchId] = new ConfirmRequest(row.Reason, row.StepId);
+                    _confirmRequests[new StepKey(row.BatchId, row.StepId)] = new ConfirmRequest(row.Reason);
                     break;
             }
         }
@@ -237,7 +285,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
                 var measured = await plc.ReadMeasuredAsync(ct);
                 foreach (var (tag, value) in measured)
                     db.ProcessSamples.Add(new ProcessSample(batch.Id, step.StepId, now, tag, value, "archive"));
-                exec.MarkCompleted(now, JsonSerializer.Serialize(QualityArchive.Bind(step, measured), BatchService.JsonOptions));
+                exec.MarkCompleted(now, JsonSerializer.Serialize(QualityArchive.Bind(step, measured), SnapshotJson.Options));
                 machine.NotifyArchiveCompleted();
                 RecordHandshake(lane, step, machine, work, now, "archive", "Step_Complete 归档实测");
                 return;
@@ -258,38 +306,59 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         }
     }
 
-    private bool TryConsumeSkip(Guid batchId, Guid stepId, out string reason)
+    /// <summary>
+    /// 取走本工步的跳步请求（先找点名本工步的，再找通配的）。意图行的删除只登记在车道的 DbContext 上，
+    /// 与工步被标成 Skipped 同一次落库：分开写的话，崩在两者之间，重启会把已执行的跳步再执行一遍。
+    /// </summary>
+    private async Task<string?> ConsumeSkipAsync(LaneScope lane, Guid stepId, CancellationToken ct)
     {
-        reason = "";
-        if (!_skipRequests.TryGetValue(batchId, out var request))
-            return false;
-        if (request.StepId is Guid target && target != stepId)
-            return false;
-        if (!_skipRequests.TryRemove(batchId, out request))
-            return false;
-        reason = request.Reason;
-        DeleteIntent(batchId, SchedulerIntentKinds.Skip);
-        return true;
+        if (!TryTakeStepRequest(_skipRequests, lane.Batch.Id, stepId, out var key, out var request))
+            return null;
+        await ForgetIntentAsync(lane, SchedulerIntentKinds.Skip, key.StepId, ct);
+        return request.Reason;
     }
 
-    private bool TryConsumeConfirm(Guid batchId, Guid stepId, out string comment)
+    /// <summary>同 <see cref="ConsumeSkipAsync"/>：删意图与工步完成同一次落库。</summary>
+    private async Task<string?> ConsumeConfirmAsync(LaneScope lane, Guid stepId, CancellationToken ct)
     {
-        comment = "";
-        if (!_confirmRequests.TryGetValue(batchId, out var request))
-            return false;
-        if (request.StepId is Guid target && target != stepId)
-            return false;
-        if (!_confirmRequests.TryRemove(batchId, out request))
-            return false;
-        comment = request.Comment;
-        DeleteIntent(batchId, SchedulerIntentKinds.Confirm);
-        return true;
+        if (!TryTakeStepRequest(_confirmRequests, lane.Batch.Id, stepId, out var key, out var request))
+            return null;
+        await ForgetIntentAsync(lane, SchedulerIntentKinds.Confirm, key.StepId, ct);
+        return request.Comment;
     }
 
-    private readonly record struct SkipRequest(string Reason, Guid? StepId);
-    private readonly record struct ConfirmRequest(string Comment, Guid? StepId);
+    private static bool TryTakeStepRequest<T>(
+        ConcurrentDictionary<StepKey, T> requests, Guid batchId, Guid stepId, out StepKey key, out T request)
+    {
+        key = new StepKey(batchId, stepId);
+        if (requests.TryRemove(key, out request!))
+            return true;
+        key = new StepKey(batchId, null);
+        return requests.TryRemove(key, out request!);
+    }
 
-    private static async Task RemoveIntentsAsync(AppDbContext db, Guid batchId, CancellationToken ct)
+    /// <summary>只删 (批次, 种类, 工步) 这一行：按 (批次, 种类) 删会顺手删掉操作员刚签的、给别的工步的指令。</summary>
+    private static async Task ForgetIntentAsync(LaneScope lane, string kind, Guid? stepId, CancellationToken ct)
+    {
+        var batchId = lane.Batch.Id;
+        var rows = await lane.Db.SchedulerIntents
+            .Where(i => i.BatchId == batchId && i.Kind == kind && i.StepId == stepId)
+            .ToListAsync(ct);
+        if (rows.Count > 0)
+            lane.Db.SchedulerIntents.RemoveRange(rows);
+    }
+
+    private readonly record struct StepKey(Guid BatchId, Guid? StepId);
+    private readonly record struct SkipRequest(string Reason);
+    private readonly record struct ConfirmRequest(string Comment);
+
+    private sealed class Session(CancellationTokenSource cts)
+    {
+        public CancellationTokenSource Cts { get; } = cts;
+        public Task? Run { get; set; }
+    }
+
+    private static async Task RemoveIntentsAsync(IAppDbContext db, Guid batchId, CancellationToken ct)
     {
         var rows = await db.SchedulerIntents.Where(i => i.BatchId == batchId).ToListAsync(ct);
         if (rows.Count > 0)
@@ -314,7 +383,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     /// 批次级写入。乐观并发冲突说明 HTTP 请求路径刚改过同一行：重载后以最新持久化状态为准，
     /// 不再反向覆盖操作员的指令。
     /// </summary>
-    private async Task<bool> TrySaveBatchStateAsync(AppDbContext db, ProductionBatch batch, CancellationToken ct)
+    private async Task<bool> TrySaveBatchStateAsync(IAppDbContext db, ProductionBatch batch, CancellationToken ct)
     {
         try
         {
@@ -335,13 +404,13 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     private async Task IdleEquipmentAsync(Guid equipmentId, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var equipment = await db.Equipment.FirstOrDefaultAsync(e => e.Id == equipmentId, ct);
         if (equipment is null) return;
         try
         {
-            await using var plc = _drivers.Create(equipment);
-            await plc.ConnectAsync(ct);
+            await using var plc = await PlcConnectRetry.ConnectAsync(
+                () => _drivers.Create(equipment), equipment, _log, ct);
             await IdlePlcAsync(plc, ct);
         }
         catch (Exception ex)
@@ -353,7 +422,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     private async Task MarkFaultAsync(Guid batchId, string code, string message, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var batch = await db.Batches.Include(b => b.StepExecutions).FirstOrDefaultAsync(b => b.Id == batchId, ct);
         if (batch is null) return;
         if (batch.IsTerminal)
@@ -385,21 +454,26 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     private async Task MarkAbortedAsync(Guid batchId, string reason, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var batch = await db.Batches.FirstOrDefaultAsync(b => b.Id == batchId, ct);
         if (batch is null) return;
+        var abortedHere = false;
         if (!batch.IsTerminal)
         {
             batch.Abort(reason);
             await RemoveIntentsAsync(db, batchId, ct);
-            await TrySaveBatchStateAsync(db, batch, ct);
-            await ReleaseEquipmentAsync(batchId, ct);
-            await _publisher.PublishAsync(new ExecutionEvent(batchId, "aborted", new { reason }), ct);
-            await OccupancyRealtime.PublishAsync(db, _publisher, batchId, ct);
+            abortedHere = await TrySaveBatchStateAsync(db, batch, ct);
         }
 
-        var snapshot = BatchService.Deserialize(batch.ControlRecipeJson);
+        // 顺序有安全含义：先复位握手位、后放租约。反过来的话，租约一放另一批就能接管设备，
+        // 这里的复位就会打断那一批的握手。调用前会话已确认退出，不会再有写入与复位交错。
+        var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson);
         foreach (var equipmentId in UnitEquipmentBinding.AllIds(snapshot, batch.EquipmentId))
             await IdleEquipmentAsync(equipmentId, ct);
+        await ReleaseEquipmentAsync(batchId, ct);
+
+        if (abortedHere)
+            await _publisher.PublishAsync(new ExecutionEvent(batchId, "aborted", new { reason }), ct);
+        await OccupancyRealtime.PublishAsync(db, _publisher, batchId, ct);
     }
 }

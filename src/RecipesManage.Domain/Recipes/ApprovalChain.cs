@@ -80,6 +80,24 @@ public sealed record ApprovalChain(string Code, string Name, IReadOnlyList<Appro
         ]);
 
     /// <summary>
+    /// 两三人小厂的预设：提交 + 一个质量签核节点。
+    ///
+    /// 为什么要有它：默认三级链是按"工艺工程师 / 工艺主管 / 质量"三个不同的人在三个岗位写的，
+    /// 而域层禁止同一人签两道（<see cref="RecipeVersion"/> 的 SEGREGATION_OF_DUTIES）。
+    /// 一个 2~3 人的厂要么天天卡在自己的审批台上，要么去建一堆共用账号自签自放——后者更糟，
+    /// 那是把职责分离从数据层搬到假山里。这里给的是合规的退路：只保留质量这一道签核，
+    /// 提交人与签核人<strong>仍然必须是两个人</strong>，那条规则一行都没松。
+    /// </summary>
+    public static readonly ApprovalChain SingleReview = new(
+        "single-review", "精简单审（两人以上）",
+        [
+            ApprovalChainStep.Of(
+                ApprovalNode.Quality, UserRole.Quality, "质量审核",
+                "我作为质量审核人确认参数窗口可接受，批准本版本作为生效主配方。",
+                "我作为质量审核人驳回：参数窗口不可接受或需要返工。")
+        ]);
+
+    /// <summary>
     /// 校验一条链能不能保存。返回可读原因，空串表示通过。
     /// 角色不得重复：这正是"这一版还差谁签"必须无歧义的前提，也是历史索引 (VersionId, Seq)
     /// 能成立的底气——同一角色签两次的话，两个节点就没有可区分的身份了。

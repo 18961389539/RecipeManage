@@ -1,4 +1,5 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Equipment;
 using RecipesManage.Domain.Identity;
@@ -13,6 +14,7 @@ public interface IAppDbContext
 {
     DbSet<AppUser> Users { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<SignatureRecord> SignatureRecords { get; }
     DbSet<MasterRecipe> Recipes { get; }
     DbSet<RecipeVersion> RecipeVersions { get; }
     DbSet<RecipeStep> RecipeSteps { get; }
@@ -35,6 +37,10 @@ public interface IAppDbContext
     DbSet<EquipmentLease> EquipmentLeases { get; }
     DbSet<AppliedDataFix> DataFixes { get; }
     DbSet<SchedulerIntent> SchedulerIntents { get; }
+
+    /// <summary>调度引擎要在乐观并发冲突后逐实体重载，所以必须看得到变更跟踪器。</summary>
+    ChangeTracker ChangeTracker { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
 
@@ -77,7 +83,25 @@ public interface IPlcHandshakeClient : IAsyncDisposable
 public interface IPlcDriverFactory
 {
     IPlcHandshakeClient Create(EquipmentLine equipment);
-    void InjectSimulatorFault(Guid equipmentId, string mode);
+}
+
+/// <summary>
+/// 给驱动工厂接入额外协议的扩展点。真实协议（S7 / Modbus / OPC UA）写死在工厂里，
+/// 仿真协议由仿真项目通过它接进来——生产代码因此不必认识任何仿真类型。
+/// </summary>
+public interface IPlcDriverProvider
+{
+    bool Handles(PlcProtocol protocol);
+    IPlcHandshakeClient Create(EquipmentLine equipment);
+}
+
+/// <summary>
+/// 仿真故障注入。刻意不放在 <see cref="IPlcDriverFactory"/> 上：那是生产路径用的接口，
+/// 仿真专用的口子不该出现在它上面。没有注册仿真项目时这个服务不存在，注入故障的接口会明确报"未启用"。
+/// </summary>
+public interface ISimulatorControl
+{
+    void InjectFault(Guid equipmentId, string mode);
 }
 
 public interface IExecutionPublisher

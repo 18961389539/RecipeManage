@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RecipesManage.Application.Contracts;
@@ -7,6 +7,7 @@ using RecipesManage.Domain.Recipes;
 using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using Xunit;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Execution.Tests;
 

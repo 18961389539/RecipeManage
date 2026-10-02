@@ -22,13 +22,11 @@ public sealed class ListPagingTests
 {
     private static readonly Guid OperatorId = Guid.NewGuid();
 
-    private static BatchService Batches(AppDbContext db)
+    /// <summary>本类只测读路径（列表 / 趋势 / 报警 / 握手履历），所以直接用查询服务。</summary>
+    private static BatchQueryService Batches(AppDbContext db)
     {
         var user = new ServiceHarness.RoleUser(OperatorId, UserRole.Operator, "operator", "车间操作员");
-        return new BatchService(
-            db, user, new ServiceHarness.RecordingScheduler(), new BcryptPasswordHasher(),
-            new ServiceHarness.NoopPdf(), new ServiceHarness.NoopPublisher(),
-            Lots(db), new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+        return ServiceHarness.NewBatchQuery(db, user, Lots(db));
     }
 
     private static MaterialLotService Lots(AppDbContext db) =>

@@ -1,10 +1,9 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using RecipesManage.Infrastructure.Persistence;
+using RecipesManage.Domain.Equipment;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 public sealed class ModbusLoopbackHostedService : IHostedService
 {
@@ -15,6 +14,7 @@ public sealed class ModbusLoopbackHostedService : IHostedService
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<ModbusLoopbackHostedService> _log;
     private readonly int _port;
+    private bool _bound;
 
     public ModbusLoopbackHostedService(
         ModbusTcpHandshakeSlave slave,
@@ -29,6 +29,17 @@ public sealed class ModbusLoopbackHostedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        var equipmentId = await PlcLoopbackGate.LoopbackEquipmentIdAsync(
+            _scopes, EquipmentCode, PlcProtocol.ModbusTcp, _port, _log, cancellationToken);
+        if (equipmentId is null)
+        {
+            _log.LogInformation(
+                "Modbus 环回从站未启动：没有把 {Code} 指向 127.0.0.1:{Port} 的启用设备行。",
+                EquipmentCode, _port);
+            return;
+        }
+
+        _bound = true;
         try
         {
             await _slave.StartAsync(_port, cancellationToken);
@@ -39,23 +50,12 @@ public sealed class ModbusLoopbackHostedService : IHostedService
             return;
         }
 
-        try
-        {
-            using var scope = _scopes.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var equipment = await db.Equipment.AsNoTracking()
-                .FirstOrDefaultAsync(e => e.Code == EquipmentCode, cancellationToken);
-            if (equipment is not null)
-                _slave.BindEquipment(equipment.Id);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "绑定 {Code} 到 Modbus 环回从站失败。", EquipmentCode);
-        }
-
+        _slave.BindEquipment(equipmentId.Value);
         _log.LogInformation("IOTClient Modbus TCP 环回从站监听 127.0.0.1:{Port}（四步握手，禁止盲写）。", _slave.Port);
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken) =>
-        await _slave.DisposeAsync();
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (_bound) await _slave.DisposeAsync();
+    }
 }

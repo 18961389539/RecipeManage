@@ -50,7 +50,7 @@ public sealed class EquipmentController(EquipmentService equipment) : Controller
         equipment.ValidateTagMapAsync(id, ct);
 
     [HttpPost("{id:guid}/inject-fault")]
-    [Authorize(Policy = AuthorizationPolicies.EquipmentOperate)]
+    [Authorize(Policy = AuthorizationPolicies.EquipmentSimulate)]
     public Task<TagMapCheckDto> InjectFault(Guid id, [FromBody] InjectSimulatorFaultRequest request, CancellationToken ct) =>
         equipment.InjectSimulatorFaultAsync(id, request.Mode, ct);
 

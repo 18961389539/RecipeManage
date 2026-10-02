@@ -1,3 +1,4 @@
+using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Common;
 
 namespace RecipesManage.Domain.Recipes;
@@ -71,6 +72,11 @@ public sealed class RecipeVersion : Entity
     {
         EnsureDraft();
         RecipeTopology.Validate(Steps, Edges);
+        // 时长必须在还有人签之前就判能不能写给 PLC：批准后快照就密封了，
+        // 到开批时才发现的代价是"这条已放行的配方根本跑不了"。
+        ProcessDuration.DemandWritableProcedure(Steps);
+        // 归档必须有来源，否则这条规格永远不会被评价；见 QualityArchive.DemandArchivableSources。
+        QualityArchive.DemandArchivableSources(Steps);
         if (Steps.Count == 0)
             throw new DomainException("EMPTY_PROCEDURE", "工步为空，不能提交审核。");
         if (chain.Steps.Count == 0)

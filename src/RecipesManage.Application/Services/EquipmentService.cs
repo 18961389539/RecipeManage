@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
@@ -16,14 +16,18 @@ public sealed class EquipmentService
     private readonly ICurrentUser _user;
     private readonly IPlcDriverFactory _drivers;
     private readonly ILogger<EquipmentService> _log;
+    private readonly ISimulatorControl? _simulator;
 
+    /// <param name="simulator">仿真项目没注册时为 null：此时只是不能注入故障，其余设备管理不受影响。</param>
     public EquipmentService(
-        IAppDbContext db, ICurrentUser user, IPlcDriverFactory drivers, ILogger<EquipmentService> log)
+        IAppDbContext db, ICurrentUser user, IPlcDriverFactory drivers, ILogger<EquipmentService> log,
+        ISimulatorControl? simulator = null)
     {
         _db = db;
         _user = user;
         _drivers = drivers;
         _log = log;
+        _simulator = simulator;
     }
 
     public async Task<IReadOnlyList<EquipmentDto>> ListAsync(CancellationToken ct)
@@ -35,9 +39,7 @@ public sealed class EquipmentService
 
     public async Task<EquipmentDto> UpsertAsync(Guid? id, UpsertEquipmentRequest request, CancellationToken ct)
     {
-        var role = _user.Role ?? throw new DomainException("AUTH", "未登录。");
-        if (role is not UserRole.Admin)
-            throw new DomainException("FORBIDDEN", "仅管理员可配置设备与 PLC 点表。");
+        _user.EnsureCan(Capabilities.EquipmentAdmin, "仅管理员可配置设备与 PLC 点表。");
 
         TagMapValidator.Parse(request.TagMapJson);
 
@@ -71,6 +73,7 @@ public sealed class EquipmentService
 
     public async Task<TagMapCheckDto> ValidateTagMapAsync(Guid id, CancellationToken ct)
     {
+        _user.EnsureCan(Capabilities.EquipmentAdmin, "仅管理员可配置设备与 PLC 点表。");
         var entity = await _db.Equipment.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct)
                      ?? throw new DomainException("NOT_FOUND", "设备不存在。");
         TagMapValidator.Parse(entity.TagMapJson);
@@ -82,9 +85,9 @@ public sealed class EquipmentService
 
     public async Task<TagMapCheckDto> InjectSimulatorFaultAsync(Guid id, string mode, CancellationToken ct)
     {
-        var role = _user.Role ?? throw new DomainException("AUTH", "未登录。");
-        if (role is not UserRole.Operator and not UserRole.Supervisor)
-            throw new DomainException("FORBIDDEN", "仅车间操作员或工艺主管可注入仿真故障。");
+        _user.EnsureCan(Capabilities.EquipmentSimulate, "仅车间操作员或工艺主管可注入仿真故障。");
+        if (_simulator is null)
+            throw new DomainException("NO_SIM_RUNTIME", "本次部署没有启用仿真模块，无法注入仿真故障。");
 
         var entity = await _db.Equipment.FirstOrDefaultAsync(e => e.Id == id, ct)
                      ?? throw new DomainException("NOT_FOUND", "设备不存在。");
@@ -101,7 +104,7 @@ public sealed class EquipmentService
         // 一旦库写不进去就会留下一次现场状态改变而履历里查不到（最坏的那种不对称）。
         _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "equipment.inject-fault", "EquipmentLine", entity.Id.ToString(), normalized));
         await _db.SaveChangesAsync(ct);
-        _drivers.InjectSimulatorFault(entity.Id, normalized);
+        _simulator.InjectFault(entity.Id, normalized);
         var message = normalized.Equals("None", StringComparison.OrdinalIgnoreCase)
             ? "已清除仿真故障，PLC_Ready 恢复。"
             : $"已注入 {normalized}：上位机必须停在当前握手阶段，禁止盲写下一步。";
@@ -110,6 +113,7 @@ public sealed class EquipmentService
 
     public async Task<ConnectionTestDto> TestConnectionAsync(Guid id, CancellationToken ct)
     {
+        _user.EnsureCan(Capabilities.EquipmentOperate);
         var entity = await _db.Equipment.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct)
                      ?? throw new DomainException("NOT_FOUND", "设备不存在。");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -158,7 +162,7 @@ public sealed class EquipmentService
         var items = live.Select(b =>
         {
             equipment.TryGetValue(b.EquipmentId, out var eq);
-            var snapshot = BatchService.Deserialize(b.ControlRecipeJson);
+            var snapshot = SnapshotJson.Deserialize(b.ControlRecipeJson);
             return new BatchListItemDto(
                 b.Id, b.BatchNo, snapshot?.RecipeName ?? "", snapshot?.VersionNumber ?? 0,
                 eq?.Code ?? "", b.ProductName, b.Status, b.HandshakePhase, b.CurrentStepIndex,
@@ -208,7 +212,7 @@ public sealed class EquipmentService
                         || b.Status == BatchStatus.Held
                         || b.Status == BatchStatus.Faulted)
             .ToListAsync(ct);
-        return EquipmentOccupancy.Index(live, BatchService.BoundEquipmentIds,
+        return EquipmentOccupancy.Index(live, SnapshotJson.BoundEquipmentIds,
             await _db.EquipmentLeases.AsNoTracking().ToListAsync(ct));
     }
 
@@ -283,9 +287,7 @@ public sealed class EquipmentService
 
     private void EnsureLibraryRole()
     {
-        var role = _user.Role ?? throw new DomainException("AUTH", "未登录。");
-        if (role is not UserRole.Admin and not UserRole.ProcessEngineer)
-            throw new DomainException("FORBIDDEN", "仅管理员或工艺工程师可维护设备类相库。");
+        _user.EnsureCan(Capabilities.PhaseLibrary, "仅管理员或工艺工程师可维护设备类相库。");
     }
 
     private static List<PhaseParameterSpec> Specs(IReadOnlyList<PhaseParameterDto> rows) =>

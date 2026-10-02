@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    仿真 PLC 与环回从站。只在开发 / 演示 / 联调时需要，所以单独成项目：
+    OPC UA Server 这类只有仿真才用的包不再进入生产程序集的依赖图，
+    生产代码（Infrastructure / Execution）也不可能再无意间依赖仿真类型。
+    依赖方向：Simulation -> Application（只取契约），Infrastructure 不认识它。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\RecipesManage.Application\RecipesManage.Application.csproj" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="1.5.377.21" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
+  </ItemGroup>
+</Project>

@@ -48,7 +48,7 @@ public sealed class MaterialGenealogyIntegrationTests
         var child = await opLots.SplitAsync(charge.Id, new SplitLotRequest("INGOT-IT-01-S1", 30), CancellationToken.None);
         Assert.Equal(MaterialLotSource.Split, child.Source);
 
-        var batches = new BatchService(db, opUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), opLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+        var batches = ServiceHarness.NewBatchService(db, opUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), opLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest(
             "BLOT1", recipe.Id, equipment.Id, 1, "PROD-IT-01", null, [child.Id]), CancellationToken.None);
         Assert.Equal("Valid", created.SnapshotIntegrity);
@@ -59,7 +59,7 @@ public sealed class MaterialGenealogyIntegrationTests
         await db.SaveChangesAsync();
 
         var sample = await opLots.CreateSampleAsync(created.Id, new CreateLabSampleRequest("QC-IT-1", LabSampleType.Final, child.Id), CancellationToken.None);
-        var qaBatches = new BatchService(db, qaUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), qaLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+        var qaBatches = ServiceHarness.NewBatchService(db, qaUser, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(), qaLots, new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var pending = await Assert.ThrowsAsync<DomainException>(() =>
             qaBatches.ReleaseAsync(created.Id, "放行", "Quality@123", CancellationToken.None));
         Assert.Equal("LAB_PENDING", pending.Code);
@@ -72,12 +72,36 @@ public sealed class MaterialGenealogyIntegrationTests
         Assert.Contains(genealogy.Descendants, d => d.LotNumber == "INGOT-IT-01-S1");
         Assert.Contains(genealogy.Uses, u => u.BatchNo == "BLOT1" && u.Role == MaterialUseRole.Charge);
 
-        var record = await qaBatches.RecordAsync(created.Id, CancellationToken.None);
+        var qaQuery = ServiceHarness.NewBatchQuery(db, qaUser, qaLots);
+        var record = await qaQuery.RecordAsync(created.Id, CancellationToken.None);
         Assert.Contains(record.Materials!, m => m.Role == MaterialUseRole.Produced && m.LotNumber == "PROD-IT-01");
         Assert.Contains(record.LabSamples!, s => s.SampleCode == "QC-IT-1" && s.Disposition == LabSampleDisposition.Pass);
         var produced = await db.MaterialLots.SingleAsync(l => l.LotNumber == "PROD-IT-01");
         Assert.Equal(MaterialLotStatus.Released, produced.Status);
         var charged = await db.MaterialLots.SingleAsync(l => l.LotNumber == "INGOT-IT-01-S1");
         Assert.Equal(MaterialLotStatus.Consumed, charged.Status);
+
+        // —— 电子签名是结构化记录：含义原文在签署时冻结，备注与含义分开存 ——
+        var release = Assert.Single(record.Esigns!, e => e.Action == "batch.release.esign");
+        Assert.Equal(ElectronicSignature.Batch("batch.release.esign"), release.Meaning);
+        Assert.Equal("对照样品放行", release.Extra);
+        Assert.Equal("qa", release.UserName);
+
+        var labSignature = await db.SignatureRecords.SingleAsync(s => s.Action == "lab.sample.dispose.esign");
+        Assert.Equal("LabSample", labSignature.EntityType);
+        Assert.Equal(sample.Id.ToString(), labSignature.EntityId);
+        Assert.Equal(ElectronicSignature.Batch("lab.sample.dispose.esign"), labSignature.Meaning);
+
+        // 审计履历不因此缺一行。
+        Assert.Contains(db.AuditLogs, a => a.Action == "batch.release.esign" && a.EntityId == created.Id.ToString());
+
+        // 批记录读的是库里冻结的文本，而不是拿当前代码里的含义表重算：
+        // 塞一条"当时的措辞与现行代码不同"的签名，展示必须是当时那句。
+        const string AtTheTime = "当时的措辞：与现行代码里的这一句不同。";
+        db.SignatureRecords.Add(new SignatureRecord(
+            qa.Id, "qa", "batch.confirm.esign", "ProductionBatch", created.Id.ToString(), AtTheTime, null));
+        await db.SaveChangesAsync();
+        var again = await qaQuery.RecordAsync(created.Id, CancellationToken.None);
+        Assert.Contains(again.Esigns!, e => e.Action == "batch.confirm.esign" && e.Meaning == AtTheTime);
     }
 }

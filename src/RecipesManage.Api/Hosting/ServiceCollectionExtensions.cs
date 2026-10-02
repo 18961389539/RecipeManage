@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -13,6 +13,7 @@ using RecipesManage.Execution;
 using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using RecipesManage.Infrastructure.Records;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Api;
 
@@ -35,17 +36,16 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RecipeService>();
         services.AddScoped<ApprovalChainService>();
         services.AddScoped<MaterialLotService>();
+        services.AddScoped<EsignGuard>();
+        services.AddScoped<BatchQueryService>();
         services.AddScoped<BatchService>();
         services.AddScoped<EquipmentService>();
         services.AddScoped<AuditService>();
         services.AddScoped<EquipmentLeaseService>();
-        services.AddSingleton<SimulatedPlcRack>();
-        services.AddSingleton<ModbusTcpHandshakeSlave>();
-        services.AddHostedService<ModbusLoopbackHostedService>();
-        services.AddSingleton<OpcUaHandshakeSlave>();
-        services.AddHostedService<OpcUaLoopbackHostedService>();
-        services.AddSingleton<SiemensS7HandshakeSlave>();
-        services.AddHostedService<SiemensS7LoopbackHostedService>();
+        // 仿真在单独的 RecipesManage.Simulation 项目里。是否真的绑端口由库里的设备行决定（PlcLoopbackGate），
+        // 所以这里无条件注册不会在生产机上占端口；Seed:Demo=false 时那几条设备行根本不会写入。
+        services.AddPlcSimulation();
+        services.AddPlcLoopbackSimulators();
         services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
         services.AddSingleton<IBatchRecordPdf, BatchRecordPdf>();
         services.AddSingleton<BatchSchedulerHostedService>();
@@ -139,6 +139,7 @@ public static class ServiceCollectionExtensions
             Enabled = config.GetValue("Backup:Enabled", true),
             AtUtc = at,
             Keep = config.GetValue("Backup:Keep", 7),
+            KeepPreMigration = config.GetValue("Backup:KeepPreMigration", 3),
             Directory = string.IsNullOrWhiteSpace(directory) ? "App_Data/backups" : directory.Trim()
         };
     }

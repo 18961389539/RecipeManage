@@ -1,8 +1,8 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using RecipesManage.Domain.Equipment;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 /// <summary>
 /// 本机 S7 ISO-on-TCP 从站：把 IoTClient SiemensClient 的 DB 读写映射到

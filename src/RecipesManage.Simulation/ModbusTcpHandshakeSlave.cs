@@ -1,8 +1,8 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using RecipesManage.Domain.Equipment;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 /// <summary>
 /// 本机 Modbus TCP 从站：把 IOTClient 主站读写映射到 <see cref="SimulatedPlcStation"/> 四步握手状态机。

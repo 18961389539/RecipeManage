@@ -1,13 +1,12 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Identity;
-using RecipesManage.Infrastructure.Persistence;
 
-namespace RecipesManage.Execution;
+namespace RecipesManage.Infrastructure.Persistence;
 
 /// <summary>
 /// 每天定时落一份 SQLite 备份，并按保留份数裁剪旧份。
@@ -151,6 +150,28 @@ public sealed class DailyBackupHostedService : BackgroundService
             "每日数据库备份已启用：每天 {At} UTC 落到 {Dir}，保留 {Keep} 份；维护 {Maintenance}",
             _backup.Settings.AtUtc.ToString("HH:mm"), _backup.DirectoryPath, _backup.Settings.Keep,
             _maintenance.Settings.Enabled ? "随后执行" : "已禁用");
+
+        // 现场机器不是 7×24 的：只等"下一次"的话，天天在计划时刻关机的机器一份快照都不会产生。
+        // 所以开机先核对最近一个已过去的计划时刻，缺就当场补一班。
+        if (_backup.NeedsCatchUp(DateTimeOffset.UtcNow))
+        {
+            _log.LogInformation(
+                "补跑备份：{Due} UTC 那一班没有快照（机器当时多半没开机）",
+                _backup.LastScheduledAt(DateTimeOffset.UtcNow).ToString("yyyy-MM-dd HH:mm"));
+            try
+            {
+                await RunOnceAsync(stoppingToken);
+                await MaintainAsync(stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;       // 还没补上进程就在停，下次开机再补
+            }
+            catch (Exception e)
+            {
+                _log.LogError(e, "补跑备份失败，继续按排程等待");
+            }
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {

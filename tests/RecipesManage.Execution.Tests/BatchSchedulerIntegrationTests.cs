@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -14,6 +14,7 @@ using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using Xunit;
 using static RecipesManage.Execution.Tests.SchedulerHarness;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Execution.Tests;
 
@@ -59,7 +60,7 @@ public sealed class BatchSchedulerIntegrationTests
                 await db.SaveChangesAsync();
 
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BIT1", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -144,7 +145,7 @@ public sealed class BatchSchedulerIntegrationTests
                 await db.SaveChangesAsync();
 
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITSKIP", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -322,7 +323,7 @@ public sealed class BatchSchedulerIntegrationTests
                 db.Recipes.Add(recipe);
                 await db.SaveChangesAsync();
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITHR", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -486,7 +487,8 @@ public sealed class BatchSchedulerIntegrationTests
                      new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)],
                     unitProcedure: "UP-B");
                 var s30 = new RecipeStep(draft.Id, "S30", "qc join", StepType.QualityCheck, 2, 50, 80, 30, null,
-                    [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)],
+                    // 硬度是实验室量：标成"归档作质量判定"会因为没有实测来源而永远归档不到。
+                    [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)],
                     unitProcedure: "UP-QC");
                 draft.ReplaceProcedure(
                     [s10, s20, s30],
@@ -503,7 +505,7 @@ public sealed class BatchSchedulerIntegrationTests
                     new Dictionary<string, Guid> { ["UP-A"] = a.Id, ["UP-B"] = b.Id, ["UP-QC"] = a.Id },
                     a.Id);
                 Assert.NotNull(snapshot.UnitEquipment);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITPAR", a.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -609,7 +611,7 @@ public sealed class BatchSchedulerIntegrationTests
                 await db.SaveChangesAsync();
 
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITMB", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -686,7 +688,7 @@ public sealed class BatchSchedulerIntegrationTests
                 await db.SaveChangesAsync();
 
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITUA", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -754,7 +756,7 @@ public sealed class BatchSchedulerIntegrationTests
                 await db.SaveChangesAsync();
 
                 var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITS7", equipment.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -821,7 +823,8 @@ public sealed class BatchSchedulerIntegrationTests
                      new RecipeParameter(1, "时长", "s", 1, 0.5, 5, true, true)],
                     unitProcedure: "UP-B");
                 var s30 = new RecipeStep(draft.Id, "S30", "qc join", StepType.QualityCheck, 2, 50, 80, 30, null,
-                    [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)],
+                    // 硬度是实验室量：标成"归档作质量判定"会因为没有实测来源而永远归档不到。
+                    [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)],
                     unitProcedure: "UP-QC");
                 draft.ReplaceProcedure(
                     [s10, s20, s30],
@@ -837,7 +840,7 @@ public sealed class BatchSchedulerIntegrationTests
                     recipe, draft, DateTimeOffset.UtcNow, 1, null,
                     new Dictionary<string, Guid> { ["UP-A"] = a.Id, ["UP-B"] = b.Id, ["UP-QC"] = a.Id },
                     a.Id);
-                SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+                SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
                 var batch = ProductionBatch.Create("BITPSK", a.Id, snapshot, json, Guid.NewGuid());
                 foreach (var step in snapshot.Steps)
                     batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -1060,7 +1063,7 @@ public sealed class BatchSchedulerIntegrationTests
                     new RecipeStep(draftId, "S20", "wait", StepType.Wait, 1, 100, 0, 30, null,
                         [new RecipeParameter(0, "等待时长", "s", 1, 0.5, 5, false, false)]),
                     new RecipeStep(draftId, "S30", "qc", StepType.QualityCheck, 2, 200, 0, 30, null,
-                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)])
+                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)])
                 ]);
             }
 
@@ -1080,7 +1083,12 @@ public sealed class BatchSchedulerIntegrationTests
             var qcJson = live.StepExecutions.Single(s => s.StepCode == "S30").QualityJson;
             Assert.DoesNotContain("硬度", qcJson);
             Assert.Contains("PLC:", qcJson, StringComparison.Ordinal);
-            Assert.True(QualityDisposition.HasOutOfSpec(BatchService.Deserialize(live.ControlRecipeJson)!, live.StepExecutions));
+            // 硬度这类实验室量不再是"归档参数"（提交审核就会拒绝没有实测来源的归档规格），
+            // 所以这里不再判超差；"未归档 ⇒ 不合格"这条安全边界由域层钉住：
+            // QualityDispositionTests.HasOutOfSpec_WhenQualityParamNeverMeasured。
+            Assert.DoesNotContain(QualityDisposition.UnarchivedSpecs(
+                SnapshotJson.Deserialize(live.ControlRecipeJson)!, live.StepExecutions),
+                s => s.Contains("硬度", StringComparison.Ordinal));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1126,11 +1134,11 @@ public sealed class BatchSchedulerIntegrationTests
                          new RecipeParameter(1, "保压时长", "s", 1, 0.5, 5, true, false)],
                         null, "UP-加压", Isa88.DefaultOperation(StepType.Pressure)),
                     new RecipeStep(draftId, "S30", "xfer", StepType.Transfer, 2, 200, 0, 30, null,
-                        [new RecipeParameter(0, "转移量", "kg", 50, 1, 500, true, true, true),
+                        [new RecipeParameter(0, "转移量", "kg", 50, 1, 500, true, false, true),
                          new RecipeParameter(1, "转移时长", "s", 1, 0.5, 5, true, false)],
                         null, "UP-转移", Isa88.DefaultOperation(StepType.Transfer)),
                     new RecipeStep(draftId, "S40", "qc", StepType.QualityCheck, 3, 300, 0, 30, null,
-                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)],
+                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)],
                         null, "UP-QC", Isa88.DefaultOperation(StepType.QualityCheck))
                 ]);
             }
@@ -1151,7 +1159,12 @@ public sealed class BatchSchedulerIntegrationTests
             var qcJson = live.StepExecutions.Single(s => s.StepCode == "S40").QualityJson;
             Assert.DoesNotContain("硬度", qcJson);
             Assert.Contains("PLC:", qcJson, StringComparison.Ordinal);
-            Assert.True(QualityDisposition.HasOutOfSpec(BatchService.Deserialize(live.ControlRecipeJson)!, live.StepExecutions));
+            // 硬度这类实验室量不再是"归档参数"（提交审核就会拒绝没有实测来源的归档规格），
+            // 所以这里不再判超差；"未归档 ⇒ 不合格"这条安全边界由域层钉住：
+            // QualityDispositionTests.HasOutOfSpec_WhenQualityParamNeverMeasured。
+            Assert.DoesNotContain(QualityDisposition.UnarchivedSpecs(
+                SnapshotJson.Deserialize(live.ControlRecipeJson)!, live.StepExecutions),
+                s => s.Contains("硬度", StringComparison.Ordinal));
 
             using (var logScope = host.Services.CreateScope())
             {
@@ -1200,7 +1213,7 @@ public sealed class BatchSchedulerIntegrationTests
                          new RecipeParameter(1, "保压时长", "s", 1, 0.5, 5, true, false)],
                         null, "UP-冲洗", "OP-Cyl 气缸保压", 22),
                     new RecipeStep(draftId, "S30", "qc", StepType.QualityCheck, 2, 200, 0, 30, null,
-                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)],
+                        [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)],
                         null, "UP-QC", Isa88.DefaultOperation(StepType.QualityCheck))
                 ]);
             }

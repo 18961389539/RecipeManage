@@ -8,7 +8,7 @@ namespace RecipesManage.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/batches")]
-public sealed class BatchesController(BatchService batches, MaterialLotService lots) : ControllerBase
+public sealed class BatchesController(BatchService batches, BatchQueryService query, MaterialLotService lots) : ControllerBase
 {
     [HttpGet]
     public Task<BatchListPageDto> List(
@@ -20,32 +20,32 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
         [FromQuery] string? status = null,
         [FromQuery] bool onlyLabPending = false,
         CancellationToken ct = default) =>
-        batches.ListAsync(skip, take, sort, dir, q, status, onlyLabPending, ct);
+        query.ListAsync(skip, take, sort, dir, q, status, onlyLabPending, ct);
 
     [HttpGet("{id:guid}")]
-    public Task<BatchDetailDto> Get(Guid id, CancellationToken ct) => batches.GetAsync(id, ct);
+    public Task<BatchDetailDto> Get(Guid id, CancellationToken ct) => query.GetAsync(id, ct);
 
     [HttpGet("{id:guid}/samples")]
     public Task<SampleSeriesDto> Samples(Guid id, [FromQuery] int maxPoints = 1500, CancellationToken ct = default) =>
-        batches.SamplesAsync(id, maxPoints, ct);
+        query.SamplesAsync(id, maxPoints, ct);
 
     [HttpGet("{id:guid}/handshake-log")]
     public Task<HandshakeLogPageDto> HandshakeLog(
         Guid id, [FromQuery] int take = 2000, CancellationToken ct = default) =>
-        batches.HandshakeLogAsync(id, take, ct);
+        query.HandshakeLogAsync(id, take, ct);
 
     [HttpGet("{id:guid}/snapshot-drift")]
     public Task<IReadOnlyList<SnapshotDriftDto>> SnapshotDrift(Guid id, CancellationToken ct) =>
-        batches.SnapshotDriftAsync(id, ct);
+        query.SnapshotDriftAsync(id, ct);
 
     [HttpGet("{id:guid}/record")]
-    public Task<BatchRecordDto> Record(Guid id, CancellationToken ct) => batches.RecordAsync(id, ct);
+    public Task<BatchRecordDto> Record(Guid id, CancellationToken ct) => query.RecordAsync(id, ct);
 
     [HttpGet("{id:guid}/record.pdf")]
     public async Task<IActionResult> RecordPdf(Guid id, CancellationToken ct)
     {
-        var pdf = await batches.ExportPdfAsync(id, ct);
-        var detail = await batches.GetAsync(id, ct);
+        var pdf = await query.ExportPdfAsync(id, ct);
+        var detail = await query.GetAsync(id, ct);
         return File(pdf, "application/pdf", $"{detail.BatchNo}-eBR.pdf");
     }
 
@@ -59,7 +59,7 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
         [FromQuery] string? q = null,
         [FromQuery] bool onlyOpen = false,
         CancellationToken ct = default) =>
-        batches.AlarmsAsync(id, skip, take, sort, dir, q, onlyOpen, ct);
+        query.AlarmsAsync(id, skip, take, sort, dir, q, onlyOpen, ct);
 
     [HttpPost]
     [Authorize(Policy = AuthorizationPolicies.BatchOperate)]
@@ -124,7 +124,7 @@ public sealed class BatchesController(BatchService batches, MaterialLotService l
 [Authorize]
 [ApiController]
 [Route("api/alarms")]
-public sealed class AlarmsController(BatchService batches) : ControllerBase
+public sealed class AlarmsController(BatchService batches, BatchQueryService query) : ControllerBase
 {
     [HttpGet]
     public Task<ProcessAlarmPageDto> List(
@@ -135,7 +135,7 @@ public sealed class AlarmsController(BatchService batches) : ControllerBase
         [FromQuery] string? q = null,
         [FromQuery] bool onlyOpen = false,
         CancellationToken ct = default) =>
-        batches.AlarmsAsync(null, skip, take, sort, dir, q, onlyOpen, ct);
+        query.AlarmsAsync(null, skip, take, sort, dir, q, onlyOpen, ct);
 
     [HttpPost("{id:guid}/ack")]
     public Task<ProcessAlarmDto> Ack(Guid id, CancellationToken ct) =>

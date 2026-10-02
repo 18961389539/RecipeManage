@@ -223,7 +223,8 @@
 - 一阶段一分支（或一批清晰提交）；说明「为什么」。
 - 合并前：相关 `dotnet test`；若动前端权限则跑对应 e2e 或手工矩阵。
 - 不改握手核心路径，除非测试先红再改。
-- 本仓库当前无 git 远程：合并策略以本地分支 / 备份为准；若日后加远程，再按 PR 流程执行。
+- 本仓库的 `origin` 是同盘裸镜像 `D:\SourceCode\RecipesManage-remote.git`（不是网络远端），合并策略以本地分支 /
+  该镜像为准；若日后加真远端，再按 PR 流程执行。
 
 ---
 
@@ -248,11 +249,34 @@
 | 阶段 | 状态 | 备注 |
 | --- | --- | --- |
 | 0 基线与 ADR | 待开始 | |
-| 1 仿真 PLC 可关 | 待开始 | 建议下一个动手项 |
-| 2 授权单轨化 | 待开始 | |
-| 3 拆分 Application 服务 | 待开始 | 可多 PR |
+| 1 仿真 PLC 可关 | **已完成（2026-09-25，做法与计划不同）** | 没有加 `Plc:EnableSimulators` 配置开关，而是按**库里的设备行**判：`MB-01`/`S7-01`/`UA-01` 存在、启用、协议+端口对得上且 host 是回环才绑端口（`Simulation/PlcLoopbackGate.cs`；2026-10-02 起仿真独立成 `RecipesManage.Simulation` 项目）。理由：设备行是这台机器"要连什么"的唯一真源，再加一个配置项就会有两份真源（配置说开、库说没有 → 端口白占）。`Seed:Demo=false` 时那三条行本来就不写，所以生产机零占用；判据只在启动时跑一次。 |
+| 2 授权单轨化 | **部分完成（2026-10-02，做法与计划不同）** | 没有按计划"服务层去掉纯角色检查"：电子签名路径需要纵深防御，服务层被别处直接调用时也必须自保。改成**名单单轨**——14 项能力的角色名单只在 `Domain/Identity/Capabilities.cs` 写一次；`AuthorizationPolicies` 由它生成，服务层统一 `EnsureCan(Capabilities.X)`（`CapabilityExtensions`），约 30 处手写角色列表清零。这不是洁癖：注入仿真故障的策略放行 Admin 而服务层拒绝 Admin，已经漂移过；现拆成独立能力 `equipment.simulate`。`CapabilitiesTests` 把"角色 × 能力"矩阵与职责分离规则（仅质量可放行、仅主管可跳步、Admin 不碰产线）钉成测试。另补了 `ValidateTagMap`/`TestConnection` 缺失的服务层二次校验。**未做**：`recipes/{id}/decide` 的动态节点授权（仍在服务层，按审批节点的 `RequiredRole` 判）、`docs/auth-matrix.md`。 |
+| 2b 电子签名结构化 | **已完成（2026-10-02）** | 批次/化验签名从"audit_logs 里一行 含义+备注 的拼接文本"变成表 `signature_records`：**含义原文在签署时冻结**，备注单独成列；批记录读库里的文本，不再用当前代码的含义表反查（以前改一次措辞，历史批记录展示的就不是当时签的那句，不满足 21 CFR 11.50）。迁移 `20261002130000_SignatureRecords` 回填历史 `*.esign` 审计行：已知措辞拆成含义+备注，更早的措辞整段原样留作含义。写入统一经 `EsignGuard.Record`，同时保留审计行。**未做**：签名与被签对象内容哈希的绑定；配方侧签名（审核节点含义已冻在 `approval_records`，提交/升版等仍只在审计日志）。 |
+| 3 拆分 Application 服务 | **部分完成（2026-10-02）** | `BatchService`（原 ~930 行）按读写拆开：读路径（列表 / 详情 / 趋势 / 握手履历 / 快照漂移 / 批记录 / PDF / 报警列表）→ `BatchQueryService`，只依赖数据库、当前用户、物料服务、PDF 渲染器；`BatchService` 只剩写路径（创建 / 启动 / 中止 / 保持 / 恢复 / 跳步 / 确认 / 放行 / 拒收 / 报警确认），返回详情时委托查询服务，反向无依赖。`EsignGuard` 改为容器注入（此前三个服务各自 `new`，现在 `BatchService` 已改，`RecipeService` / `MaterialLotService` / `ApprovalChainService` 仍是旧写法）。`ArchitectureBoundaryTests` 钉住读路径不得依赖调度器 / 租约 / 密码校验。**未做**：`RecipeService` 拆分；跳步目标解析（`ResolveSkipTarget`）与状态迁移下沉到领域；放行 / 拒收没有单独成类（两个入口 ~45 行，拆出来只会多一份共享依赖）。 |
 | 4 调度意图落库 | 待开始 | |
-| 5 巩固项 | 待开始 | 可穿插 |
+| 5 巩固项 | 部分完成 | JWT/密钥一项已做（非 Dev 缺/弱占位密钥直接拒绝启动，实测）；其余待开始 |
+
+---
+
+## 面向更多客户（2026-09-30 补）
+
+客户数从 1 变成 N 时最先断的不是功能而是**运维可见性**，所以这一批做的是"现场能自证 + 出事能回退"：
+
+| 做 | 落点 |
+| --- | --- |
+| 版本与库结构水位可被念出来 | `Directory.Build.props` 定 `Version`；出包脚本写 `InformationalVersion=版本+短提交号`；`/health` 回 `version` / `migration` / `pendingMigrations`；运行总览徽标悬停显示，e2e 钉两端 |
+| 日志落盘、可按天带回 | `Infrastructure/Diagnostics/RollingFileLoggerProvider.cs`（自写，不引框架）：`App_Data/logs/brmes-<UTC日期>.log`，默认不删旧日志，写不进磁盘只停这道 sink、绝不拖停宿主 |
+| 升级前先有一份能开的库 | `SchemaBootstrap` 在有 pending 迁移且库里已有表时，先落**已校验**快照到 `backups/pre-migration/`；快照写不成就不迁移。`Down()` 无调用路径，回滚 = 恢复该快照 |
+| 网络抖动不再吞批次 | `Application/Services/PlcConnectRetry.cs`：**只重试连接**（幂等），默认 4 次 / 累计 ≤2.3s；写与触发一律不重试 |
+| 出包与安装分离 | `deploy/publish-package.ps1`（开发机出 zip + manifest + sha256）；`install-watchdog.ps1 -PackagePath`（现场只解包，`-Clean` 才删旧文件）——修掉了"现场不需要 SDK"却在现场 `dotnet publish` 的自相矛盾 |
+| 两三人小厂的默认取向 | 预置链 `single-review`（提交 + 一道质量签核，`IsDefault=false`）；`appsettings.Production.json` 模板给 `Jwt:ExpireHours=8`。职责分离规则一行未松 |
+| 归档必须有实测来源 | `QualityArchive.ResolveSourceTag` 成为唯一口径（声明优先，其次 Duration/温度/压力推断），`DemandArchivableSources` 在**提交审核**就拒绝没有来源的归档规格，开批时还要求该键存在于设备点表。理由不是"不优雅"：以前它一路静默到放行——`HasOutOfSpec` 把"从未取到值"算成超差，而偏差放行**只要求填一句话**，于是库里三条已放行批次带着"归档质检合格"的意见过去了，履历上看不出那条规格从没被评价过。实验室量（硬度）改建质检样品 |
+| 参数语义加 `MeasuredValue` | 声明"这列的是被测质量特性"就必须同时声明实测点；前端 `measuredTagRequired()` 单一判断，设计器与相库共用。**没有加 `Quantity`**：配比还没有消费方，别造空转枚举 |
+| 时长不再被静默改写 | `ProcessDuration` 认 ms/s/min/h/d（识别表与换算表同源），写 PLC 时长槽的窗口 `0.2s–7200s` 提成常量并**超窗口报错**（`DURATION_RANGE`）。过去 `Math.Clamp` 把 24 小时固化写成 2 小时发给 PLC，而上位机仍按原值等。Submit 逐参数校验（槽 15 上的显式时长不经过那条合成路径） |
+
+**没做，且需要单独一轮**：工步进行中读失败的容忍（只重连不补写，仍会把一次 8s 超时算成故障）——它直接压在
+`禁止盲写` 的边界上，必须配独立的引擎测试再做；SQLite 写侧合批（多设备订单真来了再说）；多站点/租户（建议用
+"每站点一套独立部署"绕开，见 [[brmes-single-machine-gaps]] 的判据）。
 
 ---
 
@@ -261,3 +285,4 @@
 | 日期 | 说明 |
 | --- | --- |
 | 2026-09-22 | 初稿：基于当前 slnx 分层、DI、调度器与授权现状整理 |
+| 2026-09-30 | 阶段 1 完成（做法改为按设备行判定，见上表）；补「面向更多客户」一节记录 A 档六项与其未做部分；`origin` 已是同盘镜像而非"无远程" |

@@ -436,7 +436,7 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("BatchId");
 
-                    b.HasIndex("BatchId", "Kind")
+                    b.HasIndex("BatchId", "Kind", "StepId")
                         .IsUnique();
 
                     b.ToTable("scheduler_intents", (string)null);
@@ -703,6 +703,54 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.HasIndex("At");
 
                     b.ToTable("audit_logs", (string)null);
+                });
+
+            modelBuilder.Entity("RecipesManage.Domain.Identity.SignatureRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Detail")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Meaning")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SignedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SignerName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EntityType", "EntityId", "SignedAt");
+
+                    b.ToTable("signature_records", (string)null);
                 });
 
             modelBuilder.Entity("RecipesManage.Domain.Materials.BatchMaterialUse", b =>

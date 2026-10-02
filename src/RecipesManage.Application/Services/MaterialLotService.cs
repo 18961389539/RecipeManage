@@ -98,7 +98,7 @@ public sealed class MaterialLotService
 
     public async Task<MaterialLotDto> CreateReceivedAsync(CreateMaterialLotRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.Operator, UserRole.Supervisor, UserRole.Quality, UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.LotReceive);
         if (await _db.MaterialLots.AnyAsync(l => l.LotNumber == request.LotNumber.Trim(), ct))
             throw new DomainException("DUP_LOT", "物料批次号已存在。");
         var lot = MaterialLot.Receive(request.LotNumber, request.MaterialCode, request.MaterialName, request.Quantity, request.Uom);
@@ -110,7 +110,7 @@ public sealed class MaterialLotService
 
     public async Task<MaterialLotDto> SplitAsync(Guid id, SplitLotRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.Operator, UserRole.Supervisor, UserRole.Quality);
+        EnsureCan(Capabilities.LotHandle);
         if (await _db.MaterialLots.AnyAsync(l => l.LotNumber == request.ChildLotNumber.Trim(), ct))
             throw new DomainException("DUP_LOT", "拆分后的批次号已存在。");
         var parent = await _db.MaterialLots.FirstOrDefaultAsync(l => l.Id == id, ct)
@@ -208,7 +208,7 @@ public sealed class MaterialLotService
 
     public async Task<LabSampleDto> CreateSampleAsync(Guid batchId, CreateLabSampleRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.Admin, UserRole.Operator, UserRole.Supervisor, UserRole.Quality);
+        EnsureCan(Capabilities.LotHandle);
         _ = await _db.Batches.FirstOrDefaultAsync(b => b.Id == batchId, ct)
             ?? throw new DomainException("NOT_FOUND", "批次不存在。");
         if (await _db.LabSamples.AnyAsync(s => s.SampleCode == request.SampleCode.Trim(), ct))
@@ -227,15 +227,17 @@ public sealed class MaterialLotService
 
     public async Task<LabSampleDto> DisposeSampleAsync(Guid sampleId, LabSampleDispositionRequest request, CancellationToken ct, Guid? expectedBatchId = null)
     {
-        EnsureExactRole(UserRole.Quality);
+        EnsureCan(Capabilities.QualityDisposition);
         await RequireEsignAsync(request.Password, ct);
         var sample = await _db.LabSamples.FirstOrDefaultAsync(s => s.Id == sampleId, ct)
                      ?? throw new DomainException("NOT_FOUND", "样品不存在。");
         if (expectedBatchId is Guid batchId && sample.BatchId != batchId)
             throw new DomainException("NOT_FOUND", "样品不属于该生产批次。");
         sample.RecordDisposition(request.Disposition, _user.DisplayName ?? "quality", request.Comment, DateTimeOffset.UtcNow);
-        _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "lab.sample.dispose.esign", "LabSample", sample.Id.ToString(),
-            ElectronicSignature.AuditDetail("lab.sample.dispose.esign", $"batch={sample.BatchId} {sample.SampleCode}:{sample.Disposition}")));
+        _esign.Record(
+            "lab.sample.dispose.esign", "LabSample", sample.Id.ToString(),
+            ElectronicSignature.Batch("lab.sample.dispose.esign"),
+            $"batch={sample.BatchId} {sample.SampleCode}:{sample.Disposition}");
         await _db.SaveChangesAsync(ct);
         return MapSample(sample, null);
     }
@@ -279,6 +281,5 @@ public sealed class MaterialLotService
     private async Task RequireEsignAsync(string password, CancellationToken ct) =>
         await _esign.RequireAsync(password, ct);
 
-    private void EnsureRole(params UserRole[] allowed) => _esign.EnsureRole(allowed);
-    private void EnsureExactRole(params UserRole[] allowed) => _esign.EnsureExactRole(allowed);
+    private void EnsureCan(Capability capability) => _esign.EnsureCan(capability);
 }

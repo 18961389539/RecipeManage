@@ -56,7 +56,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> CreateAsync(CreateRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         if (await _db.Recipes.AnyAsync(r => r.Code == request.Code.Trim().ToUpperInvariant(), ct))
             throw new DomainException("DUP_CODE", "配方编码已存在。");
 
@@ -71,7 +71,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> UpdateHeaderAsync(Guid id, UpdateRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         var recipe = await LoadAsync(id, ct);
         recipe.UpdateHeader(request.Name, request.ProductCode, request.ProductName, request.Description);
         await AuditAsync("recipe.header", recipe.Id.ToString(), $"{request.Name} {request.ProductCode}", ct);
@@ -81,7 +81,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> SaveProcedureAsync(Guid id, SaveProcedureRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         await RequireEsignAsync(request.Password, ct);
         if (string.IsNullOrWhiteSpace(request.ChangeReason))
             throw new DomainException("CHANGE_REASON", "保存工艺必须填写变更原因。");
@@ -129,7 +129,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> SubmitAsync(Guid id, SubmitRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
         var chain = await ResolveChainAsync(recipe.ApprovalChainCode, ct);
@@ -204,7 +204,7 @@ public sealed class RecipeService
     /// </summary>
     public async Task<RecipeDetailDto> SetApprovalChainAsync(Guid id, UseApprovalChainRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
 
@@ -225,7 +225,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> ReopenAsync(Guid id, SubmitRecipeRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
         var rejected = recipe.Versions.SingleOrDefault(v => v.Status == RecipeStatus.Rejected)
@@ -239,7 +239,7 @@ public sealed class RecipeService
 
     public async Task<RecipeDetailDto> NewVersionAsync(Guid id, NewVersionRequest request, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         await RequireEsignAsync(request.Password, ct);
         var recipe = await LoadAsync(id, ct);
         var next = recipe.CreateNextDraft(_user.UserId ?? Guid.Empty, request.ChangeNote);
@@ -251,7 +251,7 @@ public sealed class RecipeService
 
     public async Task<RecipePackageDto> ExportAsync(CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer, UserRole.Quality, UserRole.Supervisor);
+        EnsureCan(Capabilities.RecipeExport);
         var recipes = await _db.Recipes
             .Include(r => r.Versions).ThenInclude(v => v.Steps).ThenInclude(s => s.Parameters)
             .Include(r => r.Versions).ThenInclude(v => v.Edges)
@@ -267,7 +267,7 @@ public sealed class RecipeService
 
     public async Task<RecipeImportResultDto> ImportAsync(RecipePackageDto package, CancellationToken ct)
     {
-        EnsureRole(UserRole.ProcessEngineer);
+        EnsureCan(Capabilities.RecipeAuthor);
         var created = 0;
         var skipped = 0;
         var messages = new List<string>();
@@ -347,7 +347,7 @@ public sealed class RecipeService
 
     private Task RequireEsignAsync(string? password, CancellationToken ct) => _esign.RequireAsync(password, ct);
 
-    private void EnsureRole(params UserRole[] allowed) => _esign.EnsureRole(allowed);
+    private void EnsureCan(Capability capability) => _esign.EnsureCan(capability);
 
     private async Task AuditAsync(string action, string entityId, string? detail, CancellationToken ct)
     {

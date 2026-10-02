@@ -1,8 +1,8 @@
-using Opc.Ua;
+﻿using Opc.Ua;
 using Opc.Ua.Server;
 using RecipesManage.Domain.Equipment;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 internal sealed class HandshakeNodeManager : CustomNodeManager2
 {

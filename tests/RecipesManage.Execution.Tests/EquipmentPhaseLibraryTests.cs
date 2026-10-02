@@ -45,7 +45,7 @@ public sealed class EquipmentPhaseLibraryTests
         await db.SaveChangesAsync();
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
-        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
 
@@ -73,7 +73,7 @@ public sealed class EquipmentPhaseLibraryTests
         await db.SaveChangesAsync();
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
-        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BNONE1", mix.Id, equipment.Id), CancellationToken.None);
@@ -106,7 +106,7 @@ public sealed class EquipmentPhaseLibraryTests
         var s1 = new RecipeStep(draft.Id, "S10", "cool", StepType.Cool, 0, 0, 0, 30, null,
             [new RecipeParameter(0, "终点温度", "℃", 40, 20, 60, true, true)]);
         var s2 = new RecipeStep(draft.Id, "S20", "qc", StepType.QualityCheck, 1, 0, 0, 30, null,
-            [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, true)]);
+            [new RecipeParameter(0, "硬度", "HB", 95, 90, 110, false, false)]);
         draft.ReplaceProcedure([s1, s2], [new RecipeEdge(draft.Id, s1.Id, s2.Id)]);
         draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard);
         draft.Decide(Guid.NewGuid(), "主管", ApprovalDecision.Approved, "ok", DateTimeOffset.UtcNow);
@@ -116,7 +116,7 @@ public sealed class EquipmentPhaseLibraryTests
         await db.SaveChangesAsync();
 
         var user = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
-        var batches = new BatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
+        var batches = ServiceHarness.NewBatchService(db, user, new RecordingScheduler(), hasher, new NoopPdf(), new NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
         var created = await batches.CreateAsync(new CreateBatchRequest("BQ1", recipe.Id, equipment.Id), CancellationToken.None);

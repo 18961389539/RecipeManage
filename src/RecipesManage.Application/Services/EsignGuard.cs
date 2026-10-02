@@ -8,8 +8,8 @@ namespace RecipesManage.Application.Services;
 /// <summary>
 /// 电子签名与角色守卫的单一实现。此前 BatchService / MaterialLotService / RecipeService
 /// 各自复制了一份，语义漂移一次就是 GMP 审计缺陷。
-/// 名单是闭集：Admin 必须写进允许角色才有权，不能靠通配代签启停/跳步。
-/// 质量放行/审核节点继续调用 <see cref="EnsureExactRole"/>，标明「任何角色都不能代签」。
+/// 名单是闭集：Admin 必须写进 <see cref="Capabilities"/> 才有权，不能靠通配代签启停/跳步。
+/// 角色名单本身不在这里——见 <see cref="Capabilities"/>。
 /// </summary>
 public sealed class EsignGuard(IAppDbContext db, ICurrentUser user, IPasswordHasher passwords)
 {
@@ -27,12 +27,34 @@ public sealed class EsignGuard(IAppDbContext db, ICurrentUser user, IPasswordHas
             throw new DomainException("ESIGN", "电子签名密码不正确。");
     }
 
-    public void EnsureRole(params UserRole[] allowed) => EnsureExactRole(allowed);
-
-    public void EnsureExactRole(params UserRole[] allowed)
+    /// <summary>
+    /// 业务代码统一入口：按 <see cref="Capabilities"/> 里的单一名单判断当前角色。
+    /// <paramref name="deniedMessage"/> 仅用于需要沿用旧提示文案的位置（前端按文案做了翻译）。
+    /// </summary>
+    /// <summary>
+    /// 记下一次已验过密码的电子签名：结构化记录（含义原文在此冻结）+ 一行审计履历，随调用方同一次 SaveChanges 提交。
+    /// 必须在 <see cref="RequireAsync"/> 通过之后调用——这里不验密码，只负责落库。
+    /// </summary>
+    /// <param name="meaning">签署当时展示给签名人的含义原文；不要传"之后再算"的东西。</param>
+    /// <param name="signerName">默认当前登录人；个别路径需要固定署名时才传。</param>
+    public void Record(
+        string action, string entityType, string entityId, string meaning, string? detail, string? signerName = null)
     {
-        var role = user.Role ?? throw new DomainException("AUTH", "未登录。");
-        if (!allowed.Contains(role))
-            throw new DomainException("FORBIDDEN", "当前角色无权执行该操作。");
+        var name = signerName ?? user.UserName;
+        db.SignatureRecords.Add(new SignatureRecord(user.UserId, name, action, entityType, entityId, meaning, detail));
+        var trimmed = detail?.Trim();
+        db.AuditLogs.Add(new AuditLog(
+            user.UserId, name, action, entityType, entityId,
+            string.IsNullOrEmpty(trimmed) ? meaning : $"{meaning} {trimmed}"));
     }
+
+    public void EnsureCan(Capability capability, string? deniedMessage = null) =>
+        user.EnsureCan(capability, deniedMessage);
+
+    /// <summary>
+    /// 仅保留给测试与特殊场景（审批链节点的角色是运行期数据，没有对应的静态能力）。
+    /// 业务代码请用 <see cref="EnsureCan"/>，不要再手写角色列表。
+    /// </summary>
+    public void EnsureRole(params UserRole[] allowed) =>
+        user.EnsureCan(new Capability("adhoc", allowed));
 }

@@ -1,10 +1,11 @@
-<Solution>
+﻿<Solution>
   <Folder Name="/src/">
     <Project Path="src/RecipesManage.Api/RecipesManage.Api.csproj" />
     <Project Path="src/RecipesManage.Application/RecipesManage.Application.csproj" />
     <Project Path="src/RecipesManage.Domain/RecipesManage.Domain.csproj" />
     <Project Path="src/RecipesManage.Execution/RecipesManage.Execution.csproj" />
     <Project Path="src/RecipesManage.Infrastructure/RecipesManage.Infrastructure.csproj" />
+    <Project Path="src/RecipesManage.Simulation/RecipesManage.Simulation.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RecipesManage.Contracts.Tests/RecipesManage.Contracts.Tests.csproj" />

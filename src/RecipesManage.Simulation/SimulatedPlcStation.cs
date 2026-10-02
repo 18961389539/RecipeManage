@@ -1,6 +1,6 @@
-using RecipesManage.Domain.Handshake;
+﻿using RecipesManage.Domain.Handshake;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 public sealed class SimulatedPlcRack
 {

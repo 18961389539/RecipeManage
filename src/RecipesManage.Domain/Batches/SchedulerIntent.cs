@@ -12,7 +12,9 @@ public static class SchedulerIntentKinds
 /// <summary>
 /// 调度器进程内 Channel 在重启后会清空。把保持 / 跳步 / 人工确认落到这张表，
 /// 恢复 Running 会话时才能继续执行，而不是把操作员已签名的指令丢掉。
-/// 同一批次每种意图最多一行（唯一索引）。
+/// 唯一键是 (批次, 种类, 工步)：并行车道上可以同时有两个工步在等确认 / 待跳过，
+/// 按批次一行会让后到的指令覆盖先到的，被覆盖的车道就永远等不到它。
+/// 保持是整批的（一条车道保持会经屏障让全批停下），所以它的 <see cref="StepId"/> 恒为空。
 /// </summary>
 public sealed class SchedulerIntent : Entity
 {

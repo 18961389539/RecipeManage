@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Domain.Batches;
@@ -102,7 +102,7 @@ public sealed class EquipmentLeaseService
         var claimants = new Dictionary<Guid, List<ProductionBatch>>();
         foreach (var batch in live)
         {
-            foreach (var id in BatchService.BoundEquipmentIds(batch))
+            foreach (var id in SnapshotJson.BoundEquipmentIds(batch))
             {
                 if (!claimants.TryGetValue(id, out var list))
                     claimants[id] = list = [];

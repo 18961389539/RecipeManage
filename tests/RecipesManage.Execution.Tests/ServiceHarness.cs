@@ -39,6 +39,21 @@ internal static class ServiceHarness
         db.SaveChanges();
     }
 
+    /// <summary>
+    /// 批次写路径服务。参数顺序沿用拆分前的构造函数，所以各测试只需把 <c>new BatchService(</c> 换成它；
+    /// 容器里 EsignGuard / BatchQueryService 是注入的，这里照同样的接法手工拼一遍。
+    /// </summary>
+    public static BatchService NewBatchService(
+        IAppDbContext db, ICurrentUser user, IBatchScheduler scheduler, IPasswordHasher hasher,
+        IBatchRecordPdf pdf, IExecutionPublisher publisher, MaterialLotService lots, EquipmentLeaseService leases) =>
+        new(db, user, scheduler, publisher, lots, leases, new EsignGuard(db, user, hasher),
+            new BatchQueryService(db, user, lots, pdf));
+
+    /// <summary>批次读路径服务（列表 / 详情 / 趋势 / 批记录 / PDF / 报警列表）。</summary>
+    public static BatchQueryService NewBatchQuery(
+        IAppDbContext db, ICurrentUser user, MaterialLotService lots, IBatchRecordPdf? pdf = null) =>
+        new(db, user, lots, pdf ?? new NoopPdf());
+
     private static AppDbContext CreateDb(string prefix)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -7,7 +7,6 @@ using RecipesManage.Domain.Equipment;
 using RecipesManage.Domain.Identity;
 using RecipesManage.Domain.Materials;
 using RecipesManage.Domain.Recipes;
-using RecipesManage.Infrastructure.Plc;
 
 namespace RecipesManage.Infrastructure.Persistence;
 
@@ -41,9 +40,6 @@ public static class DatabaseSeeder
 
     private static async Task SeedDemoAssetsAsync(AppDbContext db, CancellationToken ct)
     {
-        await EnsureModbusLoopbackAsync(db, ct);
-        await EnsureOpcUaLoopbackAsync(db, ct);
-        await EnsureSiemensLoopbackAsync(db, ct);
         await EnsureParallelDemoAsync(db, ct);
         await EnsureConfirmAndOosDemoAsync(db, ct);
         await EnsureWaitAndProcessOpsDemoAsync(db, ct);
@@ -158,7 +154,9 @@ public static class DatabaseSeeder
             P(0, "时效温度", "℃", 175, 170, 180, true, true),
             P(1, "时效时长", "s", 8, 1, 7200, true, true));
         var s5 = Heat("S50", "出炉质检采样", StepType.QualityCheck, 4, 1200, 120, 60,
-            P(0, "硬度下限", "HB", 95, 90, 110, false, true));
+            // 硬度是实验室指标（走质检样品 / LIMS 判定），不是 PLC 实测点：
+            // 标成"归档作质量判定"会让每条批次都因为归档不到值而必须写偏差意见才能放行。
+            P(0, "硬度下限", "HB", 95, 90, 110, false, false));
 
         draft.ReplaceProcedure(
             [s1, s2, s3, s4, s5],
@@ -234,7 +232,7 @@ public static class DatabaseSeeder
             ], (int)StepType.Pressure);
             process.AddTemplate("PH-XFER", "转移出料", StepType.Transfer, Isa88.DefaultOperation(StepType.Transfer), 60,
             [
-                Spec(0, "转移量", "kg", 50, 1, 500, true, true, true),
+                Spec(0, "转移量", "kg", 50, 1, 500, true, false, true),
                 Spec(1, "转移时长", "s", 5, 1, 300, true, false)
             ], (int)StepType.Transfer);
             process.AddTemplate("PH-RINSE", "水冲洗", StepType.Transfer, "OP-Rinse 水冲洗", 30,
@@ -280,63 +278,6 @@ public static class DatabaseSeeder
         await db.SaveChangesAsync(ct);
     }
 
-    private static async Task EnsureModbusLoopbackAsync(AppDbContext db, CancellationToken ct)
-    {
-        if (await db.Equipment.AnyAsync(e => e.Code == ModbusLoopbackHostedService.EquipmentCode, ct))
-            return;
-        var map = JsonSerializer.Serialize(HandshakeTagMap.ModbusLoopback());
-        db.Equipment.Add(new EquipmentLine(
-            ModbusLoopbackHostedService.EquipmentCode,
-            "Modbus 环回从站",
-            PlcProtocol.ModbusTcp,
-            "127.0.0.1",
-            ModbusLoopbackHostedService.DefaultPort,
-            "MODBUS",
-            0,
-            1,
-            map,
-            "本机 IOTClient Modbus TCP 四步握手从站，用于协议栈联调。连接测试只读，禁止盲写。"));
-        await db.SaveChangesAsync(ct);
-    }
-
-    private static async Task EnsureOpcUaLoopbackAsync(AppDbContext db, CancellationToken ct)
-    {
-        if (await db.Equipment.AnyAsync(e => e.Code == OpcUaLoopbackHostedService.EquipmentCode, ct))
-            return;
-        var map = JsonSerializer.Serialize(HandshakeTagMap.OpcUaLoopback());
-        db.Equipment.Add(new EquipmentLine(
-            OpcUaLoopbackHostedService.EquipmentCode,
-            "OPC UA 环回从站",
-            PlcProtocol.OpcUa,
-            $"opc.tcp://127.0.0.1:{OpcUaLoopbackHostedService.DefaultPort}{OpcUaHandshakeSlave.PathSuffix}",
-            OpcUaLoopbackHostedService.DefaultPort,
-            "OPC_UA",
-            0,
-            1,
-            map,
-            "本机 OPC Foundation 四步握手从站，用于 OPC UA 协议栈联调。连接测试只读，禁止盲写。实验室自动接受自签证书。"));
-        await db.SaveChangesAsync(ct);
-    }
-
-    private static async Task EnsureSiemensLoopbackAsync(AppDbContext db, CancellationToken ct)
-    {
-        if (await db.Equipment.AnyAsync(e => e.Code == SiemensS7LoopbackHostedService.EquipmentCode, ct))
-            return;
-        var map = JsonSerializer.Serialize(new HandshakeTagMap());
-        db.Equipment.Add(new EquipmentLine(
-            SiemensS7LoopbackHostedService.EquipmentCode,
-            "S7 环回从站",
-            PlcProtocol.SiemensS7,
-            "127.0.0.1",
-            SiemensS7LoopbackHostedService.DefaultPort,
-            "S7_1200",
-            0,
-            1,
-            map,
-            "本机 IOTClient Siemens S7 ISO-on-TCP 四步握手从站，DB10 默认点表。连接测试只读，禁止盲写。"));
-        await db.SaveChangesAsync(ct);
-    }
-
     /// <summary>
     /// 第二套仿真炉 + 双 Unit Procedure 示范配方（固溶/淬火可并行，汇合质检）。
     /// 对已有库幂等：按设备编码与配方编码补齐。
@@ -373,7 +314,9 @@ public static class DatabaseSeeder
             P(0, "终点温度", "℃", 40, 20, 60, true, true),
             P(1, "冷却时长", "s", 6, 1, 600, true, false));
         var s40 = Phase("S40", "汇合质检采样", StepType.QualityCheck, 3, 300, 480, 60, "UP-QC", null,
-            P(0, "硬度下限", "HB", 95, 90, 110, false, true));
+            // 硬度是实验室指标（走质检样品 / LIMS 判定），不是 PLC 实测点：
+            // 标成"归档作质量判定"会让每条批次都因为归档不到值而必须写偏差意见才能放行。
+            P(0, "硬度下限", "HB", 95, 90, 110, false, false));
 
         draft.ReplaceProcedure(
             [s10, s20, s30, s40],
@@ -496,11 +439,11 @@ public static class DatabaseSeeder
                  P(1, "保压时长", "s", 1, 0.5, 60, true, false)],
                 null, "UP-加压", Isa88.DefaultOperation(StepType.Pressure), null, "PROCESS");
             var s30 = new RecipeStep(draft.Id, "S30", "转移出料", StepType.Transfer, 2, 500, 80, 60, null,
-                [P(0, "转移量", "kg", 50, 1, 500, true, true, true),
+                [P(0, "转移量", "kg", 50, 1, 500, true, false, true),
                  P(1, "转移时长", "s", 1, 0.5, 60, true, false)],
                 null, "UP-转移", Isa88.DefaultOperation(StepType.Transfer), null, "PROCESS");
             var s40 = new RecipeStep(draft.Id, "S40", "质检采样", StepType.QualityCheck, 3, 710, 80, 60, null,
-                [P(0, "硬度下限", "HB", 95, 90, 110, false, true)],
+                [P(0, "硬度下限", "HB", 95, 90, 110, false, false)],
                 null, "UP-QC", Isa88.DefaultOperation(StepType.QualityCheck), null, "PROCESS");
             draft.ReplaceProcedure(
                 [s10, s20, s30, s40],
@@ -542,7 +485,7 @@ public static class DatabaseSeeder
                  P(1, "保压时长", "s", 3, 0.5, 60, true, false)],
                 null, "UP-冲洗", "OP-Cyl 气缸保压", 22, "PROCESS");
             var qc = new RecipeStep(draft.Id, "S30", "质检采样", StepType.QualityCheck, 2, 500, 80, 60, null,
-                [P(0, "硬度下限", "HB", 95, 90, 110, false, true)],
+                [P(0, "硬度下限", "HB", 95, 90, 110, false, false)],
                 null, "UP-QC", Isa88.DefaultOperation(StepType.QualityCheck), null, "PROCESS");
             draft.ReplaceProcedure(
                 [rinse, cyl, qc],

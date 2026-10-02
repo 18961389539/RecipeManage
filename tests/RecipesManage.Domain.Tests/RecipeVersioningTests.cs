@@ -7,6 +7,44 @@ namespace RecipesManage.Domain.Tests;
 
 public sealed class RecipeVersioningTests
 {
+
+    [Fact]
+    public void Submit_RejectsAnArchiveSpecWithNoMeasuredSource()
+    {
+        // 两道新防线都必须在"提交审核"这一步生效：批准后快照就密封，开批时才发现的代价是
+        // 一条已放行的配方根本跑不了 / 每条批次都被迫写偏差意见。
+        var engineer = Guid.NewGuid();
+        var recipe = MasterRecipe.Create("AL-COAT", "coat", "P", "film", null, engineer);
+        var draft = recipe.RequireDraft();
+        var step = new RecipeStep(draft.Id, "S10", "涂布", StepType.Pressure, 0, 0, 0, 60, null,
+            [new RecipeParameter(0, "涂层厚度", "μm", 60, 55, 65, false, true, false, ParameterSemantic.MeasuredValue)]);
+        draft.ReplaceProcedure([step], []);
+
+        var e = Assert.Throws<DomainException>(
+            () => draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard, engineer, "工程师", "提交"));
+        Assert.Equal("QUALITY_SOURCE", e.Code);
+    }
+
+    [Fact]
+    public void Submit_RejectsADurationThePlcCannotBeGiven()
+    {
+        var engineer = Guid.NewGuid();
+        var recipe = MasterRecipe.Create("AL-CURE", "cure", "P", "part", null, engineer);
+        var draft = recipe.RequireDraft();
+        var step = new RecipeStep(draft.Id, "S10", "固化", StepType.Heat, 0, 0, 0, 60, null,
+            [
+                new RecipeParameter(0, "固化温度", "℃", 150, 145, 155, true, true),
+                new RecipeParameter(1, "固化时长", "h", 24, 1, 48, true, true, false, ParameterSemantic.Duration)
+            ]);
+        draft.ReplaceProcedure([step], []);
+
+        var e = Assert.Throws<DomainException>(
+            () => draft.Submit(DateTimeOffset.UtcNow, ApprovalChain.Standard, engineer, "工程师", "提交"));
+        Assert.Equal("DURATION_RANGE", e.Code);
+        // 报错要给出工程师真实写下的时长（24 h 就是 1 d），而不是被截断后发给 PLC 的那个值。
+        Assert.Contains("1 d", e.Message, StringComparison.Ordinal);
+        Assert.Contains("2 小时", e.Message, StringComparison.Ordinal);
+    }
     [Fact]
     public void CreateNextDraft_ClonesGraphWithNewIds()
     {

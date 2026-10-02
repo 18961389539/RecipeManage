@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -7,8 +7,13 @@ using RecipesManage.Api.Hubs;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Services;
 using RecipesManage.Infrastructure.Persistence;
+using RecipesManage.Simulation;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// 日志必须落到文件里：作为 Windows 服务跑起来时没有控制台，console provider 等于什么都没写，
+// 而现场能带回给支持的只有这份文件（崩过几次、为什么进 Fault、备份哪天没跑成）。
+builder.Logging.AddBrmesFileLogging(builder.Configuration);
 
 // 作为 Windows 服务运行时才接管服务控制与事件日志：开发机上无条件调用会把 ContentRoot 改成 exe 目录，
 // 相对路径的 App_Data 就会落到 bin 里（实测踩过一次"库在哪"的困惑），所以由安装脚本显式打开。
@@ -32,6 +37,14 @@ builder.Services.AddCors(o => o.AddPolicy("spa", p =>
 
 var app = builder.Build();
 
+// 文件日志的第一行就要能回答"哪一版、库在哪、日志在哪、备份去哪"——远程支持电话里问的四件事，
+// 别让操作员去翻 exe 属性。
+app.Logger.LogInformation(
+    "BRMES {Version} 启动：内容根 {ContentRoot}，库 {Database}，备份 {Backups}",
+    RecipesDatabase.Version, app.Environment.ContentRootPath,
+    RecipesDatabase.ResolveConnectionString(app.Configuration.GetConnectionString("Sqlite")),
+    app.Services.GetRequiredService<DatabaseBackup>().DirectoryPath);
+
 // 单实例互斥必须排在建库、迁移、调度器恢复之前：这些步骤任何一件在两个进程里同时跑，
 // 后果都不是"报错"而是静默地写坏数据或双写 PLC。拒绝启动是唯一正确的行为。
 using var instanceLock = SingleInstanceLock.TryAcquire(app.Configuration.GetConnectionString("Sqlite"), out var lockSkipped);
@@ -49,7 +62,9 @@ if (instanceLock is null && !lockSkipped)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await SchemaBootstrap.ApplyAsync(db);
+    // 有 pending 迁移时，这里会先落一份已校验的升级前快照；写不成就不迁移（抛异常停在旧版本）。
+    await SchemaBootstrap.ApplyAsync(
+        db, scope.ServiceProvider.GetRequiredService<DatabaseBackup>(), app.Logger);
 
     // 一次性数据修复：历史上这些 Repair* 挂在每个进程启动上跑，会持续改写业务数据。
     // 现在按 applied_data_fixes 里的键只执行一次，并且对受控配方的自动改动留审计。
@@ -60,6 +75,8 @@ using (var scope = app.Services.CreateScope())
         Demo: bool.TryParse(builder.Configuration["Seed:Demo"], out var demo) ? demo : builder.Environment.IsDevelopment(),
         InitialPassword: builder.Configuration["Seed:AdminPassword"]);
     await DatabaseSeeder.SeedAsync(db, hasher, seedOptions, app.Logger);
+    if (seedOptions.Demo)
+        await SimulationSeed.EnsureLoopbackDevicesAsync(db);
 
     // 为升级前已在跑的批次补写设备租约，并清理终态批次的残留租约。
     await scope.ServiceProvider.GetRequiredService<EquipmentLeaseService>().ReconcileAsync();
@@ -76,11 +93,12 @@ app.UseMiddleware<CurrentUserMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ExecutionHub>("/hubs/execution");
-app.MapGet("/health", async (AppDbContext db) =>
+app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
 {
-    var ok = await db.Database.CanConnectAsync();
+    var ok = await db.Database.CanConnectAsync(ct);
+    var schema = ok ? await RecipesDatabase.SafeMigrationWatermarkAsync(db, ct) : null;
     return ok
-        ? Results.Ok(RecipesDatabase.HealthBody(RecipesDatabase.Sqlite, true))
+        ? Results.Ok(RecipesDatabase.HealthBody(RecipesDatabase.Sqlite, true, schema))
         : Results.Json(RecipesDatabase.HealthBody(RecipesDatabase.Sqlite, false), statusCode: 503);
 }).AllowAnonymous();
 app.Run();

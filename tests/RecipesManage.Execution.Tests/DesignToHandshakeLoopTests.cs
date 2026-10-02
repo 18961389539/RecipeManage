@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +17,7 @@ using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
 using RecipesManage.Infrastructure.Records;
 using Xunit;
+using RecipesManage.Simulation;
 
 using static RecipesManage.Execution.Tests.ServiceHarness;
 
@@ -43,6 +44,7 @@ public sealed class DesignToHandshakeLoopTests
                 services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
                 services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
                 services.AddSingleton<SimulatedPlcRack>();
+                services.AddPlcSimulation();
                 services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
                 services.AddSingleton<IExecutionPublisher>(publisher);
                 services.AddSingleton<BatchSchedulerHostedService>();
@@ -88,7 +90,7 @@ public sealed class DesignToHandshakeLoopTests
                             ]),
                         new SaveStepRequest(s20, "S20", "质检采样", StepType.QualityCheck, 1, 160, 0, 30, "禁止写 PLC",
                             "UP-QC 质检", "OP-QC 质检",
-                            [new SaveParameterRequest(0, "硬度", "HB", 95, 90, 110, false, true)])
+                            [new SaveParameterRequest(0, "硬度", "HB", 95, 90, 110, false, false)])
                     ],
                     [new SaveEdgeRequest(s10, s20)],
                     "Engineer@123",
@@ -109,7 +111,7 @@ public sealed class DesignToHandshakeLoopTests
 
                 var scheduler = host.Services.GetRequiredService<IBatchScheduler>();
                 var opUser = new RoleUser(op.Id, UserRole.Operator, "operator", "车间操作员");
-                var batches = new BatchService(
+                var batches = ServiceHarness.NewBatchService(
                     db,
                     opUser,
                     scheduler,
@@ -163,21 +165,17 @@ public sealed class DesignToHandshakeLoopTests
             var qc = live.StepExecutions.Single(e => e.StepCode == "S20");
             Assert.False(string.IsNullOrWhiteSpace(qc.QualityJson));
 
-            var snapshot = BatchService.Deserialize(live.ControlRecipeJson);
-            Assert.Equal("Valid", SnapshotIntegrity.Verify(snapshot!, BatchService.JsonOptions));
+            var snapshot = SnapshotJson.Deserialize(live.ControlRecipeJson);
+            Assert.Equal("Valid", SnapshotIntegrity.Verify(snapshot!, SnapshotJson.Options));
             Assert.Equal("LOT-LOOP", snapshot!.LotNumber);
 
             var operatorUser = await logDb.Users.SingleAsync(u => u.UserName == "operator");
             var recordUser = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
-            var records = new BatchService(
+            var records = ServiceHarness.NewBatchQuery(
                 logDb,
                 recordUser,
-                host.Services.GetRequiredService<IBatchScheduler>(),
-                hasher,
-                new BatchRecordPdf(),
-                publisher,
                 new MaterialLotService(logDb, recordUser, hasher),
-                new EquipmentLeaseService(logDb, NullLogger<EquipmentLeaseService>.Instance));
+                new BatchRecordPdf());
             var pdf = await records.ExportPdfAsync(batchId, CancellationToken.None);
             var ascii = Encoding.ASCII.GetString(pdf);
             Assert.Contains("pdfaid", ascii, StringComparison.OrdinalIgnoreCase);

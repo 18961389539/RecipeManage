@@ -10,16 +10,6 @@
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
-    "http-postgresql": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": false,
-      "applicationUrl": "http://localhost:5010",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "BRMES_EMBEDDED_POSTGRES": "1"
-      }
-    },
     "https": {
       "commandName": "Project",
       "dotnetRunMessages": true,

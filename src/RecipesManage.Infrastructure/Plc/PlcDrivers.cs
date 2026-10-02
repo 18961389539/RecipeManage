@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using IoTClient.Clients.Modbus;
 using IoTClient.Clients.PLC;
 using IoTClient.Common.Enums;
@@ -10,96 +10,37 @@ namespace RecipesManage.Infrastructure.Plc;
 
 public sealed class PlcDriverFactory : IPlcDriverFactory
 {
-    private readonly SimulatedPlcRack _rack;
-    private readonly ModbusTcpHandshakeSlave? _modbusLoopback;
-    private readonly OpcUaHandshakeSlave? _opcUaLoopback;
-    private readonly SiemensS7HandshakeSlave? _s7Loopback;
+    private readonly IReadOnlyList<IPlcDriverProvider> _providers;
 
-    public PlcDriverFactory(SimulatedPlcRack rack) : this(rack, null, null, null)
+    public PlcDriverFactory() : this([])
     {
     }
 
-    public PlcDriverFactory(SimulatedPlcRack rack, ModbusTcpHandshakeSlave? modbusLoopback)
-        : this(rack, modbusLoopback, null, null)
-    {
-    }
+    /// <param name="providers">
+    /// 额外协议的提供方（目前只有仿真项目会提供 <see cref="PlcProtocol.Simulator"/>）。
+    /// 没有提供方认领的协议，且不是下面三种真实协议，就明确报"未支持"，而不是悄悄退回仿真。
+    /// </param>
+    public PlcDriverFactory(IEnumerable<IPlcDriverProvider> providers) => _providers = providers.ToList();
 
-    public PlcDriverFactory(
-        SimulatedPlcRack rack,
-        ModbusTcpHandshakeSlave? modbusLoopback,
-        OpcUaHandshakeSlave? opcUaLoopback)
-        : this(rack, modbusLoopback, opcUaLoopback, null)
+    public IPlcHandshakeClient Create(EquipmentLine equipment)
     {
-    }
-
-    public PlcDriverFactory(
-        SimulatedPlcRack rack,
-        ModbusTcpHandshakeSlave? modbusLoopback,
-        OpcUaHandshakeSlave? opcUaLoopback,
-        SiemensS7HandshakeSlave? s7Loopback)
-    {
-        _rack = rack;
-        _modbusLoopback = modbusLoopback;
-        _opcUaLoopback = opcUaLoopback;
-        _s7Loopback = s7Loopback;
-    }
-
-    public IPlcHandshakeClient Create(EquipmentLine equipment) =>
-        equipment.Protocol switch
+        foreach (var provider in _providers)
         {
-            PlcProtocol.Simulator => new SimulatedPlcHandshakeClient(_rack.Get(equipment.Id)),
+            if (provider.Handles(equipment.Protocol))
+                return provider.Create(equipment);
+        }
+
+        return equipment.Protocol switch
+        {
             PlcProtocol.SiemensS7 => new SiemensHandshakeClient(equipment),
             PlcProtocol.ModbusTcp => new ModbusHandshakeClient(equipment),
             PlcProtocol.OpcUa => new OpcUaHandshakeClient(equipment),
+            PlcProtocol.Simulator => throw new NotSupportedException(
+                "设备协议是 Simulator，但本次部署没有启用仿真模块（RecipesManage.Simulation）。"),
             _ => throw new NotSupportedException($"未支持的协议 {equipment.Protocol}")
         };
-
-    public void InjectSimulatorFault(Guid equipmentId, string mode)
-    {
-        _rack.Get(equipmentId).InjectFault(mode);
-        if (_modbusLoopback is not null && _modbusLoopback.IsBoundTo(equipmentId))
-            _modbusLoopback.Station.InjectFault(mode);
-        if (_opcUaLoopback is not null && _opcUaLoopback.IsBoundTo(equipmentId))
-            _opcUaLoopback.Station.InjectFault(mode);
-        if (_s7Loopback is not null && _s7Loopback.IsBoundTo(equipmentId))
-            _s7Loopback.Station.InjectFault(mode);
     }
 }
-
-public sealed class SimulatedPlcHandshakeClient : IPlcHandshakeClient
-{
-    private readonly SimulatedPlcStation _station;
-    public SimulatedPlcHandshakeClient(SimulatedPlcStation station) => _station = station;
-    public Task ConnectAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task<PlcInboundSignals> ReadSignalsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(_station.ReadSignals());
-    public Task WriteStepPayloadAsync(int stepId, int stepType, IReadOnlyList<float> parameters, CancellationToken cancellationToken)
-    {
-        _station.WritePayload(stepId, stepType, parameters);
-        return Task.CompletedTask;
-    }
-    public Task<PlcStepPayload> ReadStepPayloadAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(_station.ReadPayload());
-    public Task SetTriggerWriteAsync(bool value, CancellationToken cancellationToken)
-    {
-        _station.SetTrigger(value);
-        return Task.CompletedTask;
-    }
-    public Task SetHostHoldAsync(bool value, CancellationToken cancellationToken)
-    {
-        _station.SetHostHold(value);
-        return Task.CompletedTask;
-    }
-    public Task ResetCompleteAsync(CancellationToken cancellationToken)
-    {
-        _station.ResetComplete();
-        return Task.CompletedTask;
-    }
-    public Task<IReadOnlyDictionary<string, double>> ReadMeasuredAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(_station.ReadMeasured());
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-}
-
 public abstract class MappedPlcHandshakeClient : IPlcHandshakeClient
 {
     private static readonly JsonSerializerOptions TagJson = new() { PropertyNameCaseInsensitive = true };

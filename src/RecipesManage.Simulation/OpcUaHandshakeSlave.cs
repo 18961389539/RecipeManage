@@ -1,9 +1,9 @@
-using Opc.Ua;
+﻿using Opc.Ua;
 using Opc.Ua.Configuration;
 using Opc.Ua.Server;
 using RecipesManage.Domain.Equipment;
 
-namespace RecipesManage.Infrastructure.Plc;
+namespace RecipesManage.Simulation;
 
 /// <summary>
 /// 本机 OPC UA 握手从站：把 OPC Foundation 会话读写映射到 <see cref="SimulatedPlcStation"/>。

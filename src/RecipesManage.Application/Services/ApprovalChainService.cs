@@ -127,7 +127,7 @@ public sealed class ApprovalChainService
     private static ApprovalChainStep ToDomain(ApprovalChainStepRequest s) =>
         new(s.RequiredRole.NodeFor(), s.Title ?? "", s.RequiredRole, s.MeaningApproved ?? "", s.MeaningRejected ?? "");
 
-    private void EnsureAdmin() => _esign.EnsureRole(UserRole.Admin);
+    private void EnsureAdmin() => _esign.EnsureCan(Capabilities.Admin);
 
     private async Task AuditAsync(string action, string entityId, string? detail, CancellationToken ct)
     {

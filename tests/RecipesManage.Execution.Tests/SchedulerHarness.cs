@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,6 +11,7 @@ using RecipesManage.Domain.Recipes;
 using RecipesManage.Execution;
 using RecipesManage.Infrastructure.Persistence;
 using RecipesManage.Infrastructure.Plc;
+using RecipesManage.Simulation;
 
 namespace RecipesManage.Execution.Tests;
 
@@ -31,7 +32,9 @@ internal static class SchedulerHarness
             {
                 services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
                 services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+                services.AddScoped<EquipmentLeaseService>();
                 services.AddSingleton(rack ?? new SimulatedPlcRack());
+                services.AddPlcSimulation();
                 services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
                 services.AddSingleton<IExecutionPublisher>(new ServiceHarness.CapturingPublisher(events));
                 services.AddSingleton<BatchSchedulerHostedService>();
@@ -107,7 +110,7 @@ internal static class SchedulerHarness
         await db.SaveChangesAsync();
 
         var snapshot = ControlRecipeSnapshotFactory.From(recipe, draft, DateTimeOffset.UtcNow);
-        SnapshotIntegrity.Seal(snapshot, BatchService.JsonOptions, out var json);
+        SnapshotIntegrity.Seal(snapshot, SnapshotJson.Options, out var json);
         var batch = ProductionBatch.Create(batchNo, equipment.Id, snapshot, json, Guid.NewGuid());
         foreach (var step in snapshot.Steps)
             batch.StepExecutions.Add(new BatchStepExecution(batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
@@ -117,7 +120,8 @@ internal static class SchedulerHarness
         return (batch.Id, equipment.Id);
     }
 
-    public sealed record Param(string Name, string Unit, double Setpoint, double Min, double Max);
+    /// <param name="Archive">显式覆盖"归档作质量判定"；null = 按工步类型推（写 PLC 的相才归档）。</param>
+    public sealed record Param(string Name, string Unit, double Setpoint, double Min, double Max, bool? Archive = null);
 
     public static RecipeStep Step(
         Guid versionId,
@@ -127,8 +131,12 @@ internal static class SchedulerHarness
         int ordinal,
         params Param[] parameters)
     {
+        // 归档需要实测来源，域层在提交审核时就会拦（QualityArchive.DemandArchivableSources）。
+        // 上位机类工步（等待/人工确认/质检）根本不读 PLC 实测点，所以默认不归档 ——
+        // 以前这里给每个参数都写 true，"确认意见"也被当成质量规格，只是没人校验过。
         var slots = parameters
-            .Select((p, i) => new RecipeParameter(i, p.Name, p.Unit, p.Setpoint, p.Min, p.Max, true, true))
+            .Select((p, i) => new RecipeParameter(
+                i, p.Name, p.Unit, p.Setpoint, p.Min, p.Max, true, p.Archive ?? ControlRecipeWritePlan.WritesToPlc(type)))
             .ToList();
         return new RecipeStep(versionId, code, name, type, ordinal, 0, 0, 30, null, slots);
     }

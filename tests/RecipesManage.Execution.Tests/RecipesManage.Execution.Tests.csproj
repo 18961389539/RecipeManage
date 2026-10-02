@@ -4,6 +4,7 @@
     <ProjectReference Include="..\..\src\RecipesManage.Application\RecipesManage.Application.csproj" />
     <ProjectReference Include="..\..\src\RecipesManage.Infrastructure\RecipesManage.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\RecipesManage.Execution\RecipesManage.Execution.csproj" />
+    <ProjectReference Include="..\..\src\RecipesManage.Simulation\RecipesManage.Simulation.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

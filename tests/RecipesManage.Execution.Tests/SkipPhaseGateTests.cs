@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using RecipesManage.Application.Services;
 using RecipesManage.Domain.Batches;
@@ -102,7 +102,7 @@ public sealed class SkipPhaseGateTests
 
         var user = new ServiceHarness.RoleUser(supervisor.Id, UserRole.Supervisor, supervisor.UserName, "工艺主管");
         var scheduler = new ServiceHarness.RecordingScheduler();
-        var service = new BatchService(
+        var service = ServiceHarness.NewBatchService(
             db, user, scheduler, hasher, new ServiceHarness.NoopPdf(), new ServiceHarness.NoopPublisher(),
             new MaterialLotService(db, user, hasher),
             new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
@@ -120,7 +120,7 @@ public sealed class SkipPhaseGateTests
             ]);
 
         var batch = await db.Batches.Include(b => b.StepExecutions).SingleAsync(b => b.Id == batchId);
-        var snapshot = BatchService.Deserialize(batch.ControlRecipeJson)!;
+        var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson)!;
         var stepId = snapshot.Steps[0].StepId;
 
         batch.MarkRunning(DateTimeOffset.UtcNow);

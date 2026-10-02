@@ -48,12 +48,19 @@ public enum StepType
 /// <summary>
 /// 参数语义。声明后由它决定归档取哪个实测点、哪个参数是工艺时长，
 /// 不再依赖名称里的中文关键词——那是历史数据的回退路径。
+/// 新值只追加在末尾：库里存的是 int，历史参数行不回填。
 /// </summary>
 public enum ParameterSemantic
 {
     Unspecified = 0,
     Duration = 1,
-    Rate = 2
+    Rate = 2,
+    /// <summary>
+    /// 这条参数是<strong>被测出来的质量特性</strong>（流量、pH、扭矩、厚度、粘度…），
+    /// 不是设定值也不是时长。声明它就必须同时声明 <c>MeasuredTag</c>：
+    /// 名字里没有任何可推断关键词，靠猜的结果是"归档不到值 → 判超差 → 质量随手写一句意见就放行"。
+    /// </summary>
+    MeasuredValue = 3
 }
 
 public enum ApprovalDecision

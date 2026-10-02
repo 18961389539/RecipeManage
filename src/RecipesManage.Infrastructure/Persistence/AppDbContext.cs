@@ -18,6 +18,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
 
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<SignatureRecord> SignatureRecords => Set<SignatureRecord>();
     public DbSet<MasterRecipe> Recipes => Set<MasterRecipe>();
     public DbSet<RecipeVersion> RecipeVersions => Set<RecipeVersion>();
     public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
@@ -102,6 +103,14 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             // 见 AuditTimestamp：不写这个转换器，ORDER BY / 范围比较会被 SQLite 提供器直接拒绝。
             e.Property(x => x.At).HasConversion(AuditTimestamp.Converter);
             e.HasIndex(x => x.At);
+        });
+
+        modelBuilder.Entity<SignatureRecord>(e =>
+        {
+            e.ToTable("signature_records");
+            e.Property(x => x.SignedAt).HasConversion(AuditTimestamp.Converter);
+            // 批记录按对象取签名、按签署时间排：(对象, 时间) 一个索引同时服务两者。
+            e.HasIndex(x => new { x.EntityType, x.EntityId, x.SignedAt });
         });
 
         modelBuilder.Entity<MasterRecipe>(e =>
@@ -256,7 +265,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<SchedulerIntent>(e =>
         {
             e.ToTable("scheduler_intents");
-            e.HasIndex(x => new { x.BatchId, x.Kind }).IsUnique();
+            e.HasIndex(x => new { x.BatchId, x.Kind, x.StepId }).IsUnique();
             e.HasIndex(x => x.BatchId);
         });
 

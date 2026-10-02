@@ -23,7 +23,12 @@ public static class ControlRecipeWritePlan
         foreach (var parameter in step.Parameters.Where(p => p.WriteToPlc && (uint)p.SlotIndex < RecipeParameter.MaxSlots))
             parameters[parameter.SlotIndex] = (float)parameter.Setpoint;
         if (ProcessDuration.TryFrom(step) is { } processDuration && parameters[DurationSlot] == 0)
-            parameters[DurationSlot] = (float)Math.Clamp(processDuration.TotalSeconds, 0.2, 7200);
+        {
+            // 超窗口就抛。以前这里是 Math.Clamp：24 小时的固化会被写成 2 小时发给 PLC，
+            // 而上位机按 24 小时等 —— 设定值被静默改掉，批记录与履历里什么都看不出来。
+            ProcessDuration.DemandWritable($"工步 {step.Code}（{step.Name}）", processDuration);
+            parameters[DurationSlot] = (float)processDuration.TotalSeconds;
+        }
         return parameters;
     }
 

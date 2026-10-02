@@ -15,8 +15,10 @@ public sealed class HealthController(AppDbContext db) : ControllerBase
     {
         var provider = RecipesDatabase.HealthName(db.Database);
         var ok = await db.Database.CanConnectAsync(ct);
+        // 水位只在连得上的时候查：连不上时那两个字段本来就没有意义。
+        var schema = ok ? await RecipesDatabase.SafeMigrationWatermarkAsync(db, ct) : null;
         return ok
-            ? Ok(RecipesDatabase.HealthBody(provider, true))
+            ? Ok(RecipesDatabase.HealthBody(provider, true, schema))
             : StatusCode(StatusCodes.Status503ServiceUnavailable, RecipesDatabase.HealthBody(provider, false));
     }
 }

@@ -133,6 +133,52 @@ public sealed class DatabaseBackupTests : IDisposable
     }
 
     [Fact]
+    public void CatchUpFiresForTheSlotThatAlreadyPassedAndNotAgainAfterwards()
+    {
+        var dir = BackupsDir();
+        Directory.CreateDirectory(dir);
+        var backup = NewBackup("unused", dir, atUtc: new TimeOnly(2, 15));
+        var morning = new DateTimeOffset(2026, 9, 25, 9, 0, 0, TimeSpan.Zero);
+
+        // 机器 02:15 正关着 → 开机时这一班是欠的。
+        Assert.Equal(new DateTimeOffset(2026, 9, 25, 2, 15, 0, TimeSpan.Zero), backup.LastScheduledAt(morning));
+        Assert.True(backup.NeedsCatchUp(morning));
+
+        // 补上了（哪怕补跑落在 09:30，或管理员手工点过一次）就不该再来第二份。
+        File.WriteAllText(Path.Combine(dir, "brmes-20260925-093012.db"), "x");
+        Assert.False(backup.NeedsCatchUp(morning));
+
+        // 换到第二天：昨天的快照不能顶替今天这一班，缺几天也只补一份。
+        Assert.True(backup.NeedsCatchUp(new DateTimeOffset(2026, 9, 26, 23, 0, 0, TimeSpan.Zero)));
+
+        // 凌晨 01:00 开机：今天那一班还没到，欠的是昨天那份，而它已经在 → 不该在 01:00 又补一份。
+        Assert.False(backup.NeedsCatchUp(new DateTimeOffset(2026, 9, 26, 1, 0, 0, TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public void CatchUpJudgesByTheDateInTheNameNeverByFilesystemTimestamps()
+    {
+        var dir = BackupsDir();
+        Directory.CreateDirectory(dir);
+        var backup = NewBackup("unused", dir, atUtc: new TimeOnly(2, 15));
+        var day = new DateOnly(2026, 9, 25);
+        var now = new DateTimeOffset(2026, 9, 25, 9, 0, 0, TimeSpan.Zero);
+
+        // 从 U 盘拷回来、被同步盘倒过手，mtime 都会变；文件名里的定宽 UTC 才是凭据。
+        var copied = Path.Combine(dir, "brmes-20260925-021503.db");
+        File.WriteAllText(copied, "x");
+        File.SetLastWriteTimeUtc(copied, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        Assert.True(backup.HasBackupOn(day));
+
+        // 陌生文件名一律不算，否则谁都能在备份目录里"伪造"出一份快照、让补跑静默跳过。
+        File.Delete(copied);
+        File.WriteAllText(Path.Combine(dir, "brmes-20260925-021503.db.bak"), "x");
+        File.WriteAllText(Path.Combine(dir, "recipes-20260925.db"), "x");
+        Assert.False(backup.HasBackupOn(day));
+        Assert.True(backup.NeedsCatchUp(now));
+    }
+
+    [Fact]
     public void MissingSourceFileFailsLoudInsteadOfWritingAnEmptyBackup()
     {
         var backup = NewBackup($"Data Source={Path.Combine(_root, "nope.db")}", BackupsDir());
