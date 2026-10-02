@@ -5,5 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
+    <!-- 现场支持的第一句话是"你装的是哪版"，所以版本号必须有单一出处：出包脚本用
+         -p:Version=x.y.z 覆盖它，提交号由脚本自己拼进 InformationalVersion（那里同时关掉 SDK 的
+         自动追加，否则会变成 1.0.1+短号.全号 这种没法在电话里念的字符串）。 -->
+    <Version>1.0.0</Version>
+    <!-- 不让 SDK 把完整 40 位提交号自动追加进来：那串没法在电话里念。短号由出包脚本显式给。 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 </Project>

@@ -15,7 +15,10 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string] $Repository = (Split-Path -Parent $PSScriptRoot),
+    # Empty = the folder above this script, resolved in the body below: $PSScriptRoot is not reliably
+    # set inside a parameter default on Windows PowerShell 5.1 (measured: Split-Path throws on an
+    # empty Path when the script is started with `powershell.exe -File deploy\install-watchdog.ps1`).
+    [string] $Repository = '',
     [string] $PublishTo = 'C:\brmes',
     [string] [Alias('BindUrl')] $Urls = 'http://localhost:5010',
     [string] $HealthUrl = 'http://localhost:5010/health',
@@ -30,7 +33,14 @@ param(
     [string] $Sqlite = 'Data Source=App_Data/recipes.db',
     [int] $BackupKeep = 7,
     [string] $BackupAtUtc = '02:15',
-    [switch] $SkipPublish
+    [switch] $SkipPublish,
+    # Deliver from a package built by publish-package.ps1 instead of publishing on this machine.
+    # This is the path a plant PC should take: it needs no SDK, and the build it runs is named in
+    # package-manifest.json inside the zip.
+    [string] $PackagePath = '',
+    # With -PackagePath: delete everything in the app directory except App_Data and logs before
+    # unpacking. Off by default because it removes files; turn it on for a version-changing upgrade.
+    [switch] $Clean
 )
 
 Set-StrictMode -Version Latest
@@ -38,15 +48,42 @@ $ErrorActionPreference = 'Stop'
 
 function Step { param([string] $Message) Write-Host "==> $Message" }
 
+# Where this script itself lives (the repo's deploy folder). Same reason as -Repository: resolve in
+# the body, not in a param default.
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { (Get-Location).Path }
+if (-not $Repository) { $Repository = Split-Path -Parent $scriptRoot }
+
 $exePath = Join-Path $PublishTo 'RecipesManage.Api.exe'
-$watchdogSrc = Join-Path $PSScriptRoot 'watchdog.ps1'
 $watchdogDst = Join-Path $PublishTo 'watchdog.ps1'
 $logPath = Join-Path $PublishTo 'logs\watchdog.log'
 
-if (-not (Test-Path $watchdogSrc)) { throw "missing $watchdogSrc" }
+if ($PackagePath -and -not (Test-Path $PackagePath)) { throw "no package at $PackagePath" }
+if (-not $PackagePath) {
+    # Without a package the watchdog script is copied straight from the repo (developer box flavour).
+    $watchdogSrc = Join-Path $scriptRoot 'watchdog.ps1'
+    if (-not (Test-Path $watchdogSrc)) { throw "missing $watchdogSrc" }
+}
 
-# ---- 1. publish ----
-if (-not $SkipPublish) {
+# ---- 1. get the binaries onto this machine ----
+if ($PackagePath) {
+    Step "unpack $PackagePath -> $PublishTo"
+    if ($PSCmdlet.ShouldProcess($PublishTo, 'expand package')) {
+        New-Item -ItemType Directory -Path $PublishTo -Force | Out-Null
+        if ($Clean) {
+            # Overlaying a new build leaves orphaned files from the old one behind (native deps and
+            # appsettings sections are the usual ones), so an upgrade can ask for a clean directory.
+            # Deliberately opt-in: this deletes files, and App_Data (the database) is never touched.
+            Get-ChildItem -Path $PublishTo -Force |
+                Where-Object { $_.Name -notin @('App_Data', 'logs') } |
+                ForEach-Object { Remove-Item $_.FullName -Recurse -Force }
+        }
+        Expand-Archive -Path $PackagePath -DestinationPath $PublishTo -Force
+        $manifest = Join-Path $PublishTo 'package-manifest.json'
+        if (Test-Path $manifest) { Get-Content $manifest -Raw | Write-Host }
+    }
+    # watchdog.ps1 travels inside the package, so the target never needs the repo.
+    $watchdogSrc = Join-Path $PublishTo 'watchdog.ps1'
+} elseif (-not $SkipPublish) {
     $apiProject = Join-Path $Repository 'src\RecipesManage.Api\RecipesManage.Api.csproj'
     if (-not (Test-Path $apiProject)) { throw "no project at $apiProject (pass -Repository)" }
     Step "publish $apiProject -> $PublishTo"
@@ -56,11 +93,21 @@ if (-not $SkipPublish) {
             -p:PublishSingleFile=false -p:VersionSuffix='' -o $PublishTo
         if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with $LASTEXITCODE" }
     }
+    $watchdogSrc = Join-Path $scriptRoot 'watchdog.ps1'
+} else {
+    $watchdogSrc = Join-Path $scriptRoot 'watchdog.ps1'
 }
+
 if ($PSCmdlet.ShouldProcess($PublishTo, 'copy watchdog')) {
     New-Item -ItemType Directory -Path $PublishTo -Force | Out-Null
     New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null
-    Copy-Item $watchdogSrc $watchdogDst -Force
+    if (-not (Test-Path $watchdogSrc)) {
+        # Only reachable when the zip was built without watchdog.ps1 in it.
+        throw "no watchdog script to install (expected $watchdogSrc)"
+    }
+    if ((Resolve-Path $watchdogSrc).Path -ne (Split-Path -Parent $watchdogDst)) {
+        Copy-Item $watchdogSrc $watchdogDst -Force
+    }
 }
 
 # ---- 2. runtime config on the target ----
