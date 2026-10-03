@@ -27,7 +27,7 @@ public static class SimulationSeed
         if (await db.Equipment.AnyAsync(e => e.Code == ModbusLoopbackHostedService.EquipmentCode, ct))
             return;
         var map = JsonSerializer.Serialize(HandshakeTagMap.ModbusLoopback());
-        db.Equipment.Add(new EquipmentLine(
+        var row = new EquipmentLine(
             ModbusLoopbackHostedService.EquipmentCode,
             "Modbus 环回从站",
             PlcProtocol.ModbusTcp,
@@ -37,7 +37,11 @@ public static class SimulationSeed
             0,
             1,
             map,
-            "本机 IOTClient Modbus TCP 四步握手从站，用于协议栈联调。连接测试只读，禁止盲写。"));
+            "本机 IOTClient Modbus TCP 四步握手从站，用于协议栈联调。连接测试只读，禁止盲写。"
+        );
+        // 环回站建在 DatabaseSeeder 之后，种子里的设备类回填跑不到它们：创建时直接赋 GENERIC。
+        row.AssignClass("GENERIC");
+        db.Equipment.Add(row);
         await db.SaveChangesAsync(ct);
     }
 
@@ -46,7 +50,7 @@ public static class SimulationSeed
         if (await db.Equipment.AnyAsync(e => e.Code == OpcUaLoopbackHostedService.EquipmentCode, ct))
             return;
         var map = JsonSerializer.Serialize(HandshakeTagMap.OpcUaLoopback());
-        db.Equipment.Add(new EquipmentLine(
+        var row = new EquipmentLine(
             OpcUaLoopbackHostedService.EquipmentCode,
             "OPC UA 环回从站",
             PlcProtocol.OpcUa,
@@ -56,7 +60,11 @@ public static class SimulationSeed
             0,
             1,
             map,
-            "本机 OPC Foundation 四步握手从站，用于 OPC UA 协议栈联调。连接测试只读，禁止盲写。实验室自动接受自签证书。"));
+            "本机 OPC Foundation 四步握手从站，用于 OPC UA 协议栈联调。连接测试只读，禁止盲写。实验室自动接受自签证书。"
+        );
+        // 环回站建在 DatabaseSeeder 之后，种子里的设备类回填跑不到它们：创建时直接赋 GENERIC。
+        row.AssignClass("GENERIC");
+        db.Equipment.Add(row);
         await db.SaveChangesAsync(ct);
     }
 
@@ -65,7 +73,7 @@ public static class SimulationSeed
         if (await db.Equipment.AnyAsync(e => e.Code == SiemensS7LoopbackHostedService.EquipmentCode, ct))
             return;
         var map = JsonSerializer.Serialize(new HandshakeTagMap());
-        db.Equipment.Add(new EquipmentLine(
+        var row = new EquipmentLine(
             SiemensS7LoopbackHostedService.EquipmentCode,
             "S7 环回从站",
             PlcProtocol.SiemensS7,
@@ -75,7 +83,11 @@ public static class SimulationSeed
             0,
             1,
             map,
-            "本机 IOTClient Siemens S7 ISO-on-TCP 四步握手从站，DB10 默认点表。连接测试只读，禁止盲写。"));
+            "本机 IOTClient Siemens S7 ISO-on-TCP 四步握手从站，DB10 默认点表。连接测试只读，禁止盲写。"
+        );
+        // 环回站建在 DatabaseSeeder 之后，种子里的设备类回填跑不到它们：创建时直接赋 GENERIC。
+        row.AssignClass("GENERIC");
+        db.Equipment.Add(row);
         await db.SaveChangesAsync(ct);
     }
 }
