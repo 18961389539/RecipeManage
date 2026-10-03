@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, test as base, type Locator, type Page } from "@playwright/test";
 
 export const passwords: Record<string, string> = {
   工艺工程师: "Engineer@123",
@@ -195,6 +195,21 @@ export async function handshakeRows(page: Page) {
   const body = (await log.json()) as { items: { stepCode: string; kind: string; detail?: string | null }[] };
   return body.items;
 }
+
+/**
+ * 失败清理夹具：用例失败/超时后，中止它遗留在途的 e2e 批次并等租约释放。
+ * 没有这一层，一个失败用例留下的 Running 批次会让后续用例 START 时撞 423 Locked，
+ * 失败沿文件序级联（一个用例挂掉，后面 4-5 个全跟着 423）。
+ * 通过的用例不清理——它们的批次本就该是终态。
+ */
+export const test = base.extend({
+  page: async ({ page }, use, testInfo) => {
+    await use(page);
+    if (testInfo.status !== testInfo.expectedStatus) {
+      try { await abortActiveBatches(page.request); } catch { /* 清理失败不掩盖原失败 */ }
+    }
+  },
+});
 
 export async function abortActiveBatches(request: Page["request"]) {
   const login = await request.post("/api/auth/login", {

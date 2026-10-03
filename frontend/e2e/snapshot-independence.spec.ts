@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers";
 import {
   abortActiveBatches,
   createBatchFromApproved,
@@ -151,7 +152,7 @@ test("faulted handshake requeue writes again after clearing NoAck", async ({ pag
 
   await page.getByRole("button", { name: "故障后重新排队" }).click();
   await esignAndWait(page, "/start", "POST", "故障后重新排队", passwords["车间操作员"]);
-  await expect(page.getByText("等待人工确认")).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator(".handshake-status").filter({ hasText: "等待人工确认" }).first()).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "人工确认" }).click();
   await esignReasonAndWait(page, "/confirm", "POST", "人工确认本工步（禁止写 PLC）", "故障恢复后确认", passwords["车间操作员"]);
   await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 30_000 });

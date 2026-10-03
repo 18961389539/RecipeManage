@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./helpers";
 import {
   esignAndWait,
   fillPrompt,
@@ -77,5 +78,5 @@ test("quality reject then reopen and approve records audit", async ({ page }) =>
 
   await loginAs(page, "工艺工程师");
   await page.goto("/recipes");
-  await expect(page.getByRole("row").filter({ has: page.getByRole("cell", { name: code, exact: true }) }).getByRole("cell", { name: "1", exact: true })).toBeVisible();
+  await expect(page.getByRole("row").filter({ has: page.getByRole("cell", { name: code, exact: true }) }).getByRole("cell", { name: "v1", exact: true })).toBeVisible();
 });

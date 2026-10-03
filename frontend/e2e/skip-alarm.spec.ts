@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers";
 import {
   abortActiveBatches,
   createBatchFromApproved,
@@ -54,7 +55,7 @@ test("supervisor skips ManualConfirm without writing PLC", async ({ page }) => {
   await createBatchFromApproved(page, batchNo, "AL-HT-CFM", "HT-01");
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.getByText("等待人工确认")).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator(".handshake-status").filter({ hasText: "等待人工确认" }).first()).toBeVisible({ timeout: 45_000 });
   const batchUrl = page.url();
 
   await loginAs(page, "工艺主管");
