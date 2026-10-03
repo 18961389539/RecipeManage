@@ -39,7 +39,9 @@
           <el-table-column prop="protocol" :label="$t('协议')" width="120" sortable :sort-method="sorters.protocol">
             <template #default="{ row }">{{ protocolLabel(row.protocol) }}</template>
           </el-table-column>
-          <el-table-column prop="host" :label="$t('主机')" sortable :sort-method="sorters.host" />
+          <!-- OPC UA 的 host 是整条端点（opc.tcp://host:port/路径），不限宽会把端口列挤成三行错位；
+               定宽 + 溢出 tooltip，完整地址悬停可见 -->
+          <el-table-column prop="host" :label="$t('主机')" width="180" show-overflow-tooltip sortable :sort-method="sorters.host" />
           <el-table-column prop="port" :label="$t('端口')" width="80" sortable :sort-method="sorters.port" />
           <el-table-column prop="plcModel" :label="$t('型号')" width="120" />
           <el-table-column prop="equipmentClassCode" :label="$t('设备类')" width="110" sortable :sort-method="sorters.equipmentClassCode">

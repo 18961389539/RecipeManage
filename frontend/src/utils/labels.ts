@@ -85,7 +85,7 @@ const recipeStatusDict: Dict = {
   Rejected: "驳回",
   Obsolete: "历史"
 };
-const alarmSeverityDict: Dict = { Info: "提示", Warning: "警告", Fault: "故障", Critical: "严重" };
+const alarmSeverityDict: Dict = { Info: "提示", Warning: "警告", Fault: "故障", Critical: "严重", Quality: "质量超差" };
 const labDispositionDict: Dict = { Pending: "待判定", Pass: "合格", Fail: "不合格", Void: "作废" };
 
 /**
@@ -421,7 +421,7 @@ export const recipeStatusTagType = (v?: string | null) => tagType(recipeStatusTa
 export const lotStatusTagType = (v?: string | null) => tagType(lotStatusTagDict, v);
 export const occupancyTagType = (v?: string | null): TagType => (v === "Occupied" ? "warning" : "success");
 export const alarmSeverityTagType = (v?: string | null): TagType =>
-  v === "Critical" || v === "Fault" ? "danger" : v === "Warning" ? "warning" : "info";
+  v === "Critical" || v === "Fault" ? "danger" : v === "Warning" || v === "Quality" ? "warning" : "info";
 
 /**
  * 采样点 tag → 中文名与工程单位。趋势图（ECharts 图例 / uPlot 图例 / 轴名）与实测区共用，
