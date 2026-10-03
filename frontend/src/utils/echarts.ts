@@ -1,5 +1,5 @@
 import * as echarts from "echarts/core";
-import { BarChart, LineChart } from "echarts/charts";
+import { BarChart, CustomChart, LineChart } from "echarts/charts";
 import {
   AxisPointerComponent,
   GridComponent,
@@ -13,6 +13,7 @@ import { CanvasRenderer } from "echarts/renderers";
 echarts.use([
   BarChart,
   LineChart,
+  CustomChart,
   GridComponent,
   TooltipComponent,
   AxisPointerComponent,

@@ -31,6 +31,13 @@
         <i v-if="hasData && k.tone === 'critical' && k.value > 0" class="pulse-dot" />
       </el-card>
     </div>
+    <!-- 报警卡只说"有事"，这条说"什么事"：点进列表前先知道在报什么，也省一次跳转。
+         数据随取数循环刷新；无报警权限或当前无未确认报警时不占版面。 -->
+    <button v-if="latestAlarm" type="button" class="alarm-strip" @click="$router.push('/alarms')">
+      <i class="alarm-dot" />
+      <span class="alarm-strip-text">{{ $t("最新未确认报警") }} · {{ fmtTime(Date.parse(latestAlarm.raisedAt)) }} · {{ latestAlarm.batchNo }} · {{ latestAlarm.message }}</span>
+      <span class="alarm-strip-go">{{ $t("去处理") }}</span>
+    </button>
     <!-- 参考组压成一行窄条：这四个数不需要动手，之前用 4 张 150px 高的卡，
          把设备占用表整块推到了首屏之外。 -->
     <div class="ref-strip">
@@ -112,12 +119,13 @@
         </el-table>
       </el-card>
     </div>
-    <el-card class="gap-before" :header="$t('在途批次（运行 / 排队 / 保持 / 故障）')">
+    <el-card class="gap-before live-card" :header="$t('在途批次（运行 / 排队 / 保持 / 故障）')">
         <el-table
           ref="liveTableRef"
           :data="dash?.liveBatches ?? []"
           v-loading="initialLoading"
           :empty-text="hasData ? $t('当前没有在途批次') : $t('数据不可用')"
+          :row-class-name="liveRowClass"
           class="clickable-rows"
           @row-click="(row: BatchListItemDto) => $router.push(`/batches/${row.id}`)"
         >
@@ -133,6 +141,12 @@
               <!-- 排队/已创建还没有工步可指，画「—」不画第 1 步；索引是 0 基，+1 转成人的数法。 -->
               <span v-if="row.status === 'Queued' || row.status === 'Created'">—</span>
               <span v-else>{{ $t("第 {0} 步", [row.currentStepIndex + 1]) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('时长')" width="110">
+            <template #default="{ row }">
+              <!-- 运行中=已运行；排队/已创建=已等待（从创建起算）。多久看得出卡没卡，不用点进详情。 -->
+              {{ formatDuration(row) }}
             </template>
           </el-table-column>
           <el-table-column prop="handshakePhase">
@@ -153,7 +167,7 @@ import { useRouter } from "vue-router";
 import type { TableInstance } from "element-plus";
 import echarts, { type EChartsType } from "../utils/echarts";
 import http, { HttpError } from "../api/http";
-import type { BatchListItemDto, DashboardDto, EquipmentOccupancyDto, ExecutionEvent, HealthDto } from "../api/types";
+import type { BatchListItemDto, DashboardDto, EquipmentOccupancyDto, ExecutionEvent, HealthDto, ProcessAlarmDto, ProcessAlarmPageDto } from "../api/types";
 import { occupancyFromEvent, useExecutionHub } from "../realtime/executionHub";
 import { useCoalescedReload } from "../utils/useCoalescedReload";
 import { usePolling } from "../utils/usePolling";
@@ -258,6 +272,35 @@ const pillDot = computed(() => (pillState.value === "ok" ? "on" : pillState.valu
 /** 最后一次成功取数的时刻。轮询 4 秒一次但界面不说话，用户无从知道眼前数字是几点取的。 */
 const lastDataAt = ref<number | null>(null);
 
+/** 时长列的时钟。1 秒一格对几行文本的重渲染可以忽略，换来的是秒位不撒谎。 */
+const nowTick = ref(Date.now());
+let tickTimer: number | undefined;
+
+/**
+ * 在途批次的已用时长。等待中的批次没有 startedAt，从创建时刻起算。
+ * d/hh:mm:ss 是语言无关写法，不进翻译表。
+ */
+function formatDuration(row: BatchListItemDto): string {
+  const base = Date.parse(row.startedAt ?? row.createdAt);
+  if (Number.isNaN(base)) return "—";
+  const s = Math.max(0, Math.floor((nowTick.value - base) / 1000));
+  const d = Math.floor(s / 86400);
+  const hh = String(Math.floor((s % 86400) / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return d > 0 ? `${d}d ${hh}:${mm}` : `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * 故障/保持行行首色条 + 故障行浅红底：扫表先看到出事的批次，而不是逐行读 tag。
+ * 与占用表同一套视觉语言：左缘 3px 色条，红=正在出事，黄=等人处置。
+ */
+function liveRowClass({ row }: { row: BatchListItemDto }): string {
+  if (row.status === "Faulted") return "live-critical";
+  if (row.status === "Held") return "live-warn";
+  return "";
+}
+
 function fmtTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
 }
@@ -335,6 +378,9 @@ function openKpi(k: KpiItem) {
   openBatches(query);
 }
 
+/** 报警摘要条的数据源：只取最新一条未确认报警，take=1，随取数循环刷新。 */
+const latestAlarm = ref<ProcessAlarmDto | null>(null);
+
 async function load() {
   try {
     dash.value = (await http.get<DashboardDto>("/dashboard")).data;
@@ -345,6 +391,19 @@ async function load() {
     loadError.value = failureReason(e);
   } finally {
     initialLoading.value = false;
+  }
+  if (canAlarms.value && (dash.value?.openAlarms ?? 0) > 0) {
+    // 取不到就收起摘要条：总览的报警计数仍然在，失败不该多出一条与"数据加载失败"并列的红条。
+    try {
+      const r = await http.get<ProcessAlarmPageDto>("/alarms", {
+        params: { take: "1", skip: "0", sort: "raisedAt", dir: "desc", onlyOpen: "true" }
+      });
+      latestAlarm.value = r.data.items[0] ?? null;
+    } catch {
+      latestAlarm.value = null;
+    }
+  } else {
+    latestAlarm.value = null;
   }
   try {
     health.value = (await http.get<HealthDto>("/health")).data;
@@ -371,20 +430,34 @@ function renderChart() {
     "--warn", "--err",
     "--warn", "--err"
   ];
-  const data = [
+  const colors = tones.map((tok) => palette(tok));
+  const cats = ["执行中", "排队", "保持", "故障", "待放行", "未确认报警"].map((s) => t(s));
+  const raw = [
     d?.runningBatches ?? 0,
     d?.queuedBatches ?? 0,
     d?.heldBatches ?? 0,
     d?.faultedBatches ?? 0,
     d?.pendingReleaseBatches ?? 0,
     d?.openAlarms ?? 0
-  ].map((value, i) => ({ value, itemStyle: { color: palette(tones[i]) } }));
+  ];
   // 横向条：卡片只有约 280px 宽，竖条的 6 个中文类名会被 ECharts 自动省略到只剩 3 个
   // （实测截图里"排队/故障/未确认报警"直接消失）。类名放到 Y 轴就永远完整。
+  // 横向条改用 custom 系列是为了数值截断：34 与 2 同轴时小值棒只剩 1~2px，
+  // 超过阈值的棒画到上限为止、尾部打两道底色切口表示"这里断了"，数值照实标在棒尾。
+  const CAP = 10;
+  const track = palette("--panel");
+  /** axis 触发的默认 tooltip 对 custom 系列只会吐维度值，换成按行号读原始数。 */
+  function tooltipFormatter(params: unknown): string {
+    const first = Array.isArray(params)
+      ? (params[0] as { dataIndex: number } | undefined)
+      : (params as { dataIndex: number });
+    if (!first) return "";
+    return `${cats[first.dataIndex]}：${raw[first.dataIndex]}`;
+  }
   chart.setOption({
     backgroundColor: "transparent",
-    grid: { left: 8, right: 16, top: 10, bottom: 6, containLabel: true },
-    tooltip: { trigger: "axis" },
+    grid: { left: 8, right: 36, top: 10, bottom: 6, containLabel: true },
+    tooltip: { trigger: "axis", formatter: tooltipFormatter },
     xAxis: {
       type: "value",
       minInterval: 1,
@@ -397,18 +470,43 @@ function renderChart() {
     yAxis: {
       type: "category",
       inverse: true,
-      data: ["执行中", "排队", "保持", "故障", "待放行", "未确认报警"].map((s) => t(s)),
+      data: cats,
       axisTick: { show: false },
       axisLine: { lineStyle: { color: palette("--line") } },
       axisLabel: { color: palette("--muted"), fontSize: 11 }
     },
     series: [
       {
-        type: "bar",
-        barWidth: 13,
-        data,
-        itemStyle: { color: palette("--accent-bright") },
-        label: { show: true, position: "right", color: palette("--text-body"), fontSize: 11 }
+        type: "custom",
+        data: raw.map((v, i) => [i, v]),
+        encode: { x: 1, y: 0 },
+        // 参数类型手写成 echarts 官方类型的结构超集，免得从 "echarts" 深层路径拖类型进来
+        renderItem: (params: { dataIndex: number }, api: { coord: (data: readonly number[]) => number[] }) => {
+          const i = params.dataIndex;
+          const real = raw[i] ?? 0;
+          const shown = Math.min(real, CAP);
+          const p0 = api.coord([0, i]);
+          const p1 = api.coord([shown, i]);
+          const barTop = p1[1] - 6.5;
+          const barW = Math.max(p1[0] - p0[0], 0);
+          const children: object[] = [
+            { type: "rect" as const, shape: { x: p0[0], y: barTop, width: barW, height: 13 }, style: { fill: colors[i] } }
+          ];
+          if (real > CAP && barW > 14) {
+            for (const dx of [-8, -3.5]) {
+              children.push({
+                type: "rect" as const,
+                shape: { x: p1[0] + dx, y: barTop - 2, width: 2, height: 17 },
+                style: { fill: track }
+              });
+            }
+          }
+          children.push({
+            type: "text" as const,
+            style: { text: String(real), x: p1[0] + 8, y: barTop + 5, fill: palette("--text-body"), fontSize: 11 }
+          });
+          return { type: "group" as const, children };
+        }
       }
     ]
   });
@@ -434,6 +532,7 @@ useExecutionHub({ onExecution });
 onMounted(async () => {
   await load();
   poll.start();
+  tickTimer = window.setInterval(() => (nowTick.value = Date.now()), 1000);
   window.addEventListener("resize", onResize);
 });
 
@@ -443,6 +542,7 @@ function onResize() {
 
 onUnmounted(() => {
   window.removeEventListener("resize", onResize);
+  if (tickTimer !== undefined) window.clearInterval(tickTimer);
   chart?.dispose();
   chart = null;
 });
@@ -539,6 +639,31 @@ onUnmounted(() => {
 .occupancy-card :deep(.occ-idle .cell) { color: var(--idle); }
 .occupancy-card :deep(.occ-idle) { cursor: default; }
 .occupancy-card :deep(.occ-idle .el-tag) { opacity: 0.55; }
+/* 在途批次：故障/保持行与占用表同一套语言——左缘色条，故障再加 7% 红底整行压色 */
+.live-card :deep(.live-critical td:first-child) { box-shadow: inset 3px 0 0 var(--err); }
+.live-card :deep(.live-critical td) { background-color: color-mix(in srgb, var(--err) 7%, transparent); }
+.live-card :deep(.live-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
+/* 报警摘要条：只在有未确认报警时出现，点整条进报警列表 */
+.alarm-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--err) 55%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--err) 8%, var(--panel));
+  color: var(--text-body);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.alarm-strip:hover { border-color: var(--err); background: color-mix(in srgb, var(--err) 12%, var(--panel)); }
+.alarm-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--err); }
+.alarm-strip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-strip-go { flex: none; margin-left: auto; color: var(--accent-bright); }
 /* 占用行行首 3px 色条按批次状态取色，一列扫过去就知道哪台设备在出事 */
 .occupancy-card :deep(.occ-active td:first-child) { box-shadow: inset 3px 0 0 var(--ok); }
 .occupancy-card :deep(.occ-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
