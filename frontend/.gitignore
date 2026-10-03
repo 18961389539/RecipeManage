@@ -1,0 +1,5 @@
+
+# playwright 产物（强杀后会留下锁文件，独立目录便于整目录清理）
+.pw-artifacts/
+test-results/
+playwright-report/
