@@ -138,6 +138,7 @@ public sealed class AlarmsController(BatchService batches, BatchQueryService que
         query.AlarmsAsync(null, skip, take, sort, dir, q, onlyOpen, ct);
 
     [HttpPost("{id:guid}/ack")]
+    [Authorize(Policy = AuthorizationPolicies.AlarmAck)]
     public Task<ProcessAlarmDto> Ack(Guid id, CancellationToken ct) =>
         batches.AcknowledgeAlarmAsync(id, ct);
 }

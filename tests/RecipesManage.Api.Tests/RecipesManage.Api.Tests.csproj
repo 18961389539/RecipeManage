@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- Api 单独输出到 artifacts：开发机上常开着一个 Api 进程，它会锁住 src\RecipesManage.Api\bin 下的 dll，
+         测试若也往那里复制就编不过。 -->
+    <ProjectReference Include="..\..\src\RecipesManage.Api\RecipesManage.Api.csproj"
+                      AdditionalProperties="OutDir=$(MSBuildThisFileDirectory)..\..\artifacts\api-under-test\" />
+    <ProjectReference Include="..\..\src\RecipesManage.Domain\RecipesManage.Domain.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+</Project>
+

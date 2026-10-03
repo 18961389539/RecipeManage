@@ -8,6 +8,7 @@
     <Project Path="src/RecipesManage.Simulation/RecipesManage.Simulation.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/RecipesManage.Api.Tests/RecipesManage.Api.Tests.csproj" />
     <Project Path="tests/RecipesManage.Contracts.Tests/RecipesManage.Contracts.Tests.csproj" />
     <Project Path="tests/RecipesManage.Domain.Tests/RecipesManage.Domain.Tests.csproj" />
     <Project Path="tests/RecipesManage.Execution.Tests/RecipesManage.Execution.Tests.csproj" />
