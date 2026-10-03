@@ -53,6 +53,7 @@ public static class ControlRecipeSnapshotFactory
 
         return new ControlRecipeSnapshot
         {
+            SchemaVersion = SnapshotSchema.Current,
             MasterRecipeId = recipe.Id,
             RecipeVersionId = version.Id,
             VersionNumber = version.VersionNumber,

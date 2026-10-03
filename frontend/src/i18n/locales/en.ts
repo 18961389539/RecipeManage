@@ -1053,6 +1053,7 @@ const en: Record<string, string> = {
   "历史快照(无哈希)": "Legacy snapshot (no hash)",
   "完整性失败": "Seal mismatch",
   "快照损坏": "Snapshot corrupt",
+  "快照版本过新": "Snapshot from a newer version",
   "ISA-88 控制配方（快照）": "ISA-88 control recipe (snapshot)",
   "PLC 写参计划（拓扑顺序，禁止盲写）": "PLC write plan (topological order, no blind writes)",
   "全部使用主设备": "All on the primary equipment",

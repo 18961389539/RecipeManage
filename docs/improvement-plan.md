@@ -194,7 +194,7 @@
 
 | 项 | 做法 | 验收 |
 | --- | --- | --- |
-| 快照 schema 版本 | 控制配方 JSON 增加 `schemaVersion`；读时按版本解释 | 旧批次记录仍可打开 |
+| 快照 schema 版本 ✅ | 控制配方 JSON 增加 `schemaVersion`（`SnapshotSchema`，当前 1，旧批次缺省为 0）；版本 ≥1 的哈希把版本号纳入（V3）且不退回旧口径；比本程序新的版本判 `Unsupported`，启动 / 放行 / 引擎恢复一律拒绝 | 旧批次记录仍可打开：`SnapshotSchemaTests` 的三份黄金样本（V1 / V2 / V3 口径）必须保持 Valid |
 | JWT / 密钥 | 开发密钥仅 Development；禁止提交生产密钥 | 非 Dev 缺/弱密钥无法启动（补测试） |
 | 前端实时 | Hub 订阅 / 退订与批次页生命周期明确 | 多标签切换不串批 |
 | 授权矩阵文档 | `docs/auth-matrix.md` 与代码同步 | 改角色先改表 |
@@ -293,3 +293,4 @@
 | 2026-10-03 | 补 `docs/auth-matrix.md`（从代码生成并由 `AuthMatrixTests` 守护，新项目 `RecipesManage.Api.Tests`）；补 `alarms/{id}/ack` 缺失的第一道门策略 |
 | 2026-10-03 | 启动时主动复位孤儿设备：新表 `pending_device_resets`，中止同提交登记、复位确认才删、后台补做并重试；新增 `PendingDeviceResetTests` |
 | 2026-10-03 | 阶段 0 完成：新增 `docs/adr/0001-runtime-boundaries.md`，README 增「架构约束」小节 |
+| 2026-10-03 | 快照 `schemaVersion`：新批次写 1 并用 V3 哈希；旧批次无字段按 0 读、哈希口径不变；新增 `Unsupported` 状态（前端有对应标签）；新增 `SnapshotSchemaTests`（含三份黄金样本；已做变异验证：哈希去掉版本号则降级测试变红） |

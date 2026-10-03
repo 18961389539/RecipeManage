@@ -411,6 +411,12 @@ public sealed class ProcessAlarm : Entity
 
 public sealed class ControlRecipeSnapshot
 {
+    /// <summary>
+    /// 结构版本，见 <see cref="SnapshotSchema"/>。缺省 0 = 版本号出现之前的快照（JSON 里没有这个字段）；
+    /// 新快照由 <see cref="ControlRecipeSnapshotFactory"/> 写成当前版本。注意这里<b>不能</b>把缺省值写成当前版本：
+    /// 那样所有历史快照都会在读出来的那一刻被说成"新版"。
+    /// </summary>
+    public int SchemaVersion { get; init; }
     public Guid MasterRecipeId { get; init; }
     public Guid RecipeVersionId { get; init; }
     public int VersionNumber { get; init; }

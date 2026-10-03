@@ -10,7 +10,8 @@ export function snapshotIntegrityLabel(value?: string | null): string {
     Valid: "完整性有效",
     Legacy: "历史快照(无哈希)",
     Mismatch: "完整性失败",
-    Corrupt: "快照损坏"
+    Corrupt: "快照损坏",
+    Unsupported: "快照版本过新"
   };
   return t(map[value] ?? value);
 }

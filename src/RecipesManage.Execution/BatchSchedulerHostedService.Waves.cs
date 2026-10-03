@@ -79,6 +79,8 @@ public sealed partial class BatchSchedulerHostedService
 
         var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson)
                        ?? throw new InvalidOperationException("快照损坏");
+        // 快照比本程序新（升级后又回退了程序）：不按旧形状去驱动 PLC，会话会把批次置成 ENGINE 故障并写明原因。
+        SnapshotSchema.DemandSupported(snapshot);
         var boundIds = UnitEquipmentBinding.AllIds(snapshot, batch.EquipmentId);
         var equipmentRows = await boot.Equipment.Where(e => boundIds.Contains(e.Id)).ToListAsync(ct);
         if (equipmentRows.Count != boundIds.Count)
