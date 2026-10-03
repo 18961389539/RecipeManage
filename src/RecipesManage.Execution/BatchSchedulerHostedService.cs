@@ -161,6 +161,11 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
             {
                 _log.LogInformation("批次 {BatchId} 会话已取消", batchId);
             }
+            catch (PlcCommLostException ex)
+            {
+                _log.LogError(ex, "批次 {BatchId} 读 PLC 持续失败，超出容忍窗口", batchId);
+                await MarkFaultAsync(batchId, nameof(HandshakeFaultCode.PlcCommLost), ex.Message, CancellationToken.None);
+            }
             catch (Exception ex)
             {
                 _log.LogError(ex, "批次 {BatchId} 调度异常", batchId);
@@ -263,7 +268,8 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         {
             case WriteStepPayloadAction write:
                 await plc.WriteStepPayloadAsync(write.StepId, write.StepType, write.Parameters, ct);
-                var echo = await plc.ReadStepPayloadAsync(ct);
+                // 写已经发出去了，读回来校验可以重试（读是幂等的）；写本身绝不重发。
+                var echo = await ReadTolerantAsync(lane, step, machine, "写参回读", plc.ReadStepPayloadAsync, ct);
                 if (!PlcWriteVerify.Matches(write.StepId, write.StepType, write.Parameters, echo, out var mismatch))
                 {
                     machine.NotifyWriteVerifyFailed(now, mismatch);
@@ -294,7 +300,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
                 return;
 
             case ArchiveMeasurementsAction:
-                var measured = await plc.ReadMeasuredAsync(ct);
+                var measured = await ReadTolerantAsync(lane, step, machine, "归档实测", plc.ReadMeasuredAsync, ct);
                 foreach (var (tag, value) in measured)
                     db.ProcessSamples.Add(new ProcessSample(batch.Id, step.StepId, now, tag, value, "archive"));
                 exec.MarkCompleted(now, JsonSerializer.Serialize(QualityArchive.Bind(step, measured), SnapshotJson.Options));

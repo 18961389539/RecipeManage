@@ -275,8 +275,7 @@
 | 参数语义加 `MeasuredValue` | 声明"这列的是被测质量特性"就必须同时声明实测点；前端 `measuredTagRequired()` 单一判断，设计器与相库共用。**没有加 `Quantity`**：配比还没有消费方，别造空转枚举 |
 | 时长不再被静默改写 | `ProcessDuration` 认 ms/s/min/h/d（识别表与换算表同源），写 PLC 时长槽的窗口 `0.2s–7200s` 提成常量并**超窗口报错**（`DURATION_RANGE`）。过去 `Math.Clamp` 把 24 小时固化写成 2 小时发给 PLC，而上位机仍按原值等。Submit 逐参数校验（槽 15 上的显式时长不经过那条合成路径） |
 
-**没做，且需要单独一轮**：工步进行中读失败的容忍（只重连不补写，仍会把一次 8s 超时算成故障）——它直接压在
-`禁止盲写` 的边界上，必须配独立的引擎测试再做；SQLite 写侧合批（多设备订单真来了再说）；多站点/租户（建议用
+**没做，且需要单独一轮**：SQLite 写侧合批（多设备订单真来了再说）；多站点/租户（建议用
 "每站点一套独立部署"绕开，见 [[brmes-single-machine-gaps]] 的判据）。
 
 ---
@@ -293,4 +292,5 @@
 | 2026-10-03 | 补 `docs/auth-matrix.md`（从代码生成并由 `AuthMatrixTests` 守护，新项目 `RecipesManage.Api.Tests`）；补 `alarms/{id}/ack` 缺失的第一道门策略 |
 | 2026-10-03 | 启动时主动复位孤儿设备：新表 `pending_device_resets`，中止同提交登记、复位确认才删、后台补做并重试；新增 `PendingDeviceResetTests` |
 | 2026-10-03 | 阶段 0 完成：新增 `docs/adr/0001-runtime-boundaries.md`，README 增「架构约束」小节 |
+| 2026-10-03 | 工步进行中读 PLC 失败的容忍：握手轮询 / 写参回读 / 归档实测的读失败，窗口内（默认 30s，自上次读成功起算，`readFailureToleranceSeconds` / `readRetrySeconds` 可按设备配）只重连重读、不推进状态机、不写任何信号；用尽报 `PlcCommLost`；恢复后心跳基准顺延（`NoteReadGap`），其余看门狗仍走墙钟。**写 / 触发 / 复位失败不在容忍内**。配置类错误（非线路异常）不等待。新增 `ReadGapTests`、`ReadFailureToleranceTests`（断线期间对 PLC 写入次数为 0，已做变异验证） |
 | 2026-10-03 | 快照 `schemaVersion`：新批次写 1 并用 V3 哈希；旧批次无字段按 0 读、哈希口径不变；新增 `Unsupported` 状态（前端有对应标签）；新增 `SnapshotSchemaTests`（含三份黄金样本；已做变异验证：哈希去掉版本号则降级测试变红） |

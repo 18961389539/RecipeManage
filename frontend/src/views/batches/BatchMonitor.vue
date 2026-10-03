@@ -443,7 +443,8 @@ const faultHint = computed(() => {
     PlcReportedError: "PLC 报 Step_Error：读取 Error_Code 后按设备手册处理。",
     BlindWriteRejected: "状态机拒绝跨阶段写参，保持四步握手顺序。",
     WriteVerifyMismatch: "写参回读与快照不一致：禁止 Trigger_Write，检查点表与 PLC 程序后再重新排队。",
-    HoldAckTimeout: "Host_Hold 后未收到 PLC_Held：禁止盲写下一步，检查保持握手位。"
+    HoldAckTimeout: "Host_Hold 后未收到 PLC_Held：禁止盲写下一步，检查保持握手位。",
+    PlcCommLost: "读 PLC 持续失败，超出容忍窗口：先到现场确认设备实际状态（PLC 可能仍在按程序运行），恢复通讯后再重新排队。"
   };
   return map[code] ?? "可在故障清除后重新排队，调度将从当前工步索引恢复握手。";
 });

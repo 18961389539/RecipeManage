@@ -87,6 +87,25 @@ public sealed class HandshakeStateMachine
 
     public void NotifyResetIssued() => _resetIssued = true;
 
+    /// <summary>
+    /// 读 PLC 中断了 <paramref name="gap"/> 这么久（期间状态机一次 Tick 都没跑）。心跳是"两次读之间有没有变"，
+    /// 读不到的那段时间里没有任何观测，不能算成"心跳没变"；否则恢复后的第一次读只要心跳值与断前相同就会误判 HeartbeatLost。
+    /// 其余看门狗（Ack / Reset / 执行时限）是真实流逝的墙钟时间，不顺延。
+    /// </summary>
+    public void NoteReadGap(TimeSpan gap)
+    {
+        if (gap > TimeSpan.Zero)
+            _lastHeartbeatAt += gap;
+    }
+
+    /// <summary>读 PLC 持续失败、容忍窗口用尽：没有新鲜读数就不做任何判断，只能停下并报故障。</summary>
+    public void NotifyCommLost(DateTimeOffset now, string message)
+    {
+        if (Phase is HandshakePhase.Faulted or HandshakePhase.ReadyToAdvance)
+            return;
+        EnterFault(HandshakeFaultCode.PlcCommLost, 0, now, message);
+    }
+
     public double? RemainingSeconds(HandshakeWorkContext work, DateTimeOffset now)
     {
         var limit = Phase switch

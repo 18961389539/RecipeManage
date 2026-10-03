@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -51,6 +51,7 @@ public sealed partial class BatchSchedulerHostedService
             };
 
             var watchdog = HandshakeWatchdogOptions.FromJson(equipment.WatchdogJson);
+            lane.Watchdog = watchdog;
             var firstOnPlc = true;
 
             foreach (var unit in units)
@@ -172,7 +173,7 @@ public sealed partial class BatchSchedulerHostedService
         var plc = lane.Plc;
         var work = ControlRecipeWritePlan.ToWorkContext(step);
 
-        var inbound0 = await plc.ReadSignalsAsync(ct);
+        var inbound0 = await ReadTolerantAsync(lane, step, null, "握手信号", plc.ReadSignalsAsync, ct);
         if (resumeHeld || inbound0.PlcHeld)
         {
             await ReleasePlcHoldAsync(plc, watchdog.HoldAckTimeout, ct);
@@ -183,7 +184,7 @@ public sealed partial class BatchSchedulerHostedService
                 return new PhaseOutcome(LaneResult.Terminated, null, null);
         }
 
-        inbound0 = await plc.ReadSignalsAsync(ct);
+        inbound0 = await ReadTolerantAsync(lane, step, null, "握手信号", plc.ReadSignalsAsync, ct);
 
         // 续跑的前提是上位机自己记得这一步发过指令（进来时工步已是 Running / Held，MarkStarted 在写 PLC 之前就落库）。
         // 工步进来时还是 Pending，说明本工步没向 PLC 发过任何东西：此刻设备上的 Running / Complete / Trigger 回显
@@ -199,7 +200,7 @@ public sealed partial class BatchSchedulerHostedService
                 batch.BatchNo, step.Code, lane.Equipment.Code,
                 inbound0.StepRunning, inbound0.StepComplete, inbound0.TriggerWriteEcho);
             await IdlePlcAsync(plc, ct);
-            inbound0 = await plc.ReadSignalsAsync(ct);
+            inbound0 = await ReadTolerantAsync(lane, step, null, "握手信号", plc.ReadSignalsAsync, ct);
         }
 
         var resumeSession = !staleResidue &&
@@ -261,41 +262,82 @@ public sealed partial class BatchSchedulerHostedService
                     Work: work), ct);
             }
 
-            var now = DateTimeOffset.UtcNow;
-            var inbound = await plc.ReadSignalsAsync(ct);
-            await SetLanePhaseAsync(lane, machine.Phase.ToString(), exec.Outcome, step.StepId, step.Code, ct);
-
-            if (now - lastSampleAt > TimeSpan.FromMilliseconds(400) &&
-                machine.Phase is HandshakePhase.StepRunning or HandshakePhase.Completing)
+            // 读失败只在窗口内等待重读：不推进状态机、不写信号。窗口用尽才报 PlcCommLost（见 ReadTolerance.cs）。
+            PlcInboundSignals? polled = null;
+            try
             {
-                var measured = await plc.ReadMeasuredAsync(ct);
-                foreach (var (tag, value) in measured)
-                    lane.Db.ProcessSamples.Add(new ProcessSample(batch.Id, step.StepId, now, tag, value, null));
-                lastSampleAt = now;
-                await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "sample", measured), ct);
+                polled = await plc.ReadSignalsAsync(ct);
+                if (lane.Link.OnSuccess(DateTimeOffset.UtcNow) is { } gap)
+                {
+                    machine.NoteReadGap(gap);
+                    await OnReadRecoveredAsync(lane, step, machine.Phase.ToString(), gap, ct);
+                }
+            }
+            catch (Exception ex) when (PlcReadErrors.IsTransient(ex))
+            {
+                if (!await OnReadFailureAsync(lane, step, machine.Phase.ToString(), "握手信号", ex, ct))
+                {
+                    await Task.Delay(watchdog.ReadRetryInterval, ct);
+                    continue;
+                }
+
+                machine.NotifyCommLost(DateTimeOffset.UtcNow, CommLostMessage(lane, "握手信号", ex));
             }
 
-            await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "handshake", new
+            // 读数取回之后再取时间：一次读可能挂满 8 秒 IO 超时，用读之前的时刻判看门狗会少算这段。
+            var now = DateTimeOffset.UtcNow;
+            if (polled is { } inbound)
             {
-                phase = machine.Phase.ToString(),
-                status = batch.Status.ToString(),
-                stepId = step.StepId,
-                stepIndex = index,
-                stepName = step.Name,
-                remainingSeconds = machine.RemainingSeconds(work, now),
-                inbound,
-                equipmentCode = lane.Equipment.Code,
-                unitProcedure = step.UnitProcedure,
-                stepCode = step.Code
-            }), ct);
+                await SetLanePhaseAsync(lane, machine.Phase.ToString(), exec.Outcome, step.StepId, step.Code, ct);
 
-            var phaseBefore = machine.Phase;
-            var actions = machine.Tick(inbound, work, now);
-            if (machine.Phase != phaseBefore)
-                RecordHandshake(lane, step, machine, work, now, "phase", $"{phaseBefore}->{machine.Phase}");
+                if (now - lastSampleAt > TimeSpan.FromMilliseconds(400) &&
+                    machine.Phase is HandshakePhase.StepRunning or HandshakePhase.Completing)
+                {
+                    // 过程采样是附带的，读不到就缺这一个点；握手信号读不到会在下一轮被上面的容忍窗口接住。
+                    try
+                    {
+                        var measured = await plc.ReadMeasuredAsync(ct);
+                        foreach (var (tag, value) in measured)
+                            lane.Db.ProcessSamples.Add(new ProcessSample(batch.Id, step.StepId, now, tag, value, null));
+                        await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "sample", measured), ct);
+                    }
+                    catch (Exception ex) when (PlcReadErrors.IsTransient(ex))
+                    {
+                        _log.LogDebug(ex, "设备 {Equipment} 过程采样读失败，跳过本次", lane.Equipment.Code);
+                    }
 
-            foreach (var action in actions)
-                await ApplyAsync(action, lane, machine, exec, step, work, now, ct);
+                    lastSampleAt = now;
+                }
+
+                await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "handshake", new
+                {
+                    phase = machine.Phase.ToString(),
+                    status = batch.Status.ToString(),
+                    stepId = step.StepId,
+                    stepIndex = index,
+                    stepName = step.Name,
+                    remainingSeconds = machine.RemainingSeconds(work, now),
+                    inbound,
+                    equipmentCode = lane.Equipment.Code,
+                    unitProcedure = step.UnitProcedure,
+                    stepCode = step.Code
+                }), ct);
+
+                var phaseBefore = machine.Phase;
+                var actions = machine.Tick(inbound, work, now);
+                if (machine.Phase != phaseBefore)
+                    RecordHandshake(lane, step, machine, work, now, "phase", $"{phaseBefore}->{machine.Phase}");
+
+                try
+                {
+                    foreach (var action in actions)
+                        await ApplyAsync(action, lane, machine, exec, step, work, now, ct);
+                }
+                catch (PlcCommLostException lost)
+                {
+                    machine.NotifyCommLost(DateTimeOffset.UtcNow, lost.Message);
+                }
+            }
 
             if (exec.Outcome == StepOutcome.Completed)
             {

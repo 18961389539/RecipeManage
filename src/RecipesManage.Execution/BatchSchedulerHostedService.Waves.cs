@@ -60,6 +60,12 @@ public sealed partial class BatchSchedulerHostedService
         public required bool MultiLane { get; init; }
         public BatchLane? Row { get; set; }
 
+        /// <summary>读通道的健康记账（<see cref="PlcLinkMonitor"/>）。</summary>
+        public PlcLinkMonitor Link { get; } = new(DateTimeOffset.UtcNow);
+
+        /// <summary>本设备的看门狗参数；RunLaneAsync 解析后写入，容忍窗口也在里面。</summary>
+        public HandshakeWatchdogOptions Watchdog { get; set; } = new();
+
         public async ValueTask DisposeAsync() => await Scope.DisposeAsync();
     }
 

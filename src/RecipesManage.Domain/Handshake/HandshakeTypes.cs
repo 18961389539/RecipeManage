@@ -28,7 +28,9 @@ public enum HandshakeFaultCode
     BlindWriteRejected = 11,
     CompleteWithoutRunning = 12,
     HoldAckTimeout = 13,
-    WriteVerifyMismatch = 14
+    WriteVerifyMismatch = 14,
+    /// <summary>读 PLC 持续失败超过容忍窗口（<see cref="HandshakeWatchdogOptions.ReadFailureTolerance"/>）。</summary>
+    PlcCommLost = 15
 }
 
 public sealed record HandshakeFault(HandshakeFaultCode Code, int PlcErrorCode, string Message, DateTimeOffset At);
@@ -42,6 +44,16 @@ public sealed record HandshakeWatchdogOptions
     public TimeSpan ResetTimeout { get; init; } = TimeSpan.FromSeconds(8);
     public TimeSpan IdleSettleTimeout { get; init; } = TimeSpan.FromSeconds(10);
     public TimeSpan HoldAckTimeout { get; init; } = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// 读 PLC 连续失败多久之内按"通讯抖动"处理：不推进状态机、不写任何东西，只重连并重读；
+    /// 超过这个窗口才判 <see cref="HandshakeFaultCode.PlcCommLost"/>。PLC 在自己的程序里照常跑，
+    /// 上位机短暂读不到（网络抖动、PLC 忙于扫描、单次 8s 读超时）不该让一批热处理在炉里被判故障。
+    /// </summary>
+    public TimeSpan ReadFailureTolerance { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>读失败后到下一次重试的间隔。</summary>
+    public TimeSpan ReadRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
 
     public static HandshakeWatchdogOptions FromJson(string? json)
     {
@@ -59,7 +71,9 @@ public sealed record HandshakeWatchdogOptions
                 HeartbeatTimeout = Seconds(root, "heartbeatTimeoutSeconds", 3),
                 ResetTimeout = Seconds(root, "resetTimeoutSeconds", 8),
                 IdleSettleTimeout = Seconds(root, "idleSettleSeconds", 10),
-                HoldAckTimeout = Seconds(root, "holdAckSeconds", 8)
+                HoldAckTimeout = Seconds(root, "holdAckSeconds", 8),
+                ReadFailureTolerance = Seconds(root, "readFailureToleranceSeconds", 30),
+                ReadRetryInterval = Seconds(root, "readRetrySeconds", 1)
             };
         }
         catch
