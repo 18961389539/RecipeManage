@@ -41,7 +41,7 @@ public sealed class DesignToHandshakeLoopTests
             .ConfigureLogging(l => l.ClearProviders())
             .ConfigureServices(services =>
             {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
+                services.AddDbContext<AppDbContext>(o => RecipesDatabase.Apply(o, $"Data Source={dbPath}"));
                 services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
                 services.AddSingleton<SimulatedPlcRack>();
                 services.AddPlcSimulation();

@@ -42,7 +42,7 @@ public sealed class SchedulerIntentAndAbortTests
                 b => b is { Status: BatchStatus.Completed },
                 sp => ReadBatchAsync(sp, seeded.BatchId), timeoutMs: 20_000);
 
-            Assert.Equal(BatchStatus.Completed, live?.Status);
+            Assert.True(live?.Status == BatchStatus.Completed, Describe(live));
             Assert.All(live!.StepExecutions, e => Assert.Equal(StepOutcome.Completed, e.Outcome));
             Assert.Empty(await ReadIntentsAsync(host, seeded.BatchId));
         }
@@ -83,7 +83,63 @@ public sealed class SchedulerIntentAndAbortTests
             var done = await WaitUntilAsync(host, seeded.BatchId,
                 b => b is { Status: BatchStatus.Completed },
                 sp => ReadBatchAsync(sp, seeded.BatchId), timeoutMs: 20_000);
-            Assert.Equal(BatchStatus.Completed, done?.Status);
+            Assert.True(done?.Status == BatchStatus.Completed, Describe(done));
+            Assert.Empty(await ReadIntentsAsync(host, seeded.BatchId));
+        }
+        finally
+        {
+            DisposeHost(dbPath, host);
+        }
+    }
+
+    /// <summary>
+    /// 阶段 4 验收："写意图 → 重启 → 恢复"。确认意图在进程停机前已签名落库、但内存里的请求丢了：
+    /// 新进程起来后，调度器必须从库里把它们找回来，两条车道照常推进，意图随消费删除。
+    /// </summary>
+    [Fact]
+    public async Task Restart_ReplaysPersistedConfirms_WithoutAnyEnqueue()
+    {
+        var dbPath = NewDbPath("brmes-replay-confirm");
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        try
+        {
+            var seeded = await SeedParallelConfirmAsync(host, "BRPC1");
+            await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "确认 A");
+            await WriteIntentAsync(host, seeded.BatchId, seeded.StepB, "确认 B");
+            await host.StartAsync();   // 没有任何 EnqueueConfirm：只有库里的两行
+
+            var done = await WaitUntilAsync(host, seeded.BatchId,
+                b => b is { Status: BatchStatus.Completed },
+                sp => ReadBatchAsync(sp, seeded.BatchId), timeoutMs: 20_000);
+
+            Assert.True(done?.Status == BatchStatus.Completed, Describe(done));
+            Assert.Empty(await ReadIntentsAsync(host, seeded.BatchId));
+        }
+        finally
+        {
+            DisposeHost(dbPath, host);
+        }
+    }
+
+    [Fact]
+    public async Task Restart_ReplaysPersistedSkip_ForTheNamedStepOnly()
+    {
+        var dbPath = NewDbPath("brmes-replay-skip");
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        try
+        {
+            var seeded = await SeedParallelConfirmAsync(host, "BRPS1");
+            await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "跳过 A", SchedulerIntentKinds.Skip);
+            await WriteIntentAsync(host, seeded.BatchId, seeded.StepB, "确认 B");
+            await host.StartAsync();
+
+            var done = await WaitUntilAsync(host, seeded.BatchId,
+                b => b is { Status: BatchStatus.Completed },
+                sp => ReadBatchAsync(sp, seeded.BatchId), timeoutMs: 20_000);
+
+            Assert.True(done?.Status == BatchStatus.Completed, Describe(done));
+            Assert.Equal(StepOutcome.Skipped, done!.StepExecutions.Single(s => s.StepId == seeded.StepA).Outcome);
+            Assert.Equal(StepOutcome.Completed, done.StepExecutions.Single(s => s.StepId == seeded.StepB).Outcome);
             Assert.Empty(await ReadIntentsAsync(host, seeded.BatchId));
         }
         finally
@@ -124,12 +180,22 @@ public sealed class SchedulerIntentAndAbortTests
             Assert.True(running);
 
             // 与 BatchService.AbortAsync 同样的落库：批次先定稿为 Aborted，租约留给调度器放。
-            using (var scope = host.Services.CreateScope())
+            // 调度器每个 tick 都在写这一行：乐观并发下操作员那次写可能撞车。生产里 BatchService 把它翻成
+            // 409 CONFLICT「请刷新后重试」，由操作员再点一次——这里照做，而不是把一次撞车当成测试失败。
+            for (var attempt = 1; ; attempt++)
             {
+                using var scope = host.Services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var batch = await db.Batches.SingleAsync(b => b.Id == batchId);
                 batch.Abort("集成测试中止");
-                await db.SaveChangesAsync();
+                try
+                {
+                    await db.SaveChangesAsync();
+                    break;
+                }
+                catch (DbUpdateConcurrencyException) when (attempt < 5)
+                {
+                }
             }
             await host.Services.GetRequiredService<IBatchScheduler>().EnqueueAbortAsync(batchId, "集成测试中止");
 
@@ -154,6 +220,10 @@ public sealed class SchedulerIntentAndAbortTests
             DisposeHost(dbPath, host);
         }
     }
+
+    /// <summary>失败时把批次的故障码与消息带进断言信息——"Faulted"本身看不出是谁把它置坏的。</summary>
+    private static string Describe(ProductionBatch? b) =>
+        $"status={b?.Status} fault={b?.FaultCode}: {b?.FaultMessage}";
 
     private sealed record ParallelConfirm(Guid BatchId, Guid StepA, Guid StepB);
 
@@ -217,11 +287,12 @@ public sealed class SchedulerIntentAndAbortTests
     }
 
     /// <summary>与 BatchService.ConfirmAsync 落的那一行同形：签名之后、入队之前先落库。</summary>
-    private static async Task WriteIntentAsync(IHost host, Guid batchId, Guid stepId, string reason)
+    private static async Task WriteIntentAsync(
+        IHost host, Guid batchId, Guid stepId, string reason, string kind = SchedulerIntentKinds.Confirm)
     {
         using var scope = host.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        db.SchedulerIntents.Add(new SchedulerIntent(batchId, SchedulerIntentKinds.Confirm, reason, stepId));
+        db.SchedulerIntents.Add(new SchedulerIntent(batchId, kind, reason, stepId));
         await db.SaveChangesAsync();
     }
 

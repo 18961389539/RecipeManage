@@ -30,7 +30,8 @@ internal static class SchedulerHarness
             .ConfigureLogging(l => l.ClearProviders())
             .ConfigureServices(services =>
             {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
+                // 与生产同一条配置路径（含连接级 busy_timeout）：引擎测试要验证的就是生产的并发行为。
+                services.AddDbContext<AppDbContext>(o => RecipesDatabase.Apply(o, $"Data Source={dbPath}"));
                 services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
                 services.AddScoped<EquipmentLeaseService>();
                 services.AddSingleton(rack ?? new SimulatedPlcRack());

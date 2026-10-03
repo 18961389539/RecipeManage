@@ -150,6 +150,7 @@ public static class RecipesDatabase
         var cs = ResolveConnectionString(sqlite);
         EnsureSqliteDirectory(cs);
         options.UseSqlite(cs, s => s.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+        options.AddInterceptors(new SqliteConnectionPragmas());
     }
 
     public static void EnsureSqliteDirectory(string connectionString)

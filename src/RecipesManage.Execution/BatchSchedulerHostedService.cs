@@ -162,7 +162,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
             catch (Exception ex)
             {
                 _log.LogError(ex, "批次 {BatchId} 调度异常", batchId);
-                await MarkFaultAsync(batchId, "ENGINE", ex.Message, CancellationToken.None);
+                await MarkFaultAsync(batchId, "ENGINE", DescribeFault(ex), CancellationToken.None);
             }
             finally
             {
@@ -175,6 +175,16 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
                 }
             }
         }, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// 故障消息要带上最内层原因：EF 的 "An error occurred while saving the entity changes" 只是外壳，
+    /// 真正有用的是里面的 "database is locked" / "UNIQUE constraint failed"。操作员和现场排障只看得到这一行。
+    /// </summary>
+    internal static string DescribeFault(Exception ex)
+    {
+        var root = ex.GetBaseException();
+        return ReferenceEquals(root, ex) ? ex.Message : $"{ex.Message} ← {root.GetType().Name}: {root.Message}";
     }
 
     private void ForgetStepRequests(Guid batchId)

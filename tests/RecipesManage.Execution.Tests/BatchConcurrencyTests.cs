@@ -24,7 +24,7 @@ public sealed class BatchConcurrencyTests
             .ConfigureLogging(l => l.ClearProviders())
             .ConfigureServices(services =>
             {
-                services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
+                services.AddDbContext<AppDbContext>(o => RecipesDatabase.Apply(o, $"Data Source={dbPath}"));
                 services.AddScoped<RecipesManage.Application.Contracts.IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
             })
             .Build();
