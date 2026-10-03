@@ -59,7 +59,7 @@ test("material genealogy split charge binds eBR and lab sample is not a PLC tren
   await page.waitForURL(/\/batches\/[0-9a-f-]+$/i);
   await page.getByRole("button", { name: "电子批记录" }).click();
   await expect(page.getByRole("heading", { name: /电子批记录/ })).toBeVisible();
-  const materialTable = page.locator("section.block").filter({ has: page.getByRole("heading", { name: "物料投料与产出谱系" }) });
+  const materialTable = page.locator("section.ebr-block").filter({ has: page.getByRole("heading", { name: "物料投料与产出谱系" }) });
   await expect(materialTable.getByRole("cell", { name: childLot, exact: true })).toBeVisible();
   await expect(materialTable.getByRole("cell", { name: `PROD-${stamp}`, exact: true })).toBeVisible();
   await expect(materialTable.getByText("投料", { exact: true })).toBeVisible();

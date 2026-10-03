@@ -83,8 +83,9 @@ test("design parallel unit procedures and execute on two PLCs", async ({ page })
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
   await expect(page.locator(".page-title")).toContainText("· 待放行 ·", { timeout: 90_000 });
-  await expect(page.locator(".page-title")).toContainText("HT-01:ReadyToAdvance");
-  await expect(page.locator(".page-title")).toContainText("HT-02:ReadyToAdvance");
+  // 两条车道相位一致时汇总会折叠成单个相位标签（多车道带 "CODE:" 前缀只在相位不同时出现）；
+  // 折叠本身即"两条都到可推进"的证据，逐车道用下面的车道行断言钉。
+  await expect(page.locator(".page-title")).toContainText("· 可推进 ·");
   await expect(page.getByText("UP-固溶 · HT-01")).toBeVisible();
   await expect(page.getByText("UP-淬火 · HT-02")).toBeVisible();
 

@@ -42,21 +42,34 @@ test("Mix control recipe cannot snapshot onto FURNACE-classed HT-01", async ({ p
   await dialog.locator(".el-select").nth(0).click();
   await page.getByRole("option", { name: /AL-PR-OPS/ }).click();
   await dialog.locator(".el-select").nth(1).click();
-  const idle = page.getByRole("option", { name: /^HT-01 .*空闲/ });
-  if (await idle.count())
-    await idle.first().click();
-  else
-    await page.getByRole("option").filter({ hasText: /^HT-01 / }).first().click();
-  const pending = page.waitForResponse(
-    (r) => r.request().method() === "POST" && /\/api\/batches\/?$/.test(new URL(r.url()).pathname)
-  );
-  await dialog.getByRole("button", { name: "生成快照并创建" }).click();
-  const resp = await pending;
+  // UI 层守卫：类不兼容的设备（Mix 配方 vs FURNACE 的 HT-01）在下拉里被置灰，选不中。
+  const ht01 = page.getByRole("option").filter({ hasText: /^HT-01 / }).first();
+  await expect(ht01).toHaveClass(/is-disabled/);
+  await page.keyboard.press("Escape");
+
+  // 服务端守卫单独钉：绕过被置灰的 UI 直接打 API，必须仍是 EQ_CLASS 400。
+  const token = await page.evaluate(() => localStorage.getItem("rm_token"));
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const recipeRaw = (await (await page.request.get("/api/recipes", { headers })).json()) as
+    { id: string; code: string }[] | { items: { id: string; code: string }[] };
+  // 配方列表当前回裸数组（并非所有列表都分页了），这里两种形状都接。
+  const recipes = Array.isArray(recipeRaw) ? recipeRaw : recipeRaw.items;
+  const recipe = recipes.find((r) => r.code.startsWith("AL-PR-OPS"))!;
+  const equipment = (await (await page.request.get("/api/equipment", { headers })).json()) as
+    { id: string; code: string }[];
+  const ht01Eq = equipment.find((e) => e.code === "HT-01")!;
+  const resp = await page.request.post("/api/batches", {
+    headers,
+    data: {
+      batchNo, recipeId: recipe.id, equipmentId: ht01Eq.id, scaleFactor: 1,
+      lotNumber: null, unitEquipment: null
+    }
+  });
   expect(resp.status()).toBe(400);
-  const body = await resp.json() as { code?: string; message?: string };
+  const body = (await resp.json()) as { code?: string; message?: string };
   expect(body.code).toBe("EQ_CLASS");
-  expect(body.message ?? "").toMatch(/Mix/);
-  await expect(page.locator(".el-message").filter({ hasText: /不允许执行 Mix/ })).toBeVisible();
+  // 文案引用的是设备类与单元声明的类（FURNACE vs PROCESS），不再提配方名。
+  expect(body.message ?? "").toMatch(/FURNACE.*PROCESS/);
 });
 
 test("admin equipment list shows ISA-88 class codes", async ({ page }) => {

@@ -241,5 +241,8 @@ export async function abortActiveBatches(request: Page["request"]) {
 }
 
 function isE2eBatchNo(batchNo?: string) {
-  return !!batchNo && /^(BE2E|BOPS|BHLD|BSCL|BSKP|BALM|BP2U|BDRF|BMBW|BS7|BRTY|BLOT|BCLS|BA|BB)/i.test(batchNo);
+  // 各 spec 建批用的号段前缀（与 spec 里的模板保持一致）。BCFM/BOOS 曾经漏在名单外，
+  // 执行闭环与升版占用两个 spec 的批次从来没被清理过，是 423/占用级联的漏网之鱼。
+  // B 后面是数字的号（如 B2026…）是真实演示批次，不能误伤，所以这里逐段列举而不是 ^B\w+。
+  return !!batchNo && /^(BE2E|BOOS|BCFM|BOPS|BHLD|BSCL|BSKP|BALM|BP2U|BDRF|BMBW|BS7|BRTY|BLOT|BCLS|BA|BB)/i.test(batchNo);
 }

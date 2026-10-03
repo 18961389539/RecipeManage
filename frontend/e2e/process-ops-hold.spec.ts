@@ -54,7 +54,7 @@ test("hold during StepRunning writes Host_Hold and waits PLC_Held", async ({ pag
 
   await page.getByRole("button", { name: "保持" }).click();
   await esignReasonAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "StepRunning 保持", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Held ·", { timeout: 30_000 });
+  await expect(page.locator(".page-title")).toContainText("· 保持 ·", { timeout: 30_000 });
 
   const rows = await handshakeRows(page);
   expect(rows.some((r) => r.kind === "hold" && (r.detail ?? "").includes("Host_Hold"))).toBeTruthy();

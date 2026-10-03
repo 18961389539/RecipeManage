@@ -34,15 +34,19 @@ test("manual confirm does not write PLC and shows Temperature trends", async ({ 
 
   await expect(page.getByRole("button", { name: "人工确认" })).toBeVisible({ timeout: 45_000 });
   await expect(page.locator(".handshake-status").filter({ hasText: "等待人工确认" }).first()).toBeVisible();
-  await expect(page.locator(".u-legend")).toContainText("Temperature");
+  // 趋势图在「趋势」页签里，监控页默认落在「工步」页签：先切页签再断 uPlot 图例。
+  await page.getByRole("tab").filter({ hasText: "趋势" }).click();
+  // 图例走 signalLabel 的中文名（信号字典 Temperature→温度），不是原始 tag。
+  await expect(page.locator(".u-legend")).toContainText("温度");
   const token = await page.evaluate(() => localStorage.getItem("rm_token"));
   const id = page.url().split("/batches/")[1]?.split(/[?#]/)[0];
   const samplesResp = await page.request.get(`/api/batches/${id}/samples`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   expect(samplesResp.ok()).toBeTruthy();
-  const samples = (await samplesResp.json()) as { tag: string }[];
-  expect(samples.some((s) => s.tag === "Temperature")).toBeTruthy();
+  // /samples 回的是 SampleSeriesDto（points/total/step/maxPoints，抽稀过的序列），不是裸数组。
+  const series = (await samplesResp.json()) as { points: { tag: string }[] };
+  expect(series.points.some((s) => s.tag === "Temperature")).toBeTruthy();
 
   await page.getByText("ECharts", { exact: true }).click();
   await expect(page.locator("[_echarts_instance_] canvas, .echarts canvas, canvas").first()).toBeVisible();
@@ -65,7 +69,7 @@ test("quality OOS holds and does not write the next step", async ({ page }) => {
 
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Held ·", { timeout: 45_000 });
+  await expect(page.locator(".page-title")).toContainText("· 保持 ·", { timeout: 45_000 });
   await expect(page.locator(".el-alert__title").filter({ hasText: "质检超差" })).toBeVisible();
 
   const rows = await handshakeRows(page);

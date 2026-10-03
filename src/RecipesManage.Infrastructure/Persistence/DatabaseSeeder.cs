@@ -36,6 +36,9 @@ public static class DatabaseSeeder
 
         if (options.Demo)
             await SeedDemoAssetsAsync(db, ct);
+
+        // 设备类放到最后回填：此时 HT-02/环回三站才存在。
+        await AssignEquipmentClassesAsync(db, ct);
     }
 
     private static async Task SeedDemoAssetsAsync(AppDbContext db, CancellationToken ct)
@@ -254,19 +257,26 @@ public static class DatabaseSeeder
             await db.SaveChangesAsync(ct);
         }
 
-        async Task AssignAsync(string equipmentCode, string classCode)
+    }
+
+    /// <summary>
+    /// 设备类回填。必须在**所有**设备行创建之后跑（放在演示资产之后）：
+    /// HT-02 与三台环回站是在 SeedDemoAssetsAsync 里建的，早期赋值只覆盖到 HT-01/PR-01，
+    /// 净库上其余设备留空——升级库靠数据修复补齐过，所以这个缺口只在净库暴露
+    /// （e2e 断言 HT-02=QUENCH 时才发现）。幂等：只填空值。
+    /// </summary>
+    private static async Task AssignEquipmentClassesAsync(AppDbContext db, CancellationToken ct)
+    {
+        foreach (var (code, classCode) in new[]
+                 {
+                     ("HT-01", "FURNACE"), ("HT-02", "QUENCH"), ("PR-01", "PROCESS"),
+                     ("MB-01", "GENERIC"), ("S7-01", "GENERIC"), ("UA-01", "GENERIC")
+                 })
         {
-            var row = await db.Equipment.FirstOrDefaultAsync(e => e.Code == equipmentCode, ct);
+            var row = await db.Equipment.FirstOrDefaultAsync(e => e.Code == code, ct);
             if (row is not null && string.IsNullOrWhiteSpace(row.EquipmentClassCode))
                 row.AssignClass(classCode);
         }
-
-        await AssignAsync("HT-01", "FURNACE");
-        await AssignAsync("HT-02", "QUENCH");
-        await AssignAsync("PR-01", "PROCESS");
-        await AssignAsync("MB-01", "GENERIC");
-        await AssignAsync("S7-01", "GENERIC");
-        await AssignAsync("UA-01", "GENERIC");
         await db.SaveChangesAsync(ct);
     }
 
