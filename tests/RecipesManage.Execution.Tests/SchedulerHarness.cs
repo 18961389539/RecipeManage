@@ -25,7 +25,11 @@ internal static class SchedulerHarness
 {
     public const string SimulatorTagMap = "{}";
 
-    public static IHost CreateHost(string dbPath, ConcurrentBag<ExecutionEvent> events, SimulatedPlcRack? rack = null) =>
+    public static IHost CreateHost(
+        string dbPath,
+        ConcurrentBag<ExecutionEvent> events,
+        SimulatedPlcRack? rack = null,
+        Action<IServiceCollection>? configure = null) =>
         Host.CreateDefaultBuilder()
             .ConfigureLogging(l => l.ClearProviders())
             .ConfigureServices(services =>
@@ -41,6 +45,7 @@ internal static class SchedulerHarness
                 services.AddSingleton<BatchSchedulerHostedService>();
                 services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
                 services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
+                configure?.Invoke(services);
             })
             .Build();
 

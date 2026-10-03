@@ -37,6 +37,7 @@ public interface IAppDbContext
     DbSet<EquipmentLease> EquipmentLeases { get; }
     DbSet<AppliedDataFix> DataFixes { get; }
     DbSet<SchedulerIntent> SchedulerIntents { get; }
+    DbSet<PendingDeviceReset> PendingDeviceResets { get; }
 
     /// <summary>调度引擎要在乐观并发冲突后逐实体重载，所以必须看得到变更跟踪器。</summary>
     ChangeTracker ChangeTracker { get; }

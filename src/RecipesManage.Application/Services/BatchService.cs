@@ -125,7 +125,11 @@ public sealed class BatchService
         EnsureCan(Capabilities.BatchOperate);
         await RequireEsignAsync(password, ct);
         var batch = await LoadAsync(id, ct);
+        // 排队中的批次从没碰过设备，不欠复位；已经启动过（运行 / 保持 / 故障）的，设备上可能留着握手位。
+        var deviceTouched = batch.Status != BatchStatus.Queued;
         batch.Abort(string.IsNullOrWhiteSpace(reason) ? "操作员中止" : reason);
+        if (deviceTouched)
+            await MarkDevicesPendingResetAsync(batch, ct);
         await ClearIntentsAsync(batch.Id, ct);
         AuditEsign("batch.abort.esign", batch.Id, reason);
         await SaveBatchStateAsync(ct);
@@ -439,6 +443,23 @@ public sealed class BatchService
             _db.SchedulerIntents.Add(new SchedulerIntent(batchId, kind, reason, stepId));
         else
             row.Replace(reason, stepId);
+    }
+
+    /// <summary>
+    /// 与批次定稿 Aborted <b>同一次提交</b>登记"这些设备欠一次握手位复位"。调度器稍后去复位，确认成功才删标记；
+    /// 之间崩了、或 PLC 当时连不上，标记还在，调度器启动 / 重试时会补做。没有这行，Aborted 是终态，没人再记得这笔账。
+    /// </summary>
+    private async Task MarkDevicesPendingResetAsync(ProductionBatch batch, CancellationToken ct)
+    {
+        var reason = $"批次 {batch.BatchNo} 中止";
+        foreach (var equipmentId in SnapshotJson.BoundEquipmentIds(batch))
+        {
+            var existing = await _db.PendingDeviceResets.FirstOrDefaultAsync(r => r.EquipmentId == equipmentId, ct);
+            if (existing is null)
+                _db.PendingDeviceResets.Add(new PendingDeviceReset(equipmentId, batch.Id, batch.BatchNo, reason));
+            else
+                existing.Renew(batch.Id, batch.BatchNo, reason);
+        }
     }
 
     private async Task ClearIntentsAsync(Guid batchId, CancellationToken ct, params string[] kinds)

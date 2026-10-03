@@ -75,6 +75,8 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // 欠下的设备复位在后台补做：PLC 连不上时 PlcConnectRetry 可能要等很久，不能卡住命令循环。
+        _ = Task.Run(() => PendingResetLoopAsync(stoppingToken), CancellationToken.None);
         await RecoverRunningAsync(stoppingToken);
 
         await foreach (var command in _channel.Reader.ReadAllAsync(stoppingToken))
@@ -375,17 +377,23 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
             db.SchedulerIntents.RemoveRange(rows);
     }
 
-    private static async Task IdlePlcAsync(IPlcHandshakeClient plc, CancellationToken ct)
+    private static async Task IdlePlcAsync(IPlcHandshakeClient plc, CancellationToken ct) =>
+        await TryIdlePlcAsync(plc, ct);
+
+    /// <summary>复位三个握手位。返回是否全部写成功；失败不抛，也不覆盖批次状态。</summary>
+    private static async Task<bool> TryIdlePlcAsync(IPlcHandshakeClient plc, CancellationToken ct)
     {
         try
         {
             await plc.SetHostHoldAsync(false, ct);
             await plc.SetTriggerWriteAsync(false, ct);
             await plc.ResetCompleteAsync(ct);
+            return true;
         }
         catch
         {
             // 保持/中止时尽量复位握手位，通讯失败不覆盖批次状态。
+            return false;
         }
     }
 
@@ -411,22 +419,141 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         }
     }
 
-    private async Task IdleEquipmentAsync(Guid equipmentId, CancellationToken ct)
+    /// <summary>连上设备并复位握手位。返回 true = 已确认复位（设备已不存在也算：没有可复位的东西了）。</summary>
+    private async Task<bool> IdleEquipmentAsync(Guid equipmentId, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
         var equipment = await db.Equipment.FirstOrDefaultAsync(e => e.Id == equipmentId, ct);
-        if (equipment is null) return;
+        if (equipment is null) return true;
         try
         {
             await using var plc = await PlcConnectRetry.ConnectAsync(
                 () => _drivers.Create(equipment), equipment, _log, ct);
-            await IdlePlcAsync(plc, ct);
+            var ok = await TryIdlePlcAsync(plc, ct);
+            if (!ok)
+                _log.LogWarning("复位设备 {EquipmentId} 握手位时写入失败", equipmentId);
+            return ok;
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "中止后复位设备 {EquipmentId} 握手位失败", equipmentId);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// 每次重试之间的间隔。复位没成功的设备（PLC 连不上 / 写失败）带着持久标记留在库里，
+    /// 这里决定多久再试一次。公开可写只是为了让测试不用等 30 秒。
+    /// </summary>
+    public TimeSpan PendingResetRetryInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    private readonly SemaphoreSlim _pendingResetWake = new(0);
+
+    /// <summary>
+    /// 补做"欠下的设备复位"：中止时批次先定稿 Aborted、调度器稍后才复位设备；之间崩了或 PLC 连不上，
+    /// 终态批次不会再被任何流程碰，设备上的握手位就一直留着。<see cref="PendingDeviceReset"/> 是那笔账的持久记录。
+    /// 启动时先清一遍；清不掉的（PLC 仍连不上）隔一段时间再试，直到成功。
+    /// </summary>
+    private async Task PendingResetLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                int remaining;
+                try
+                {
+                    remaining = await SweepPendingResetsAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "补做设备复位时异常，稍后重试");
+                    remaining = 1;
+                }
+
+                // 没有欠账就一直睡，直到某次中止后复位失败来叫醒；还有欠账就按间隔重试。
+                await _pendingResetWake.WaitAsync(remaining == 0 ? Timeout.InfiniteTimeSpan : PendingResetRetryInterval, ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 停机
+        }
+    }
+
+    /// <summary>清一遍欠账，返回仍没清掉的行数。</summary>
+    private async Task<int> SweepPendingResetsAsync(CancellationToken ct)
+    {
+        List<PendingDeviceReset> rows;
+        using (var scope = _scopes.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
+            // SQLite 不能在库里按 DateTimeOffset 排序，行数也只有设备数那么多，取出来再排。
+            rows = (await db.PendingDeviceResets.AsNoTracking().ToListAsync(ct)).OrderBy(r => r.CreatedAt).ToList();
+        }
+
+        var remaining = 0;
+        foreach (var row in rows)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
+
+            var owner = await db.EquipmentLeases.AsNoTracking()
+                .Where(l => l.EquipmentId == row.EquipmentId)
+                .Select(l => (Guid?)l.BatchId)
+                .FirstOrDefaultAsync(ct);
+            if (owner == row.BatchId)
+            {
+                // 来源批次的中止收尾还在进行（等会话停下、尚未放租约）：它自己会复位，这一轮不碰。
+                remaining++;
+                continue;
+            }
+
+            var code = await db.Equipment.AsNoTracking()
+                .Where(e => e.Id == row.EquipmentId).Select(e => e.Code).FirstOrDefaultAsync(ct)
+                ?? row.EquipmentId.ToString("N")[..8];
+
+            if (owner is not null)
+            {
+                // 设备已被别的批次占用：现在往上写复位会打断它的握手。残留由那个批次开工时的"残留握手位"检查处理。
+                _log.LogInformation("设备 {Equipment} 欠的复位（来自批次 {BatchNo}）作废：已被其他批次占用", code, row.BatchNo);
+                await DeletePendingResetAsync(db, row.EquipmentId, null, ct);
+                continue;
+            }
+
+            if (!await IdleEquipmentAsync(row.EquipmentId, ct))
+            {
+                _log.LogWarning("设备 {Equipment} 欠的复位（来自批次 {BatchNo}）仍未成功，{Seconds:0}s 后重试",
+                    code, row.BatchNo, PendingResetRetryInterval.TotalSeconds);
+                remaining++;
+                continue;
+            }
+
+            await DeletePendingResetAsync(db, row.EquipmentId,
+                $"补做设备 {code} 握手位复位（{row.Reason}）", ct);
+            _log.LogInformation("设备 {Equipment} 已补做握手位复位（{Reason}）", code, row.Reason);
+        }
+
+        return remaining;
+    }
+
+    /// <summary>复位确认成功后删标记；<paramref name="auditDetail"/> 非空时留一条系统审计。</summary>
+    private static async Task DeletePendingResetAsync(
+        IAppDbContext db, Guid equipmentId, string? auditDetail, CancellationToken ct)
+    {
+        var rows = await db.PendingDeviceResets.Where(r => r.EquipmentId == equipmentId).ToListAsync(ct);
+        if (rows.Count == 0)
+            return;
+        db.PendingDeviceResets.RemoveRange(rows);
+        if (auditDetail is not null)
+            db.AuditLogs.Add(new AuditLog(null, "system", "device.reset", "EquipmentLine", equipmentId.ToString(), auditDetail));
+        await db.SaveChangesAsync(ct);
     }
 
     private async Task MarkFaultAsync(Guid batchId, string code, string message, CancellationToken ct)
@@ -478,9 +605,17 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         // 顺序有安全含义：先复位握手位、后放租约。反过来的话，租约一放另一批就能接管设备，
         // 这里的复位就会打断那一批的握手。调用前会话已确认退出，不会再有写入与复位交错。
         var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson);
+        var allIdle = true;
         foreach (var equipmentId in UnitEquipmentBinding.AllIds(snapshot, batch.EquipmentId))
-            await IdleEquipmentAsync(equipmentId, ct);
+        {
+            if (await IdleEquipmentAsync(equipmentId, ct))
+                await DeletePendingResetAsync(db, equipmentId, null, ct);
+            else
+                allIdle = false;   // 标记留在库里（BatchService 随定稿一起写的），由重试循环接着做
+        }
         await ReleaseEquipmentAsync(batchId, ct);
+        if (!allIdle)
+            _pendingResetWake.Release();
 
         if (abortedHere)
             await _publisher.PublishAsync(new ExecutionEvent(batchId, "aborted", new { reason }), ct);

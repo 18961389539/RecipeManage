@@ -41,6 +41,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<EquipmentLease> EquipmentLeases => Set<EquipmentLease>();
     public DbSet<AppliedDataFix> DataFixes => Set<AppliedDataFix>();
     public DbSet<SchedulerIntent> SchedulerIntents => Set<SchedulerIntent>();
+    public DbSet<PendingDeviceReset> PendingDeviceResets => Set<PendingDeviceReset>();
 
     /// <summary>
     /// 乐观并发：任何实现 <see cref="IConcurrencyStamped"/> 的实体在被写入前轮换自己的戳，
@@ -267,6 +268,13 @@ public sealed class AppDbContext : DbContext, IAppDbContext
             e.ToTable("scheduler_intents");
             e.HasIndex(x => new { x.BatchId, x.Kind, x.StepId }).IsUnique();
             e.HasIndex(x => x.BatchId);
+        });
+
+        modelBuilder.Entity<PendingDeviceReset>(e =>
+        {
+            e.ToTable("pending_device_resets");
+            // 每台设备至多一行：欠的是同一件事（把握手位复位），不管欠了几次。
+            e.HasIndex(x => x.EquipmentId).IsUnique();
         });
 
         modelBuilder.Entity<ProductionBatch>(e =>

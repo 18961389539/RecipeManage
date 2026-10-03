@@ -230,6 +230,39 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.ToTable("lab_samples", (string)null);
                 });
 
+            modelBuilder.Entity("RecipesManage.Domain.Batches.PendingDeviceReset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BatchNo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("EquipmentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EquipmentId")
+                        .IsUnique();
+
+                    b.ToTable("pending_device_resets", (string)null);
+                });
+
             modelBuilder.Entity("RecipesManage.Domain.Batches.ProcessAlarm", b =>
                 {
                     b.Property<Guid>("Id")
