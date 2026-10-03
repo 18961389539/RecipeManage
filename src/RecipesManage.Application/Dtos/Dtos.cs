@@ -337,7 +337,9 @@ public sealed record DashboardDto(
     IReadOnlyList<EquipmentOccupancyDto> EquipmentOccupancy,
     int PendingReleaseBatches = 0,
     int PendingLabBatches = 0,
-    int HeldBatches = 0);
+    int HeldBatches = 0,
+    /// <summary>待放行批次里最早的创建时刻。数字只会变大，积压多久才知道该不该急；没有待放行时为 null。</summary>
+    DateTimeOffset? OldestPendingReleaseAt = null);
 
 public sealed record MaterialLotDto(
     Guid Id,

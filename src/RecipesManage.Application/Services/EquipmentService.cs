@@ -187,6 +187,13 @@ public sealed class EquipmentService
             .ToListAsync(ct);
         var lifecycle = recipeStatuses.Select(x => x.Draft ?? x.Approved).ToList();
 
+        // 待放行的计数与最早创建时刻一趟查询拿齐：磁贴除了数字还要说"最久积压多久"，
+        // 34 只会变大，老化时间才知道该不该急。
+        var pendingReleaseCreated = await _db.Batches.AsNoTracking()
+            .Where(b => b.Status == Domain.Batches.BatchStatus.Completed)
+            .Select(b => (DateTimeOffset?)b.CreatedAt)
+            .ToListAsync(ct);
+
         return new DashboardDto(
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Running, ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Queued, ct),
@@ -197,11 +204,12 @@ public sealed class EquipmentService
             await _db.ProcessAlarms.CountAsync(a => a.AcknowledgedAt == null, ct),
             items,
             occupancy,
-            await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Completed, ct),
+            pendingReleaseCreated.Count,
             // 数批次而不是待判样品行：一个批次可能挂 2 个待判终样，磁贴写 2、点进去列表只有 1 条。
             // 谓词与 BatchService.ListAsync 的 onlyLabPending 共用 LabSampleQuery.PendingFinal。
             await _db.Batches.CountAsync(b => _db.LabSamples.PendingFinal().Any(s => s.BatchId == b.Id), ct),
-            await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Held, ct));
+            await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Held, ct),
+            pendingReleaseCreated.Count == 0 ? null : pendingReleaseCreated.Min());
     }
 
     private async Task<Dictionary<Guid, EquipmentOccupant>> OccupancyIndexAsync(CancellationToken ct)

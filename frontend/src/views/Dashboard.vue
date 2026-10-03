@@ -26,7 +26,7 @@
         <div class="kpi-label">{{ k.label }}</div>
         <!-- 没有数据就画一个破折号，绝不画 0：0 是"确认没有故障"，— 是"不知道"。
              把不知道显示成零，等于在故障时给出一块全绿的面板。 -->
-        <div class="kpi-value" :class="{ unknown: !hasData }">{{ hasData ? k.value : "—" }}</div>
+        <div class="kpi-value" :class="{ unknown: !hasData }">{{ hasData ? k.value : "—" }}<span v-if="hasData && k.sub" class="kpi-sub">{{ k.sub }}</span></div>
         <!-- 只在"确认有事"时提醒：critical 非零才脉冲，0 和未知不打扰。 -->
         <i v-if="hasData && k.tone === 'critical' && k.value > 0" class="pulse-dot" />
       </el-card>
@@ -78,10 +78,16 @@
       <el-card :header="$t('执行态势')" class="chart-card">
         <div ref="chartEl" class="chart-box" />
       </el-card>
-      <el-card class="occupancy-card" :header="$t('设备占用（一台设备同时只允许一个运行/排队/保持批次）')">
+      <el-card class="occupancy-card">
+        <template #header>
+          <div class="card-head">
+            <span>{{ $t("设备占用（一台设备同时只允许一个运行/排队/保持批次）") }}</span>
+            <el-checkbox v-if="hasManyEquipment" v-model="onlyBusy" size="small">{{ $t("只看非空闲") }}</el-checkbox>
+          </div>
+        </template>
         <el-table
           ref="occupancyTableRef"
-          :data="dash?.equipmentOccupancy ?? []"
+          :data="shownOccupancy"
           v-loading="initialLoading"
           :empty-text="hasData ? $t('暂无设备数据') : $t('数据不可用')"
           :row-class-name="occupancyRowClass"
@@ -222,6 +228,18 @@ function occupancyRowClass({ row }: { row: EquipmentOccupancyDto }): string {
   return "occ-active";
 }
 
+/**
+ * 设备多的时候空闲行是纯噪音；超过阈值给一个「只看非空闲」开关，默认仍显示全量——
+ * 隐藏数据是最后的手段，开关要在用户手里。
+ */
+const OCCUPANCY_TOGGLE_THRESHOLD = 8;
+const onlyBusy = ref(false);
+const hasManyEquipment = computed(() => (dash.value?.equipmentOccupancy?.length ?? 0) > OCCUPANCY_TOGGLE_THRESHOLD);
+const shownOccupancy = computed(() => {
+  const all = dash.value?.equipmentOccupancy ?? [];
+  return onlyBusy.value && hasManyEquipment.value ? all.filter((o) => o.occupancy === "Occupied") : all;
+});
+
 function openBatches(query: Record<string, string>) {
   void router.push({ path: "/batches", query });
 }
@@ -231,6 +249,8 @@ interface KpiItem {
   label: string;
   value: number;
   tone?: "critical" | "warn";
+  /** 副文字：数值之外的语境，如"最久积压 2d"。只在有数据时显示。 */
+  sub?: string;
   /** 跳批次列表并带状态筛选 */
   status?: string;
   /** 额外查询（如待检终样） */
@@ -332,6 +352,19 @@ function failureReason(e: unknown): string {
   return t("无法连接后端");
 }
 
+/**
+ * 待放行积压的老化时间。数字只会变大，"34"读不出该不该急，"最久积压 2d"读得出。
+ * 时长写法与在途批次的时长列同一套（语言无关的 d/h）。
+ */
+function pendingReleaseAge(): string | undefined {
+  const iso = dash.value?.oldestPendingReleaseAt;
+  if (!iso) return undefined;
+  const ms = Date.now() - Date.parse(iso);
+  if (Number.isNaN(ms) || ms < 0) return undefined;
+  const days = Math.floor(ms / 86400000);
+  return t("最久积压 {0}", days > 0 ? `${days}d` : `${Math.max(1, Math.floor(ms / 3600000))}h`);
+}
+
 /** 需人工处置的计数。tone 只在非零时生效 —— 0 故障不该用红色抢视线。 */
 const todoKpis = computed<KpiItem[]>(() => {
   const d = dash.value;
@@ -339,7 +372,7 @@ const todoKpis = computed<KpiItem[]>(() => {
     { key: "faulted", label: t("握手故障批次"), value: d?.faultedBatches ?? 0, tone: "critical", status: "Faulted" },
     { key: "alarms", label: t("未确认报警"), value: d?.openAlarms ?? 0, tone: "critical", path: "/alarms", allowed: canAlarms.value },
     { key: "held", label: t("保持中批次"), value: d?.heldBatches ?? 0, tone: "warn", status: "Held" },
-    { key: "release", label: t("待质量放行"), value: d?.pendingReleaseBatches ?? 0, tone: "warn", status: "Completed" },
+    { key: "release", label: t("待质量放行"), value: d?.pendingReleaseBatches ?? 0, tone: "warn", status: "Completed", sub: pendingReleaseAge() },
     { key: "approvals", label: t("待审核配方"), value: d?.pendingApprovals ?? 0, tone: "warn", path: "/approvals", allowed: canApprovals.value },
     { key: "labs", label: t("待检终样"), value: d?.pendingLabBatches ?? 0, tone: "warn", query: { lab: "pending" } }
   ];
@@ -672,6 +705,10 @@ onUnmounted(() => {
 .occupancy-card :deep(.occ-critical td:first-child) { box-shadow: inset 3px 0 0 var(--err); }
 .kpi-label { color: var(--muted); font-size: 13px; }
 .kpi-value { margin-top: var(--space-2); font-size: 30px; font-weight: 600; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; }
+/* 副文字贴在数值右侧基线上："34 最久积压 2d"，不另起一行撑高卡片 */
+.kpi-sub { margin-left: var(--space-2); font-size: 12px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+/* 占用卡头部：标题左、开关右 */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 /* 可点击的 KPI 卡此前只有 cursor:pointer，缺悬停反馈 */
 .clickable:hover { border-color: var(--accent); background-color: var(--raised); }
 .kpi-group {

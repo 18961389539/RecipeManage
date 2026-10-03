@@ -391,6 +391,8 @@ export interface DashboardDto {
   pendingReleaseBatches?: number;
   pendingLabBatches?: number;
   heldBatches?: number;
+  /** 待放行批次里最早的创建时刻；没有待放行时为 null。磁贴用它说"最久积压多久"。 */
+  oldestPendingReleaseAt?: string | null;
 }
 
 export interface AuditLogDto {
