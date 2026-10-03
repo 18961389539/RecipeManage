@@ -58,13 +58,17 @@ internal static class SchedulerHarness
             // 关停超时不影响断言结论，测试已经跑完。
         }
         host.Dispose();
-        try
+        // 库跑在 WAL 下：-wal / -shm 是同一个库的一部分，一起清，否则 %TEMP% 里会留下一堆孤儿。
+        foreach (var path in new[] { dbPath, dbPath + "-wal", dbPath + "-shm" })
         {
-            File.Delete(dbPath);
-        }
-        catch
-        {
-            // 临时库
+            try
+            {
+                File.Delete(path);
+            }
+            catch
+            {
+                // 临时库
+            }
         }
     }
 

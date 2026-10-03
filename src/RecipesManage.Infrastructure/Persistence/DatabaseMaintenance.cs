@@ -128,6 +128,10 @@ public sealed class DatabaseMaintenance
             {
                 Execute(connection, "VACUUM");
                 vacuumed = true;
+                // WAL 模式下 VACUUM 是整库重写进 WAL：不收回的话 -wal 文件会涨到和库一样大并一直留着，
+                // 磁盘占用反而翻倍。此刻没有批次在跑，截断检查点不会挡住谁。
+                // 回滚日志模式下这条是无操作，所以不必判断当前模式。
+                Execute(connection, "PRAGMA wal_checkpoint(TRUNCATE)");
             }
             else
             {

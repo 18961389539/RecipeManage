@@ -52,11 +52,15 @@ public static class SchemaBootstrap
 
             log?.LogWarning(
                 "即将应用 {Count} 条迁移（先到 {Last}）。升级前快照 {File}（{Bytes} 字节）已校验，" +
-                "升坏了请停应用后用该文件覆盖数据库文件恢复。",
+                "升坏了请停应用，先移走旧的 recipes.db-wal / recipes.db-shm，再用该文件覆盖数据库文件恢复。",
                 pending.Length, pending.Last(), snapshot.Name, snapshot.Bytes);
         }
 
         await db.Database.MigrateAsync(ct);
+
+        // 放在迁移之后：结构升级期间库的形态不变，升级前快照与迁移本身都按原来的模式跑；
+        // 升完再切，新装机器和从旧版升上来的机器最终都落在 WAL。
+        await SqliteJournal.EnsureWalAsync(db, log, ct);
     }
 
     public static async Task<bool> IsLegacyEnsureCreatedAsync(AppDbContext db, CancellationToken ct = default)
