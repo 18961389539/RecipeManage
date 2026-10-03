@@ -117,7 +117,7 @@ test("version bump hold occupancy and resume without blind write", async ({ page
 
   await page.getByRole("button", { name: "保持" }).click();
   await esignReasonAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "E2E 保持验证剩余时长", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Held ·", { timeout: 30_000 });
+  await expect(page.locator(".page-title")).toContainText("· 保持 ·", { timeout: 30_000 });
 
   await page.goto("/dashboard");
   const occRow = page.getByRole("row")

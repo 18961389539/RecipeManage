@@ -45,11 +45,13 @@ async function injectSimulatorFault(page: Page, equipmentCode: string, mode: str
   await page.goto("/equipment");
   const row = page.getByRole("row")
     .filter({ has: page.getByRole("cell", { name: equipmentCode, exact: true }) });
-  await row.getByRole("button", { name: "仿真故障" }).click();
+  await row.getByRole("button", { name: "仿真故障" }).hover();
   const pending = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().includes("/inject-fault")
   );
   await page.getByRole("menuitem", { name: INJECT_MODE_LABELS[mode] }).click();
+  // 设备页 inject() 会先弹确认框（"向 HT-01 注入…？"），点「注入」才真正调 /inject-fault。
+  await page.getByRole("button", { name: INJECT_MODE_LABELS[mode] === "清除故障" ? "清除" : "注入" }).click();
   expect((await pending).ok(), `inject-fault ${mode} 被后端拒绝`).toBeTruthy();
   expect((await pending).ok()).toBeTruthy();
 }
