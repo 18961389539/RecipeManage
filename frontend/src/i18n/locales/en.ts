@@ -287,6 +287,7 @@ const en: Record<string, string> = {
   "时长": "Duration",
   "最新未确认报警": "Latest unconfirmed alarm",
   "去处理": "Fix now",
+  "质量超差": "Quality deviation",
   "第 {0} 步": "Step {0}",
   "需处理": "Needs attention",
   "参考": "Reference",
