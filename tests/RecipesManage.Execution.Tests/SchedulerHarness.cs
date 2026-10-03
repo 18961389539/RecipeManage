@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Services;
 using RecipesManage.Domain.Batches;
@@ -191,5 +192,66 @@ internal static class SchedulerHarness
     {
         var db = services.GetRequiredService<AppDbContext>();
         return db.HandshakeEvents.AsNoTracking().Where(e => e.BatchId == batchId).ToListAsync();
+    }
+
+    /// <summary>给设备换一份看门狗参数（虚拟时钟测试用它把 readyWait 等窗口拉长到不会被推进器撞穿）。</summary>
+    public static async Task SetWatchdogAsync(IHost host, Guid equipmentId, string watchdogJson)
+    {
+        using var scope = host.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var eq = await db.Equipment.SingleAsync(e => e.Id == equipmentId);
+        eq.Update(eq.Name, eq.Protocol, eq.Host, eq.Port, eq.PlcModel, eq.Rack, eq.Slot, eq.Enabled,
+            eq.TagMapJson, eq.Description, watchdogJson);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// 后台时钟推进器：每 15ms 真实时间推 100ms 虚拟时间（约 6.7 倍速）。
+    /// 调度器与仿真站的 Task.Delay 全挂在引擎时钟上，每次 Advance 会唤醒到期的循环——
+    /// 工步时长与容忍窗口因此跑在虚拟时间里，断言不再和真实墙钟赛跑。
+    ///
+    /// 窗口关键期（断线保持 N 秒、就绪等待中的窗口断言）要 <see cref="Pause"/> 后用
+    /// <see cref="WaitVirtualAsync"/> 手动推进：推进器按真实速率走，调度器被真实 IO 卡住时
+    /// 虚拟时间仍在流逝，窗口可能被"撑爆"；暂停后虚拟时间彻底静止，窗口在数学上不可能意外过期。
+    /// </summary>
+    public sealed class TimeDriver(FakeTimeProvider fake) : IDisposable
+    {
+        private readonly CancellationTokenSource cts = new();
+        private volatile bool paused;
+
+        public void Pause() => paused = true;
+        public void Resume() => paused = false;
+        public DateTimeOffset Now => fake.GetUtcNow();
+
+        public async Task WaitVirtualAsync(TimeSpan duration)
+        {
+            var target = fake.GetUtcNow() + duration;
+            while (fake.GetUtcNow() < target)
+            {
+                fake.Advance(TimeSpan.FromMilliseconds(100));
+                await Task.Delay(5);
+            }
+        }
+
+        public void Dispose() => cts.Cancel();
+
+        public Task Start() => Task.Run(RunAsync, CancellationToken.None);
+
+        private async Task RunAsync()
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                if (!paused) fake.Advance(TimeSpan.FromMilliseconds(100));
+                try { await Task.Delay(15, cts.Token); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+    }
+
+    public static TimeDriver DriveTime(FakeTimeProvider fake)
+    {
+        var driver = new TimeDriver(fake);
+        driver.Start();
+        return driver;
     }
 }

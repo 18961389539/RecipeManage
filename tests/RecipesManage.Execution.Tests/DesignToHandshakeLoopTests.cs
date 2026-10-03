@@ -35,6 +35,7 @@ public sealed class DesignToHandshakeLoopTests
         var events = new ConcurrentBag<ExecutionEvent>();
         var publisher = new CapturingPublisher(events);
         var hasher = new BcryptPasswordHasher();
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
         Guid batchId;
         string batchNo;
         var host = Host.CreateDefaultBuilder()
@@ -43,7 +44,8 @@ public sealed class DesignToHandshakeLoopTests
             {
                 services.AddDbContext<AppDbContext>(o => RecipesDatabase.Apply(o, $"Data Source={dbPath}"));
                 services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
-                services.AddSingleton<SimulatedPlcRack>();
+                services.AddSingleton(new SimulatedPlcRack(fake));
+                services.AddSingleton<TimeProvider>(fake);
                 services.AddPlcSimulation();
                 services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
                 services.AddSingleton<IExecutionPublisher>(publisher);
@@ -135,6 +137,7 @@ public sealed class DesignToHandshakeLoopTests
             }
 
             await host.StartAsync();
+            using var driver1 = SchedulerHarness.DriveTime(fake);
 
             ProductionBatch? live = null;
             var deadline = DateTime.UtcNow.AddSeconds(25);

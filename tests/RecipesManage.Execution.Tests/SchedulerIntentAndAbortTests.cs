@@ -24,11 +24,13 @@ public sealed class SchedulerIntentAndAbortTests
     public async Task ParallelConfirms_OnTwoLanes_BothAdvance()
     {
         var dbPath = NewDbPath("brmes-par-confirm");
-        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), clock: fake);
         try
         {
             var seeded = await SeedParallelConfirmAsync(host, "BPCF1");
             await host.StartAsync();
+            using var driver = DriveTime(fake);
             await WaitBothAwaitingAsync(host, seeded.BatchId);
 
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "确认 A");
@@ -56,11 +58,13 @@ public sealed class SchedulerIntentAndAbortTests
     public async Task ConsumingOneConfirm_DeletesOnlyItsOwnIntent_InTheSameCommit()
     {
         var dbPath = NewDbPath("brmes-intent-row");
-        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), clock: fake);
         try
         {
             var seeded = await SeedParallelConfirmAsync(host, "BPCF2");
             await host.StartAsync();
+            using var driver = DriveTime(fake);
             await WaitBothAwaitingAsync(host, seeded.BatchId);
 
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "确认 A");
@@ -100,13 +104,15 @@ public sealed class SchedulerIntentAndAbortTests
     public async Task Restart_ReplaysPersistedConfirms_WithoutAnyEnqueue()
     {
         var dbPath = NewDbPath("brmes-replay-confirm");
-        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), clock: fake);
         try
         {
             var seeded = await SeedParallelConfirmAsync(host, "BRPC1");
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "确认 A");
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepB, "确认 B");
-            await host.StartAsync();   // 没有任何 EnqueueConfirm：只有库里的两行
+            await host.StartAsync();
+            using var driver = DriveTime(fake);   // 没有任何 EnqueueConfirm：只有库里的两行
 
             var done = await WaitUntilAsync(host, seeded.BatchId,
                 b => b is { Status: BatchStatus.Completed },
@@ -125,13 +131,15 @@ public sealed class SchedulerIntentAndAbortTests
     public async Task Restart_ReplaysPersistedSkip_ForTheNamedStepOnly()
     {
         var dbPath = NewDbPath("brmes-replay-skip");
-        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>());
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), clock: fake);
         try
         {
             var seeded = await SeedParallelConfirmAsync(host, "BRPS1");
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepA, "跳过 A", SchedulerIntentKinds.Skip);
             await WriteIntentAsync(host, seeded.BatchId, seeded.StepB, "确认 B");
             await host.StartAsync();
+            using var driver = DriveTime(fake);
 
             var done = await WaitUntilAsync(host, seeded.BatchId,
                 b => b is { Status: BatchStatus.Completed },
@@ -152,8 +160,9 @@ public sealed class SchedulerIntentAndAbortTests
     public async Task Abort_WhileStepRunning_IdlesPlcBeforeReleasingLease()
     {
         var dbPath = NewDbPath("brmes-abort-order");
-        var rack = new SimulatedPlcRack();
-        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), rack);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var rack = new SimulatedPlcRack(fake);
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), rack, clock: fake);
         try
         {
             Guid batchId;
@@ -173,6 +182,7 @@ public sealed class SchedulerIntentAndAbortTests
             }
 
             await host.StartAsync();
+            using var driver = DriveTime(fake);
             var station = rack.Get(equipmentId);
             var running = await WaitUntilAsync(host, batchId,
                 running => running,

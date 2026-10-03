@@ -175,55 +175,6 @@ public sealed class ReadFailureToleranceTests
         }
     }
 
-    /// <summary>
-    /// 后台时钟推进器：每 15ms 真实时间推 100ms 虚拟时间（约 6.7 倍速）。
-    /// 调度器的 Task.Delay 全挂在引擎时钟上，每次 Advance 会唤醒到期的循环——
-    /// 工步时长与容忍窗口因此跑在虚拟时间里，断言不再和真实墙钟赛跑。
-    ///
-    /// 窗口关键期（断线保持 N 秒）要 Pause 后用 <see cref="WaitVirtualAsync"/> 手动推进：
-    /// 推进器按真实速率走，调度器被真实 IO 卡住时虚拟时间仍在流逝，窗口可能被"撑爆"——
-    /// 暂停后虚拟时间彻底静止，1.5s 的断线在 6s 的容忍窗里在数学上就不可能过期。
-    /// </summary>
-    private sealed class TimeDriver(FakeTimeProvider fake) : IDisposable
-    {
-        private readonly CancellationTokenSource cts = new();
-        private volatile bool paused;
-
-        public void Pause() => paused = true;
-        public void Resume() => paused = false;
-
-        public async Task WaitVirtualAsync(TimeSpan duration)
-        {
-            var target = fake.GetUtcNow() + duration;
-            while (fake.GetUtcNow() < target)
-            {
-                fake.Advance(TimeSpan.FromMilliseconds(100));
-                await Task.Delay(5);
-            }
-        }
-
-        public void Dispose() => cts.Cancel();
-
-        public Task Start() => Task.Run(RunAsync, CancellationToken.None);
-
-        private async Task RunAsync()
-        {
-            while (!cts.IsCancellationRequested)
-            {
-                if (!paused) fake.Advance(TimeSpan.FromMilliseconds(100));
-                try { await Task.Delay(15, cts.Token); }
-                catch (OperationCanceledException) { break; }
-            }
-        }
-    }
-
-    private static TimeDriver DriveTime(FakeTimeProvider fake)
-    {
-        var driver = new TimeDriver(fake);
-        driver.Start();
-        return driver;
-    }
-
     /// <summary>一条可以人为切断的线路；所有经它的 PLC 调用都在这里计数。</summary>
     private sealed class PlcLink
     {

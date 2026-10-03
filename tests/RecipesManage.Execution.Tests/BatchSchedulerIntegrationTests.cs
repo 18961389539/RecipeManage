@@ -30,7 +30,8 @@ public sealed class BatchSchedulerIntegrationTests
         var dbPath = Path.Combine(Path.GetTempPath(), $"brmes-{Guid.NewGuid():N}.db");
         Guid batchId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = CreateHost(dbPath, events);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, events, clock: fake);
 
         try
         {
@@ -71,6 +72,7 @@ public sealed class BatchSchedulerIntegrationTests
             }
 
             await host.StartAsync();
+            using var driver1 = DriveTime(fake);
 
             ProductionBatch? live = null;
             var deadline = DateTime.UtcNow.AddSeconds(25);
@@ -116,7 +118,8 @@ public sealed class BatchSchedulerIntegrationTests
         Guid batchId;
         Guid equipmentId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = CreateHost(dbPath, events);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, events, clock: fake);
 
         try
         {
@@ -158,6 +161,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("HoldNotReady");
             await host.StartAsync();
+            using var driver1 = DriveTime(fake);
 
             var scheduler = host.Services.GetRequiredService<IBatchScheduler>();
             ProductionBatch? live = null;
@@ -209,7 +213,8 @@ public sealed class BatchSchedulerIntegrationTests
         Guid batchId;
         Guid equipmentId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = CreateHost(dbPath, events);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, events, clock: fake);
 
         try
         {
@@ -222,6 +227,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("HoldNotReady");
             await host.StartAsync();
+            using var driver1 = DriveTime(fake);
 
             var scheduler = host.Services.GetRequiredService<IBatchScheduler>();
             ProductionBatch? live = null;
@@ -1511,7 +1517,8 @@ public sealed class BatchSchedulerIntegrationTests
         Guid batchId;
         Guid equipmentId;
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = CreateHost(dbPath, events);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var host = CreateHost(dbPath, events, clock: fake);
 
         try
         {
@@ -1526,6 +1533,7 @@ public sealed class BatchSchedulerIntegrationTests
 
             host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("HoldNotReady");
             await host.StartAsync();
+            using var driver1 = DriveTime(fake);
             host.Services.GetRequiredService<SimulatedPlcRack>().Get(equipmentId).InjectFault("None");
 
             ProductionBatch? live = null;

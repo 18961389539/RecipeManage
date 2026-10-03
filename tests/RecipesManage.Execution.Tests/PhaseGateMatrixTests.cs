@@ -67,8 +67,9 @@ public sealed class PhaseGateMatrixTests
     {
         var dbPath = SchedulerHarness.NewDbPath("brmes-gate");
         var events = new ConcurrentBag<ExecutionEvent>();
-        var rack = new SimulatedPlcRack();
-        var host = SchedulerHarness.CreateHost(dbPath, events, rack);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var rack = new SimulatedPlcRack(fake);
+        var host = SchedulerHarness.CreateHost(dbPath, events, rack, clock: fake);
 
         try
         {
@@ -88,12 +89,15 @@ public sealed class PhaseGateMatrixTests
                             new SchedulerHarness.Param("保温温度", "℃", 120, 100, 200),
                             new SchedulerHarness.Param("保温时长", "s", 1, 0.5, 5))
                     ]);
+                // 就绪等待窗拉到 600s 虚拟：等待环到位之前推进器不该把它撞穿。
+                await SchedulerHarness.SetWatchdogAsync(host, equipmentId, """{"readyWaitSeconds":600}""");
             }
 
             if (c.FaultMode.Length > 0)
                 rack.Get(equipmentId).InjectFault(c.FaultMode);
 
             await host.StartAsync();
+            using var driver = SchedulerHarness.DriveTime(fake);
             var scheduler = host.Services.GetRequiredService<IBatchScheduler>();
 
             var atPhase = await SchedulerHarness.WaitUntilAsync(
@@ -178,7 +182,9 @@ public sealed class PhaseGateMatrixTests
     {
         var dbPath = SchedulerHarness.NewDbPath("brmes-runskip");
         var events = new ConcurrentBag<ExecutionEvent>();
-        var host = SchedulerHarness.CreateHost(dbPath, events);
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var rack = new SimulatedPlcRack(fake);
+        var host = SchedulerHarness.CreateHost(dbPath, events, rack, clock: fake);
 
         try
         {
@@ -191,7 +197,8 @@ public sealed class PhaseGateMatrixTests
                     db, "HT-RS", "ITG-RS", "BGT-RS",
                     draftId =>
                     [
-                        GateStep(draftId, "S10", StepType.Heat, 0, 8),
+                        // 20s：断言"运行中不被跳掉"有充裕的虚拟窗口（60s 会撞 30s 步看门狗）。
+                        GateStep(draftId, "S10", StepType.Heat, 0, 20),
                         SchedulerHarness.Step(draftId, "S20", "hold", StepType.Hold, 1,
                             new SchedulerHarness.Param("保温温度", "℃", 120, 100, 200),
                             new SchedulerHarness.Param("保温时长", "s", 1, 0.5, 5))
@@ -199,6 +206,7 @@ public sealed class PhaseGateMatrixTests
             }
 
             await host.StartAsync();
+            using var driver = SchedulerHarness.DriveTime(fake);
             var scheduler = host.Services.GetRequiredService<IBatchScheduler>();
 
             var running = await SchedulerHarness.WaitUntilAsync(
