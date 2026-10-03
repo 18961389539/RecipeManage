@@ -184,10 +184,32 @@ public sealed partial class BatchSchedulerHostedService
         }
 
         inbound0 = await plc.ReadSignalsAsync(ct);
-        var resumeSession = resumeFromPlc || resumeHeld || inbound0.PlcHeld || inbound0.StepRunning || inbound0.StepComplete;
+
+        // 续跑的前提是上位机自己记得这一步发过指令（进来时工步已是 Running / Held，MarkStarted 在写 PLC 之前就落库）。
+        // 工步进来时还是 Pending，说明本工步没向 PLC 发过任何东西：此刻设备上的 Running / Complete / Trigger 回显
+        // 都是别人的残留（中止时复位失败、崩在"记完成"与"复位 Step_Complete"之间、现场手动操作）。
+        // 把它当自己的进度续跑，会在没写参数的情况下把本工步记成完成。先复位；复位后设备仍不空闲，
+        // 就交给状态机的 PlcNotIdle 兜底（拒绝写入并报故障）。
+        var staleResidue = !resumeCrashWait && !resumeHeld &&
+                           (inbound0.StepRunning || inbound0.StepComplete || inbound0.TriggerWriteEcho);
+        if (staleResidue)
+        {
+            _log.LogWarning(
+                "批次 {BatchNo} 工步 {Step} 开始前设备 {Equipment} 有残留握手位（Running={Running} Complete={Complete} Trigger={Trigger}），先复位再写参",
+                batch.BatchNo, step.Code, lane.Equipment.Code,
+                inbound0.StepRunning, inbound0.StepComplete, inbound0.TriggerWriteEcho);
+            await IdlePlcAsync(plc, ct);
+            inbound0 = await plc.ReadSignalsAsync(ct);
+        }
+
+        var resumeSession = !staleResidue &&
+                            (resumeFromPlc || resumeHeld || inbound0.PlcHeld || inbound0.StepRunning || inbound0.StepComplete);
         var machine = resumeSession
             ? HandshakeStateMachine.ResumeFromPlc(inbound0, watchdog, DateTimeOffset.UtcNow)
             : new HandshakeStateMachine(watchdog, DateTimeOffset.UtcNow);
+        if (staleResidue)
+            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "reset",
+                "开工前发现设备残留握手位，已复位，按全新工步重新握手");
 
         if (machine.Phase is HandshakePhase.StepRunning or HandshakePhase.Completing or HandshakePhase.AwaitingPlcAck)
         {
