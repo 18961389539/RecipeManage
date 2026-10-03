@@ -5,9 +5,9 @@
       <div class="health-pill" :class="pillClass">
         <i class="dot" :class="pillDot" />
         <HelpTip v-if="pillState === 'ok'" term="服务健康" :extra="healthDetail" plain>
-          <span>{{ $t("服务正常") }}</span>
+          <span>{{ pillText }}</span>
         </HelpTip>
-        <span v-else-if="pillState === 'stale'">{{ $t("数据中断") }}</span>
+        <span v-else-if="pillState === 'stale'">{{ pillText }}</span>
         <span v-else>{{ $t("服务异常") }}</span>
       </div>
     </div>
@@ -27,6 +27,8 @@
         <!-- 没有数据就画一个破折号，绝不画 0：0 是"确认没有故障"，— 是"不知道"。
              把不知道显示成零，等于在故障时给出一块全绿的面板。 -->
         <div class="kpi-value" :class="{ unknown: !hasData }">{{ hasData ? k.value : "—" }}</div>
+        <!-- 只在"确认有事"时提醒：critical 非零才脉冲，0 和未知不打扰。 -->
+        <i v-if="hasData && k.tone === 'critical' && k.value > 0" class="pulse-dot" />
       </el-card>
     </div>
     <!-- 参考组压成一行窄条：这四个数不需要动手，之前用 4 张 150px 高的卡，
@@ -75,6 +77,7 @@
           :data="dash?.equipmentOccupancy ?? []"
           v-loading="initialLoading"
           :empty-text="hasData ? $t('暂无设备数据') : $t('数据不可用')"
+          :row-class-name="occupancyRowClass"
           class="clickable-rows"
           @row-click="openOccupant"
         >
@@ -125,6 +128,13 @@
               <el-tag size="small" :type="batchStatusTagType(row.status)" effect="dark">{{ batchStatusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column prop="currentStepIndex" :label="$t('工步')" width="90">
+            <template #default="{ row }">
+              <!-- 排队/已创建还没有工步可指，画「—」不画第 1 步；索引是 0 基，+1 转成人的数法。 -->
+              <span v-if="row.status === 'Queued' || row.status === 'Created'">—</span>
+              <span v-else>{{ $t("第 {0} 步", [row.currentStepIndex + 1]) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="handshakePhase">
             <template #header><HelpTip term="四步握手" /></template>
             <template #default="{ row }">
@@ -150,7 +160,7 @@ import { usePolling } from "../utils/usePolling";
 import { useKeyboardRows } from "../utils/useKeyboardRows";
 import { useAuthStore } from "../stores/auth";
 import { handshakeDisplayPhase } from "../utils/handshake";
-import { palette } from "../utils/theme";
+import { palette, type PaletteToken } from "../utils/theme";
 import { t } from "../i18n";
 import HelpTip from "../components/HelpTip.vue";
 import {
@@ -185,6 +195,17 @@ const poll = usePolling(() => scheduleReload());
 
 function openOccupant(row: EquipmentOccupancyDto) {
   if (row.batchId) router.push(`/batches/${row.batchId}`);
+}
+
+/**
+ * 空闲行压暗成背景信息；占用行按批次状态在行首打 3px 色条——
+ * 设备多的时候空闲行是噪音，出事的设备应该从行首色条一列扫出来。
+ */
+function occupancyRowClass({ row }: { row: EquipmentOccupancyDto }): string {
+  if (row.occupancy !== "Occupied") return "occ-idle";
+  if (row.batchStatus === "Faulted") return "occ-critical";
+  if (row.batchStatus === "Held") return "occ-warn";
+  return "occ-active";
 }
 
 function openBatches(query: Record<string, string>) {
@@ -233,6 +254,29 @@ const pillState = computed<"ok" | "stale" | "down">(() => {
 });
 const pillClass = computed(() => (pillState.value === "ok" ? "" : pillState.value === "stale" ? "warn" : "bad"));
 const pillDot = computed(() => (pillState.value === "ok" ? "on" : pillState.value === "stale" ? "warn" : "err"));
+
+/** 最后一次成功取数的时刻。轮询 4 秒一次但界面不说话，用户无从知道眼前数字是几点取的。 */
+const lastDataAt = ref<number | null>(null);
+
+function fmtTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
+}
+
+/**
+ * 徽标文案带新鲜度：正常态「更新于 HH:mm:ss」；中断态「停在 HH:mm:ss」——
+ * 数字已经不再刷新这件事，必须连同它停在几点一起说出来，否则操作员分不清
+ * "刚刷过"和"停在半小时前"。
+ */
+const pillText = computed(() => {
+  if (pillState.value === "stale") {
+    return lastDataAt.value === null
+      ? t("数据中断")
+      : `${t("数据中断")} · ${t("停在 {0}", fmtTime(lastDataAt.value))}`;
+  }
+  return lastDataAt.value === null
+    ? t("服务正常")
+    : `${t("服务正常")} · ${t("更新于 {0}", fmtTime(lastDataAt.value))}`;
+});
 
 /** 取数失败时给人话，不要把 axios 的 "Request failed with status code 503" 贴到界面上。 */
 function failureReason(e: unknown): string {
@@ -295,6 +339,7 @@ async function load() {
   try {
     dash.value = (await http.get<DashboardDto>("/dashboard")).data;
     loadError.value = "";
+    lastDataAt.value = Date.now();
   } catch (e) {
     // 不清 dash：已经拿到过的数字是"最后已知状态"，比抹成空白有用，前提是页面同时说明它已经不新鲜。
     loadError.value = failureReason(e);
@@ -319,6 +364,13 @@ function renderChart() {
     return;
   }
   const d = dash.value;
+  // 按语义着色：蓝=在推进，黄=需要人但不致命，红=正在出事。
+  // 六根同色的棒只能比长短，比不出"麻烦在哪根"。
+  const tones: PaletteToken[] = [
+    "--accent-bright", "--accent-bright",
+    "--warn", "--err",
+    "--warn", "--err"
+  ];
   const data = [
     d?.runningBatches ?? 0,
     d?.queuedBatches ?? 0,
@@ -326,7 +378,7 @@ function renderChart() {
     d?.faultedBatches ?? 0,
     d?.pendingReleaseBatches ?? 0,
     d?.openAlarms ?? 0
-  ];
+  ].map((value, i) => ({ value, itemStyle: { color: palette(tones[i]) } }));
   // 横向条：卡片只有约 280px 宽，竖条的 6 个中文类名会被 ECharts 自动省略到只剩 3 个
   // （实测截图里"排队/故障/未确认报警"直接消失）。类名放到 Y 轴就永远完整。
   chart.setOption({
@@ -462,6 +514,32 @@ onUnmounted(() => {
   flex-direction: column;
   justify-content: center;
 }
+/* 脉冲点固定在卡片右上角，不随文案换行移动 */
+.kpi { position: relative; }
+.pulse-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--err);
+  animation: kpi-pulse 2s ease-out infinite;
+}
+@keyframes kpi-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--err) 45%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; }
+}
+/* 空闲行是背景信息：文字压到 --idle，不再和占用行抢视线 */
+.occupancy-card :deep(.occ-idle .cell) { color: var(--idle); }
+/* 占用行行首 3px 色条按批次状态取色，一列扫过去就知道哪台设备在出事 */
+.occupancy-card :deep(.occ-active td:first-child) { box-shadow: inset 3px 0 0 var(--ok); }
+.occupancy-card :deep(.occ-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
+.occupancy-card :deep(.occ-critical td:first-child) { box-shadow: inset 3px 0 0 var(--err); }
 .kpi-label { color: var(--muted); font-size: 13px; }
 .kpi-value { margin-top: var(--space-2); font-size: 30px; font-weight: 600; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; }
 /* 可点击的 KPI 卡此前只有 cursor:pointer，缺悬停反馈 */

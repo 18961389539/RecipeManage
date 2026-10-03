@@ -282,6 +282,9 @@ const en: Record<string, string> = {
   // ---- 实时状态与总览 ----
   "服务正常": "Service healthy",
   "服务异常": "Service degraded",
+  "更新于 {0}": "updated {0}",
+  "停在 {0}": "stopped at {0}",
+  "第 {0} 步": "Step {0}",
   "需处理": "Needs attention",
   "参考": "Reference",
   "API 健康检查失败": "API health check failed",
