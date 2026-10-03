@@ -14,7 +14,7 @@
     <div class="kpi-group">{{ $t("需处理") }}</div>
     <div class="kpi-grid">
       <el-card
-        v-for="k in todoKpis"
+        v-for="k in actionableKpis"
         :key="k.key"
         class="kpi"
         :class="[kpiTone(k), { clickable: kpiClickable(k) }]"
@@ -365,6 +365,13 @@ function pendingReleaseAge(): string | undefined {
   return t("最久积压 {0}", days > 0 ? `${days}d` : `${Math.max(1, Math.floor(ms / 3600000))}h`);
 }
 
+/**
+ * 只渲染"能行动"的卡：无权限跳转的卡（operator 的待审核配方、engineer 的未确认报警）
+ * 是死卡——数字点不进去，语境也用不上，按全站口径直接不渲染而不是置灰。
+ * 磁贴数从 6 变 4/5，网格留白在行尾，不产生孤儿行。
+ */
+const actionableKpis = computed<KpiItem[]>(() => todoKpis.value.filter((k) => kpiClickable(k)));
+
 /** 需人工处置的计数。tone 只在非零时生效 —— 0 故障不该用红色抢视线。 */
 const todoKpis = computed<KpiItem[]>(() => {
   const d = dash.value;
@@ -584,8 +591,8 @@ onUnmounted(() => {
 <style scoped>
 .clickable { cursor: pointer; }
 .dash-page { container-type: inline-size; }
-/* 6 张卡固定 6 列：之前用 auto-fill，1024 宽下断成 5+1 的孤儿行，第二行那张孤零零的
-   看起来像渲染坏了。6 能被 6/3/2 整除，任何断点都不会落单。 */
+/* KPI 网格 6 列基准：磁贴现在按权限过滤（4~6 张），留白落行尾不落单；
+   3/2 列断点保证窄屏下同样不成孤行。 */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
