@@ -639,9 +639,11 @@ onUnmounted(() => {
 .occupancy-card :deep(.occ-idle .cell) { color: var(--idle); }
 .occupancy-card :deep(.occ-idle) { cursor: default; }
 .occupancy-card :deep(.occ-idle .el-tag) { opacity: 0.55; }
-/* 在途批次：故障/保持行与占用表同一套语言——左缘色条，故障再加 7% 红底整行压色 */
+/* 在途批次：故障/保持行与占用表同一套语言——左缘色条，故障再加 7% 红底整行压色。
+   悬停规则要显式压过全局 tr:hover 的底色（那边特异性更高），否则鼠标一放上去红底就被抹掉。 */
 .live-card :deep(.live-critical td:first-child) { box-shadow: inset 3px 0 0 var(--err); }
 .live-card :deep(.live-critical td) { background-color: color-mix(in srgb, var(--err) 7%, transparent); }
+.live-card :deep(tr.live-critical:hover > td) { background-color: color-mix(in srgb, var(--err) 14%, var(--hover)); }
 .live-card :deep(.live-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
 /* 报警摘要条：只在有未确认报警时出现，点整条进报警列表 */
 .alarm-strip {
