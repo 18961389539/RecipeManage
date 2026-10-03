@@ -15,7 +15,7 @@
       <!-- 只在 dev 有内容：生产构建里 accounts 是空数组（明文口令被摇树掉），不留空占位。 -->
       <div v-if="accounts.length" class="roles">
         <span class="roles-label">{{ $t("演示账号 · 点一下填入用户名与密码") }}</span>
-        <el-button v-for="a in accounts" :key="a.user" size="small" text @click="pick(a)">{{ $t(a.label) }}</el-button>
+        <button v-for="a in accounts" :key="a.user" type="button" class="role-chip" @click="pick(a)">{{ $t(a.label) }}</button>
       </div>
     </el-card>
   </div>
@@ -90,7 +90,19 @@ async function onSubmit() {
 .card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); }
 h2 { margin: 0 0 var(--space-2); }
 p { color: var(--muted); margin: 0 0 var(--space-4); }
-.roles { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-1); }
-/* 演示账号是 dev 专属入口；不写清"点一下会填入"，五个角色名看着像一组导航链接。 */
+.roles { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-1); }
+/* 演示账号是 dev 专属入口；不写清"点一下会填入"，五个角色名看着像一组导航链接。
+   胶囊样式让"这是能点的"不说自明，也消除裸文本按钮换行的参差感。 */
 .roles-label { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+.role-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--text-body);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.role-chip:hover { border-color: var(--accent); color: var(--accent-bright); background: var(--tint); }
 </style>
