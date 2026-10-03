@@ -334,8 +334,9 @@ test.describe("运行总览的失败态（只读断言）", () => {
     await page.goto("/dashboard");
 
     const tiles = page.locator(".kpi-grid .kpi-value");
-    await expect(tiles).toHaveCount(6);
-    await expect(tiles).toHaveText(["—", "—", "—", "—", "—", "—"]);
+    // 管理员没有「多级审核」权限：待审核配方磁贴按角色过滤后不渲染，6 张变 5 张。
+    await expect(tiles).toHaveCount(5);
+    await expect(tiles).toHaveText(["—", "—", "—", "—", "—"]);
     await expect(page.locator(".ref-strip .ref-item b")).toHaveText(["—", "—", "—", "—"]);
 
     await expect(page.getByText("运行数据取数失败：后端返回 503")).toBeVisible();
@@ -352,13 +353,17 @@ test.describe("运行总览的失败态（只读断言）", () => {
     const dash = await apiGet<{ pendingReleaseBatches: number; faultedBatches: number; pendingLabBatches: number }>(page, "/api/dashboard");
     await page.goto("/dashboard");
     const tile = (label: string) =>
-      page.locator(".kpi").filter({ hasText: label }).locator(".kpi-value");
+      page.locator(".kpi").filter({ hasText: label }).locator(".kpi-num");
     await expect(tile("待质量放行")).toHaveText(String(dash.pendingReleaseBatches));
     await expect(tile("握手故障批次")).toHaveText(String(dash.faultedBatches));
     // 磁贴点进去就是这条筛选后的列表，两个数必须相等：一个批次可能挂多个待判终样，
     // 磁贴若数样品行就会比列表条数大（DashboardCountTests 在服务端钉同一件事，这里是界面侧的出口）。
     const labList = await apiGet<{ total: number }>(page, "/api/batches?take=200&onlyLabPending=true");
     await expect(tile("待检终样")).toHaveText(String(labList.total));
+    // 有积压时磁贴要带老化副文字（"最久积压 2d"）：数字只会变大，老化才知道该不该急。
+    if (dash.pendingReleaseBatches > 0)
+      await expect(page.locator(".kpi").filter({ hasText: "待质量放行" }).locator(".kpi-sub"))
+        .toContainText(/最久积压 \d+[dh]/);
     await expect(page.locator(".health-pill")).toContainText("服务正常");
     await expect(page.locator(".el-table__body tr").first()).toBeVisible();
   });

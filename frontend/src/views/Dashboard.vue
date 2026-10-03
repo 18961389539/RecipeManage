@@ -26,7 +26,7 @@
         <div class="kpi-label">{{ k.label }}</div>
         <!-- 没有数据就画一个破折号，绝不画 0：0 是"确认没有故障"，— 是"不知道"。
              把不知道显示成零，等于在故障时给出一块全绿的面板。 -->
-        <div class="kpi-value" :class="{ unknown: !hasData }">{{ hasData ? k.value : "—" }}<span v-if="hasData && k.sub" class="kpi-sub">{{ k.sub }}</span></div>
+        <div class="kpi-value" :class="{ unknown: !hasData }"><span class="kpi-num">{{ hasData ? k.value : "—" }}</span><span v-if="hasData && k.sub" class="kpi-sub">{{ k.sub }}</span></div>
         <!-- 只在"确认有事"时提醒：critical 非零才脉冲，0 和未知不打扰。 -->
         <i v-if="hasData && k.tone === 'critical' && k.value > 0" class="pulse-dot" />
       </el-card>
@@ -445,7 +445,9 @@ async function load() {
   } finally {
     initialLoading.value = false;
   }
-  if (canAlarms.value && (dash.value?.openAlarms ?? 0) > 0) {
+  // 总览断供时连摘要条一起收起：主数据都停了，一条"更新"的报警摘要等于谎报新鲜度；
+  // 且 /alarms 的成功 GET 会打点顶栏新鲜度，让"刷新停滞"永远不亮。见 RealtimeStatus/syncClock。
+  if (!loadError.value && canAlarms.value && (dash.value?.openAlarms ?? 0) > 0) {
     // 取不到就收起摘要条：总览的报警计数仍然在，失败不该多出一条与"数据加载失败"并列的红条。
     try {
       const r = await http.get<ProcessAlarmPageDto>("/alarms", {

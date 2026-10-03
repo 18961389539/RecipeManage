@@ -29,10 +29,11 @@ test("route roles bounce unauthorized users and keep equipment for operators", a
   await expect(page.getByRole("heading", { name: "用户与备份" })).toBeVisible();
 });
 
-test("dashboard ECharts and pending-release card filter the batch list", async ({ page }) => {
+test("dashboard posture timeline and pending-release card filter the batch list", async ({ page }) => {
   await loginAs(page, "质量工程师");
   await expect(page.getByText("执行态势", { exact: true })).toBeVisible();
-  await expect(page.locator("[_echarts_instance_]").first()).toBeVisible();
+  // 态势卡现在是最近 2 小时的事件时间线：有事件画行，没事件如实显示空态——两者都算就位。
+  await expect(page.locator(".event-line, .event-empty").first()).toBeVisible();
 
   await page.getByText("待质量放行", { exact: true }).click();
   await expect(page).toHaveURL(/\/batches\?status=Completed/);
