@@ -46,7 +46,13 @@
       <el-table-column prop="code" :label="$t('编码')" width="140" fixed sortable :sort-method="sorters.code" />
       <el-table-column prop="name" :label="$t('名称')" sortable :sort-method="sorters.name" />
       <el-table-column prop="productName" :label="$t('产品')" sortable :sort-method="sorters.productName" />
-      <el-table-column prop="approvedVersion" :label="$t('生效版本')" width="116" sortable :sort-method="sorters.approvedVersion" :sort-orders="DESC_FIRST" />
+      <el-table-column prop="approvedVersion" :label="$t('生效版本')" width="116" sortable :sort-method="sorters.approvedVersion" :sort-orders="DESC_FIRST">
+        <template #default="{ row }">
+          <!-- v 前缀表明这是版本号而非序数；从未生效过的配方（纯草稿/审核中）按全站口径画裸「—」 -->
+          <span v-if="row.approvedVersion">v{{ row.approvedVersion }}</span>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column min-width="180">
         <template #header><HelpTip term="Unit Procedure">{{ $t("单元规程") }}</HelpTip></template>
         <template #default="{ row }">{{ (row.unitProcedures ?? []).join("、") || "—" }}</template>
