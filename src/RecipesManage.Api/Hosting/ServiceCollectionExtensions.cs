@@ -51,6 +51,8 @@ public static class ServiceCollectionExtensions
         services.AddPlcLoopbackSimulators();
         services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
         services.AddSingleton<IBatchRecordPdf, BatchRecordPdf>();
+        // 引擎的时间出口：工步时长/保持窗口/读容忍窗全走它。测试用 FakeTimeProvider 覆盖即可虚拟推时。
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<BatchSchedulerHostedService>();
         services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
         services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());

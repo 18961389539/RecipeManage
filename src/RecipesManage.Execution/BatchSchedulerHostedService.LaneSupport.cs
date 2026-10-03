@@ -121,7 +121,7 @@ public sealed partial class BatchSchedulerHostedService
                 lane.Db.AuditLogs.Add(new AuditLog(null, "system", "batch.fault", "ProductionBatch",
                     lane.Batch.Id.ToString(), "ENGINE:flush-conflict-divergence-guard"));
                 lane.Db.ProcessAlarms.Add(new ProcessAlarm(lane.Batch.Id, lane.Batch.BatchNo, lane.Batch.CurrentStepId,
-                    "", "ENGINE", "Fault", "并发写入持续冲突，引擎已停止驱动本批次。", DateTimeOffset.UtcNow));
+                    "", "ENGINE", "Fault", "并发写入持续冲突，引擎已停止驱动本批次。", Clock.GetUtcNow()));
                 try
                 {
                     await lane.Db.SaveChangesAsync(ct);
@@ -155,10 +155,10 @@ public sealed partial class BatchSchedulerHostedService
         }
     }
 
-    private static async Task CommandPlcHoldAsync(IPlcHandshakeClient plc, TimeSpan timeout, CancellationToken ct)
+    private async Task CommandPlcHoldAsync(IPlcHandshakeClient plc, TimeSpan timeout, CancellationToken ct)
     {
         await plc.SetHostHoldAsync(true, ct);
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = Clock.GetUtcNow().UtcDateTime + timeout;
         PlcInboundSignals signals;
         do
         {
@@ -166,16 +166,16 @@ public sealed partial class BatchSchedulerHostedService
             signals = await plc.ReadSignalsAsync(ct);
             if (signals.PlcHeld)
                 return;
-            await Task.Delay(80, ct);
-        } while (DateTime.UtcNow < deadline);
+            await Task.Delay(TimeSpan.FromMilliseconds(80), Clock, ct);
+        } while (Clock.GetUtcNow().UtcDateTime < deadline);
 
         throw new InvalidOperationException("PLC 未在时限内以 PLC_Held 应答 Host_Hold。");
     }
 
-    private static async Task ReleasePlcHoldAsync(IPlcHandshakeClient plc, TimeSpan timeout, CancellationToken ct)
+    private async Task ReleasePlcHoldAsync(IPlcHandshakeClient plc, TimeSpan timeout, CancellationToken ct)
     {
         await plc.SetHostHoldAsync(false, ct);
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = Clock.GetUtcNow().UtcDateTime + timeout;
         PlcInboundSignals signals;
         do
         {
@@ -183,8 +183,8 @@ public sealed partial class BatchSchedulerHostedService
             signals = await plc.ReadSignalsAsync(ct);
             if (!signals.PlcHeld)
                 return;
-            await Task.Delay(80, ct);
-        } while (DateTime.UtcNow < deadline);
+            await Task.Delay(TimeSpan.FromMilliseconds(80), Clock, ct);
+        } while (Clock.GetUtcNow().UtcDateTime < deadline);
     }
 
     private void RecordHandshake(

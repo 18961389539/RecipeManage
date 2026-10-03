@@ -1,5 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
     <ProjectReference Include="..\..\src\RecipesManage.Domain\RecipesManage.Domain.csproj" />
     <ProjectReference Include="..\..\src\RecipesManage.Application\RecipesManage.Application.csproj" />
     <ProjectReference Include="..\..\src\RecipesManage.Infrastructure\RecipesManage.Infrastructure.csproj" />

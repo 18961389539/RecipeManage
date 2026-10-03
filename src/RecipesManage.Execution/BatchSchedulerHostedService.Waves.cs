@@ -60,8 +60,8 @@ public sealed partial class BatchSchedulerHostedService
         public required bool MultiLane { get; init; }
         public BatchLane? Row { get; set; }
 
-        /// <summary>读通道的健康记账（<see cref="PlcLinkMonitor"/>）。</summary>
-        public PlcLinkMonitor Link { get; } = new(DateTimeOffset.UtcNow);
+        /// <summary>读通道的健康记账（<see cref="PlcLinkMonitor"/>）。由 RunLaneAsync 用引擎时钟初始化。</summary>
+        public PlcLinkMonitor Link { get; set; } = new(TimeProvider.System.GetUtcNow());
 
         /// <summary>本设备的看门狗参数；RunLaneAsync 解析后写入，容忍窗口也在里面。</summary>
         public HandshakeWatchdogOptions Watchdog { get; set; } = new();
@@ -94,7 +94,7 @@ public sealed partial class BatchSchedulerHostedService
 
         await EnsureLaneRowsAsync(batchId, snapshot, equipmentRows, ct);
 
-        batch.MarkRunning(DateTimeOffset.UtcNow);
+        batch.MarkRunning(Clock.GetUtcNow());
         await boot.SaveChangesAsync(ct);
 
         var waves = RecipeTopology.UnitProcedureWaves(
@@ -169,7 +169,7 @@ public sealed partial class BatchSchedulerHostedService
         if (batch is null || IsTerminal(batch.Status))
             return;
 
-        batch.Complete(DateTimeOffset.UtcNow);
+        batch.Complete(Clock.GetUtcNow());
         await RemoveIntentsAsync(db, batchId, ct);
         await db.SaveChangesAsync(ct);
         await ReleaseEquipmentAsync(batchId, ct);

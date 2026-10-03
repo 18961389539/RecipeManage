@@ -54,7 +54,7 @@ public sealed partial class BatchSchedulerHostedService
         var bound = QualityArchive.Bind(step, measured);
         var quality = JsonSerializer.Serialize(bound, SnapshotJson.Options);
         var exec = lane.Batch.StepExecutions.Single(e => e.StepId == step.StepId);
-        exec.MarkCompleted(DateTimeOffset.UtcNow, quality);
+        exec.MarkCompleted(Clock.GetUtcNow(), quality);
         await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "quality",
@@ -105,12 +105,12 @@ public sealed partial class BatchSchedulerHostedService
             var lastWait = waits.OrderByDescending(e => e.CreatedAt).FirstOrDefault();
             if (lastWait is not null)
                 leftover = HostWaitClock.LeftoverAfterInterrupt(
-                    planned, lastWait.CreatedAt, lastWait.RemainingSeconds, DateTimeOffset.UtcNow).TotalSeconds;
+                    planned, lastWait.CreatedAt, lastWait.RemainingSeconds, Clock.GetUtcNow()).TotalSeconds;
         }
 
         var resume = resumeHeld || resumeCrashWait;
         var duration = HostWaitClock.Resolve(planned, resume, leftover);
-        var deadline = DateTimeOffset.UtcNow + duration;
+        var deadline = Clock.GetUtcNow() + duration;
 
         var detail = resumeHeld
             ? $"[{lane.Equipment.Code}] 恢复等待剩余 {duration.TotalSeconds:0.##}s，禁止写 PLC"
@@ -130,7 +130,7 @@ public sealed partial class BatchSchedulerHostedService
                 await IdlePlcAsync(lane.Plc, ct);
                 if (peerStop == LaneResult.Held)
                 {
-                    var remainingPeer = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
+                    var remainingPeer = Math.Max(0, (deadline - Clock.GetUtcNow()).TotalSeconds);
                     ExecOf(lane, step).MarkHeld();
                     await SetLanePhaseAsync(lane, "Held", StepOutcome.Held, step.StepId, step.Code, ct);
                     lane.Db.HandshakeEvents.Add(new HandshakeEvent(
@@ -147,13 +147,13 @@ public sealed partial class BatchSchedulerHostedService
 
             if (TryGetHold(lane.Batch.Id, out var holdReason))
             {
-                var remainingHold = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
+                var remainingHold = Math.Max(0, (deadline - Clock.GetUtcNow()).TotalSeconds);
                 return await HoldPhaseAsync(lane, step, holdReason, barrier, new HoldGate(
                     StepOutcome.Held, $"{holdReason}，剩余 {remainingHold:0.##}s",
                     Phase: "HostWait", RemainingSeconds: remainingHold), ct);
             }
 
-            var remaining = Math.Max(0, (deadline - DateTimeOffset.UtcNow).TotalSeconds);
+            var remaining = Math.Max(0, (deadline - Clock.GetUtcNow()).TotalSeconds);
             await _publisher.PublishAsync(new ExecutionEvent(lane.Batch.Id, "handshake", new
             {
                 phase = "HostWait",
@@ -170,10 +170,10 @@ public sealed partial class BatchSchedulerHostedService
             if (remaining <= 0)
                 break;
 
-            await Task.Delay(120, ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(120), Clock, ct);
         }
 
-        ExecOf(lane, step).MarkCompleted(DateTimeOffset.UtcNow, "{}");
+        ExecOf(lane, step).MarkCompleted(Clock.GetUtcNow(), "{}");
         await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
         lane.Db.HandshakeEvents.Add(new HandshakeEvent(
             lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "wait",
@@ -207,9 +207,9 @@ public sealed partial class BatchSchedulerHostedService
         lane.Batch.Hold($"质检超差：{detail}");
         lane.Db.ProcessAlarms.Add(new ProcessAlarm(
             lane.Batch.Id, lane.Batch.BatchNo, step.StepId, step.Code,
-            "QualityOos", "Quality", $"质检超差：{detail}", DateTimeOffset.UtcNow));
+            "QualityOos", "Quality", $"质检超差：{detail}", Clock.GetUtcNow()));
         if (machine is not null && work is not null)
-            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "quality", $"超差 {detail}");
+            RecordHandshake(lane, step, machine, work, Clock.GetUtcNow(), "quality", $"超差 {detail}");
         else
             lane.Db.HandshakeEvents.Add(new HandshakeEvent(
                 lane.Batch.Id, step.StepId, step.Code, "Held", "quality",
@@ -286,7 +286,7 @@ public sealed partial class BatchSchedulerHostedService
                     ["确认"] = "通过",
                     ["意见"] = string.IsNullOrWhiteSpace(comment) ? "操作员确认" : comment
                 }, SnapshotJson.Options);
-                ExecOf(lane, step).MarkCompleted(DateTimeOffset.UtcNow, quality);
+                ExecOf(lane, step).MarkCompleted(Clock.GetUtcNow(), quality);
                 await SetLanePhaseAsync(lane, "ReadyToAdvance", StepOutcome.Completed, step.StepId, step.Code, ct);
                 lane.Db.HandshakeEvents.Add(new HandshakeEvent(
                     lane.Batch.Id, step.StepId, step.Code, "ReadyToAdvance", "confirm",
@@ -301,7 +301,7 @@ public sealed partial class BatchSchedulerHostedService
                 return new PhaseOutcome(LaneResult.Completed, null, null);
             }
 
-            await Task.Delay(120, ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(120), Clock, ct);
         }
 
         return new PhaseOutcome(LaneResult.Faulted, null, null);

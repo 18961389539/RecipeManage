@@ -132,7 +132,7 @@ public sealed partial class BatchSchedulerHostedService
     {
         if (machine is not null && work is not null)
         {
-            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, kind, detail);
+            RecordHandshake(lane, step, machine, work, Clock.GetUtcNow(), kind, detail);
             return;
         }
 

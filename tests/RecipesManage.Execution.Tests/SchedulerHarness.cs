@@ -29,7 +29,8 @@ internal static class SchedulerHarness
         string dbPath,
         ConcurrentBag<ExecutionEvent> events,
         SimulatedPlcRack? rack = null,
-        Action<IServiceCollection>? configure = null) =>
+        Action<IServiceCollection>? configure = null,
+        TimeProvider? clock = null) =>
         Host.CreateDefaultBuilder()
             .ConfigureLogging(l => l.ClearProviders())
             .ConfigureServices(services =>
@@ -42,6 +43,8 @@ internal static class SchedulerHarness
                 services.AddPlcSimulation();
                 services.AddSingleton<IPlcDriverFactory, PlcDriverFactory>();
                 services.AddSingleton<IExecutionPublisher>(new ServiceHarness.CapturingPublisher(events));
+                // 默认系统时钟（与生产行为一致）；传 FakeTimeProvider 的测试可以用 Advance 驱动工步时长与容忍窗口。
+                services.AddSingleton(clock ?? TimeProvider.System);
                 services.AddSingleton<BatchSchedulerHostedService>();
                 services.AddSingleton<IBatchScheduler>(sp => sp.GetRequiredService<BatchSchedulerHostedService>());
                 services.AddHostedService(sp => sp.GetRequiredService<BatchSchedulerHostedService>());

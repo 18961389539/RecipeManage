@@ -5,13 +5,19 @@ namespace RecipesManage.Simulation;
 public sealed class SimulatedPlcRack
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SimulatedPlcStation> _stations = new();
+    private readonly TimeProvider _clock;
+
+    /// <param name="clock">与调度器共用同一实例：测试注入 FakeTimeProvider 时，PLC 侧的保温计时
+    /// 跟调度器的窗口数学跑在同一套虚拟时间上，两套时间不再脱钩。</param>
+    public SimulatedPlcRack(TimeProvider? clock = null) => _clock = clock ?? TimeProvider.System;
 
     public SimulatedPlcStation Get(Guid equipmentId) =>
-        _stations.GetOrAdd(equipmentId, _ => new SimulatedPlcStation());
+        _stations.GetOrAdd(equipmentId, _ => new SimulatedPlcStation(_clock));
 }
 
 public sealed class SimulatedPlcStation
 {
+    private readonly TimeProvider _clock;
     private readonly object _gate = new();
     private int _stepId;
     private int _stepType;
@@ -37,6 +43,8 @@ public sealed class SimulatedPlcStation
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private string _fault = "None";
+
+    public SimulatedPlcStation(TimeProvider? clock = null) => _clock = clock ?? TimeProvider.System;
 
     public string FaultMode
     {
@@ -159,7 +167,7 @@ public sealed class SimulatedPlcStation
             {
                 if (!_stepRunning && !_plcHeld)
                     return;
-                var elapsed = DateTime.UtcNow - _runSegmentStarted;
+                var elapsed = _clock.GetUtcNow().UtcDateTime - _runSegmentStarted;
                 _remaining = _runDuration - elapsed;
                 if (_remaining < TimeSpan.Zero)
                     _remaining = TimeSpan.Zero;
@@ -215,7 +223,7 @@ public sealed class SimulatedPlcStation
         var duration = remaining ?? ResolveRunDuration(_params, stepType);
         _runDuration = duration;
         _remaining = duration;
-        _runSegmentStarted = DateTime.UtcNow;
+        _runSegmentStarted = _clock.GetUtcNow().UtcDateTime;
         var startTemp = _measured.GetValueOrDefault("Temperature", 25d);
 
         _runTask = Task.Run(async () =>
@@ -224,7 +232,7 @@ public sealed class SimulatedPlcStation
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    var elapsed = DateTime.UtcNow - _runSegmentStarted;
+                    var elapsed = _clock.GetUtcNow().UtcDateTime - _runSegmentStarted;
                     var ratio = Math.Clamp(elapsed.TotalMilliseconds / duration.TotalMilliseconds, 0, 1);
                     lock (_gate)
                     {
@@ -248,7 +256,7 @@ public sealed class SimulatedPlcStation
                         return;
                     }
 
-                    await Task.Delay(200, ct);
+                    await Task.Delay(TimeSpan.FromMilliseconds(200), _clock, ct);
                 }
             }
             catch (OperationCanceledException)

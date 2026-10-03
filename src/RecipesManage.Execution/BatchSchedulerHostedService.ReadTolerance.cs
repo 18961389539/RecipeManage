@@ -39,7 +39,7 @@ public sealed partial class BatchSchedulerHostedService
             try
             {
                 var value = await read(ct);
-                if (lane.Link.OnSuccess(DateTimeOffset.UtcNow) is { } gap)
+                if (lane.Link.OnSuccess(Clock.GetUtcNow()) is { } gap)
                 {
                     machine?.NoteReadGap(gap);
                     await OnReadRecoveredAsync(lane, step, phase, gap, ct);
@@ -51,7 +51,7 @@ public sealed partial class BatchSchedulerHostedService
             {
                 if (await OnReadFailureAsync(lane, step, phase, what, ex, ct))
                     throw new PlcCommLostException(CommLostMessage(lane, what, ex), ex);
-                await Task.Delay(lane.Watchdog.ReadRetryInterval, ct);
+                await Task.Delay(lane.Watchdog.ReadRetryInterval, Clock, ct);
             }
         }
     }
@@ -62,7 +62,7 @@ public sealed partial class BatchSchedulerHostedService
     private async Task<bool> OnReadFailureAsync(
         LaneScope lane, SnapshotStep step, string phase, string what, Exception ex, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = Clock.GetUtcNow();
         var tolerance = lane.Watchdog.ReadFailureTolerance;
         if (lane.Link.OnFailure(now, tolerance, out var first))
             return true;
@@ -120,7 +120,7 @@ public sealed partial class BatchSchedulerHostedService
         }
     }
 
-    private static string CommLostMessage(LaneScope lane, string what, Exception ex) =>
-        $"读 PLC（{what}）已连续失败 {lane.Link.Outage(DateTimeOffset.UtcNow).TotalSeconds:0}s，" +
+    private string CommLostMessage(LaneScope lane, string what, Exception ex) =>
+        $"读 PLC（{what}）已连续失败 {lane.Link.Outage(Clock.GetUtcNow()).TotalSeconds:0}s，" +
         $"超过容忍窗口 {lane.Watchdog.ReadFailureTolerance.TotalSeconds:0}s，已停止驱动本批次：{DescribeFault(ex)}";
 }

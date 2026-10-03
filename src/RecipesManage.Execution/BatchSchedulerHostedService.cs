@@ -46,16 +46,25 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
     private readonly IExecutionPublisher _publisher;
     private readonly ILogger<BatchSchedulerHostedService> _log;
 
+    /// <summary>
+    /// 引擎唯一的时间出口：工步时长、保持窗口、读容忍窗、握手超时全部从这里取时间、用这里建定时器。
+    /// 生产注册 TimeProvider.System（行为与直接 UtcNow 完全一致）；测试注入 FakeTimeProvider
+    /// 即可虚拟推时——工步跑 1 秒不再真的等 1 秒，窗口断言也不再跟机器负载赛跑。
+    /// </summary>
+    internal TimeProvider Clock { get; }
+
     public BatchSchedulerHostedService(
         IServiceScopeFactory scopes,
         IPlcDriverFactory drivers,
         IExecutionPublisher publisher,
-        ILogger<BatchSchedulerHostedService> log)
+        ILogger<BatchSchedulerHostedService> log,
+        TimeProvider? clock = null)
     {
         _scopes = scopes;
         _drivers = drivers;
         _publisher = publisher;
         _log = log;
+        Clock = clock ?? TimeProvider.System;
     }
 
     public ValueTask EnqueueStartAsync(Guid batchId, CancellationToken cancellationToken = default) =>
@@ -579,7 +588,7 @@ public sealed partial class BatchSchedulerHostedService : BackgroundService, IBa
         }
         batch.Fault(code, message);
         var stepCode = batch.StepExecutions.FirstOrDefault(s => s.StepId == batch.CurrentStepId)?.StepCode ?? "";
-        db.ProcessAlarms.Add(new ProcessAlarm(batch.Id, batch.BatchNo, batch.CurrentStepId, stepCode, code, "Fault", message, DateTimeOffset.UtcNow));
+        db.ProcessAlarms.Add(new ProcessAlarm(batch.Id, batch.BatchNo, batch.CurrentStepId, stepCode, code, "Fault", message, Clock.GetUtcNow()));
         await RemoveIntentsAsync(db, batchId, ct);
         if (!await TrySaveBatchStateAsync(db, batch, ct))
             return;

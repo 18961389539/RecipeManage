@@ -49,6 +49,8 @@ public sealed partial class BatchSchedulerHostedService
                 MultiLane = multiLane,
                 Row = row
             };
+            // Link 的创建时刻用引擎时钟：测试换 FakeTimeProvider 时读通道记账跟着走虚拟时间。
+            lane.Link = new PlcLinkMonitor(Clock.GetUtcNow());
 
             var watchdog = HandshakeWatchdogOptions.FromJson(equipment.WatchdogJson);
             lane.Watchdog = watchdog;
@@ -95,7 +97,7 @@ public sealed partial class BatchSchedulerHostedService
 
                 if (last is not null && lastMachine is not null && lastWork is not null)
                 {
-                    RecordHandshake(lane, last, lastMachine, lastWork, DateTimeOffset.UtcNow, "isa88",
+                    RecordHandshake(lane, last, lastMachine, lastWork, Clock.GetUtcNow(), "isa88",
                         $"Unit Procedure 完成：{unit}");
                     if (!await FlushAsync(lane, hostCt))
                         return LaneResult.Terminated;
@@ -139,7 +141,7 @@ public sealed partial class BatchSchedulerHostedService
         var index = snapshot.Steps.ToList().FindIndex(s => s.StepId == step.StepId);
         var resumeCrashWait = exec.Outcome == StepOutcome.Running;
         var resumeHeld = exec.Outcome == StepOutcome.Held;
-        var phaseStartedAt = DateTimeOffset.UtcNow;
+        var phaseStartedAt = Clock.GetUtcNow();
         void ApplyPhaseStart()
         {
             batch.AdvanceTo(step.StepId, Math.Max(index, 0));
@@ -206,15 +208,15 @@ public sealed partial class BatchSchedulerHostedService
         var resumeSession = !staleResidue &&
                             (resumeFromPlc || resumeHeld || inbound0.PlcHeld || inbound0.StepRunning || inbound0.StepComplete);
         var machine = resumeSession
-            ? HandshakeStateMachine.ResumeFromPlc(inbound0, watchdog, DateTimeOffset.UtcNow)
-            : new HandshakeStateMachine(watchdog, DateTimeOffset.UtcNow);
+            ? HandshakeStateMachine.ResumeFromPlc(inbound0, watchdog, Clock.GetUtcNow())
+            : new HandshakeStateMachine(watchdog, Clock.GetUtcNow());
         if (staleResidue)
-            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "reset",
+            RecordHandshake(lane, step, machine, work, Clock.GetUtcNow(), "reset",
                 "开工前发现设备残留握手位，已复位，按全新工步重新握手");
 
         if (machine.Phase is HandshakePhase.StepRunning or HandshakePhase.Completing or HandshakePhase.AwaitingPlcAck)
         {
-            RecordHandshake(lane, step, machine, work, DateTimeOffset.UtcNow, "resume",
+            RecordHandshake(lane, step, machine, work, Clock.GetUtcNow(), "resume",
                 "引擎恢复，从 PLC 当前握手相位继续，禁止重写参数");
             if (!await FlushAsync(lane, ct))
                 return new PhaseOutcome(LaneResult.Terminated, null, null);
@@ -267,7 +269,7 @@ public sealed partial class BatchSchedulerHostedService
             try
             {
                 polled = await plc.ReadSignalsAsync(ct);
-                if (lane.Link.OnSuccess(DateTimeOffset.UtcNow) is { } gap)
+                if (lane.Link.OnSuccess(Clock.GetUtcNow()) is { } gap)
                 {
                     machine.NoteReadGap(gap);
                     await OnReadRecoveredAsync(lane, step, machine.Phase.ToString(), gap, ct);
@@ -277,15 +279,15 @@ public sealed partial class BatchSchedulerHostedService
             {
                 if (!await OnReadFailureAsync(lane, step, machine.Phase.ToString(), "握手信号", ex, ct))
                 {
-                    await Task.Delay(watchdog.ReadRetryInterval, ct);
+                    await Task.Delay(watchdog.ReadRetryInterval, Clock, ct);
                     continue;
                 }
 
-                machine.NotifyCommLost(DateTimeOffset.UtcNow, CommLostMessage(lane, "握手信号", ex));
+                machine.NotifyCommLost(Clock.GetUtcNow(), CommLostMessage(lane, "握手信号", ex));
             }
 
             // 读数取回之后再取时间：一次读可能挂满 8 秒 IO 超时，用读之前的时刻判看门狗会少算这段。
-            var now = DateTimeOffset.UtcNow;
+            var now = Clock.GetUtcNow();
             if (polled is { } inbound)
             {
                 await SetLanePhaseAsync(lane, machine.Phase.ToString(), exec.Outcome, step.StepId, step.Code, ct);
@@ -335,7 +337,7 @@ public sealed partial class BatchSchedulerHostedService
                 }
                 catch (PlcCommLostException lost)
                 {
-                    machine.NotifyCommLost(DateTimeOffset.UtcNow, lost.Message);
+                    machine.NotifyCommLost(Clock.GetUtcNow(), lost.Message);
                 }
             }
 
@@ -374,7 +376,7 @@ public sealed partial class BatchSchedulerHostedService
             }
 
             await FlushAsync(lane, ct);
-            await Task.Delay(100, ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(100), Clock, ct);
         }
 
         if (exec.Outcome != StepOutcome.Skipped && TryGetHold(batch.Id, out var holdAfter))
