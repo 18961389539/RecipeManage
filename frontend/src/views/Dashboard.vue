@@ -534,8 +534,11 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .pulse-dot { animation: none; }
 }
-/* 空闲行是背景信息：文字压到 --idle，不再和占用行抢视线 */
+/* 空闲行是背景信息：文字压到 --idle，不再和占用行抢视线；它也不可导航，手型要收回去。
+   el-tag 带自己的配色，.cell 的颜色管不到它，得单独退到半透明。 */
 .occupancy-card :deep(.occ-idle .cell) { color: var(--idle); }
+.occupancy-card :deep(.occ-idle) { cursor: default; }
+.occupancy-card :deep(.occ-idle .el-tag) { opacity: 0.55; }
 /* 占用行行首 3px 色条按批次状态取色，一列扫过去就知道哪台设备在出事 */
 .occupancy-card :deep(.occ-active td:first-child) { box-shadow: inset 3px 0 0 var(--ok); }
 .occupancy-card :deep(.occ-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
