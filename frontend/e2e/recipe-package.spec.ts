@@ -39,11 +39,12 @@ test("recipe JSON export import clones as draft without covering existing codes"
   await expect(row.getByRole("cell", { name: "草稿", exact: true })).toBeVisible();
 });
 
-test("admin backup on PostgreSQL offers recipe JSON not sqlite file", async ({ page }) => {
+test("admin on sqlite sees the sqlite download entry on the backup card", async ({ page }) => {
+  // PG 支持已在单机部署收口时移除（ADR：单机 = SQLite）。旧断言"PG 上只给配方 JSON、不给 SQLite
+  // 下载"的前提不存在了：现在备份卡片按真实引擎（sqlite）给出 SQLite 下载入口。
   await loginAs(page, "管理员");
   await page.goto("/users");
   await expect(page.getByRole("heading", { name: "用户与备份" })).toBeVisible();
-  await expect(page.getByText(/当前为 PostgreSQL/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "导出配方 JSON" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "下载 SQLite" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "下载 SQLite" }).first()).toBeVisible();
+  await expect(page.getByText(/当前为 PostgreSQL/)).toHaveCount(0);
 });

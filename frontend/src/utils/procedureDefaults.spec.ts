@@ -30,6 +30,10 @@ describe("procedureDefaults", () => {
       expect(defaultParameters(type)[0].writeToPlc).toBe(true);
   });
 
+  it("质检步的硬度不标归档：实验室量走 LIMS，标了会在提交审核时被 QUALITY_SOURCE 拦下", () => {
+    expect(defaultParameters("QualityCheck").every((p) => !p.archiveAsQuality)).toBe(true);
+  });
+
   it("升温三槽：温度带规格且归档为质量项，斜率与时长不带", () => {
     expect(defaultParameters("Heat")).toEqual([
       { slotIndex: 0, name: "目标温度", engineeringUnit: "℃", setpoint: 530, min: 520, max: 540, writeToPlc: true, archiveAsQuality: true, scaleWithBatch: false },

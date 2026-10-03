@@ -191,7 +191,9 @@ export async function handshakeRows(page: Page) {
     headers: { Authorization: `Bearer ${token}` }
   });
   expect(log.ok(), `handshake-log ${log.status()}`).toBeTruthy();
-  return log.json() as Promise<{ stepCode: string; kind: string; detail?: string | null }[]>;
+  // 端点是分页信封 { items, total }（服务端分页收口时改的），这里解出 items。
+  const body = (await log.json()) as { items: { stepCode: string; kind: string; detail?: string | null }[] };
+  return body.items;
 }
 
 export async function abortActiveBatches(request: Page["request"]) {

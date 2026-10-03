@@ -41,8 +41,10 @@ function param(
 export function defaultParameters(type: StepType): ParameterDto[] {
   switch (type) {
     // 上位机三类不写 PLC：确认意见 / 质检项 / 等待时长。
+    // 质检项的硬度是实验室量，archiveAsQuality 必须为 false——标了归档又在 PLC 上没有
+    // 实测来源，提交审核时会被 QUALITY_SOURCE 拦下（实验室指标走质检样品 LIMS）。
     case "ManualConfirm": return [param(0, "确认意见", "", 0, null, null, false, false)];
-    case "QualityCheck": return [param(0, "硬度", "HB", 95, 90, 110, false, true)];
+    case "QualityCheck": return [param(0, "硬度", "HB", 95, 90, 110, false, false)];
     case "Wait": return [param(0, "等待时长", "s", 5, 0.5, 3600, false, false)];
     case "Heat": return [
       param(0, "目标温度", "℃", 530, 520, 540, true, true),

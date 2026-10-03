@@ -32,7 +32,7 @@ test("manual confirm does not write PLC and shows Temperature trends", async ({ 
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
 
   await expect(page.getByRole("button", { name: "人工确认" })).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByText("等待人工确认")).toBeVisible();
+  await expect(page.locator(".handshake-status").filter({ hasText: "等待人工确认" }).first()).toBeVisible();
   await expect(page.locator(".u-legend")).toContainText("Temperature");
   const token = await page.evaluate(() => localStorage.getItem("rm_token"));
   const id = page.url().split("/batches/")[1]?.split(/[?#]/)[0];
