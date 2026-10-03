@@ -68,7 +68,8 @@ public sealed class DatabaseMaintenance
     private readonly string? _databasePath;
     private readonly string _connectionString;
 
-    public DatabaseMaintenance(string sqliteConnectionString, MaintenanceSettings settings)
+    /// <param name="sqliteConnectionString">null = 未配置，落到默认库路径（与 <see cref="DatabaseBackup"/> 一致）。</param>
+    public DatabaseMaintenance(string? sqliteConnectionString, MaintenanceSettings settings)
     {
         _settings = settings;
         _connectionString = RecipesDatabase.ResolveConnectionString(sqliteConnectionString);
