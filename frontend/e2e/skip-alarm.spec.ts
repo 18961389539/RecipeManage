@@ -14,7 +14,18 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
-async function injectSimulatorFault(page: Page, equipmentCode: string, command: string) {
+// 注意：这里传的是 mode 值（NoAck/CorruptEcho/…），不是下拉菜单里的中文标签——
+// 标签过过 t()，拿它当 mode 会被后端 400。标签↔mode 的映射抄自设备页 injectModes。
+const INJECT_MODE_LABELS: Record<string, string> = {
+  HoldNotReady: "保持未 Ready（禁止写参）",
+  CorruptEcho: "回读不一致（拒绝 Trigger_Write）",
+  NoAck: "Trigger 后不应答",
+  StepError: "PLC 报 Step_Error",
+  DropHeartbeat: "丢失心跳",
+  None: "清除故障"
+};
+
+async function injectSimulatorFault(page: Page, equipmentCode: string, mode: string) {
   await page.goto("/equipment");
   const row = page.getByRole("row")
     .filter({ has: page.getByRole("cell", { name: equipmentCode, exact: true }) });
@@ -22,7 +33,8 @@ async function injectSimulatorFault(page: Page, equipmentCode: string, command: 
   const pending = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().includes("/inject-fault")
   );
-  await page.getByRole("menuitem", { name: command }).click();
+  await page.getByRole("menuitem", { name: INJECT_MODE_LABELS[mode] }).click();
+  expect((await pending).ok(), `inject-fault ${mode} 被后端拒绝`).toBeTruthy();
   expect((await pending).ok()).toBeTruthy();
 }
 
@@ -75,7 +87,7 @@ test("NoAck handshake fault raises alarm and operator can acknowledge", async ({
   await abortActiveBatches(page.request);
   const batchNo = `BALM${uniqueStamp()}`;
   await loginAs(page, "车间操作员");
-  await injectSimulatorFault(page, "HT-01", "Trigger 后不应答");
+  await injectSimulatorFault(page, "HT-01", "NoAck");
 
   try {
     await createBatchFromApproved(page, batchNo, "AL-HT-CFM", "HT-01");
