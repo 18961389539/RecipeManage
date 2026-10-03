@@ -54,7 +54,8 @@
       :data="items"
       v-loading="initialLoading"
       :empty-text="emptyText"
-      class="clickable-rows"
+      :row-class-name="batchRowClass"
+      class="clickable-rows batch-table"
       scrollbar-always-on
       max-height="calc(100vh - 292px)"
       :default-sort="defaultSort"
@@ -63,7 +64,12 @@
     >
       <el-table-column prop="batchNo" :label="$t('批次号')" width="148" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="recipeName" :label="$t('控制配方')" min-width="112" sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
-      <el-table-column prop="recipeVersion" :label="$t('版本')" width="76" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <el-table-column prop="recipeVersion" :label="$t('版本')" width="76" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
+        <template #default="{ row }">
+          <span v-if="row.recipeVersion">v{{ row.recipeVersion }}</span>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="equipmentCode" :label="$t('主设备')" width="96" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="status" :label="$t('状态')" width="96" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
@@ -509,14 +515,29 @@ async function create() {
   }
 }
 
+/**
+ * 与运行总览同一套行视觉语言：Faulted→红条红底，Held→黄条。
+ * 全量履历里故障/保持是要人动手的状态，扫一列色条就能定位，不必逐行读 tag。
+ */
+function batchRowClass({ row }: { row: BatchListItemDto }): string {
+  if (row.status === "Faulted") return "live-critical";
+  if (row.status === "Held") return "live-warn";
+  return "";
+}
+
 onMounted(async () => {
   await load();
-  poll.start();
-});
+  poll.start();});
 </script>
 
 <style scoped>
 .unit-hint { color: var(--muted); font-size: 12px; margin-bottom: var(--space-2); line-height: 1.4; }
 .unit-bind { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .status-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+/* 与运行总览同一套行视觉语言：故障行红条+7% 红底、保持行黄条；
+   全量履历里这两种是要人动手的状态，别的状态不加边（悬停底色规则同理要反压）。 */
+.batch-table :deep(.live-critical td:first-child) { box-shadow: inset 3px 0 0 var(--err); }
+.batch-table :deep(.live-critical td) { background-color: color-mix(in srgb, var(--err) 7%, transparent); }
+.batch-table :deep(tr.live-critical:hover > td) { background-color: color-mix(in srgb, var(--err) 14%, var(--hover)); }
+.batch-table :deep(.live-warn td:first-child) { box-shadow: inset 3px 0 0 var(--warn); }
 </style>
