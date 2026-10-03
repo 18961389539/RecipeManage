@@ -290,6 +290,7 @@ const en: Record<string, string> = {
   "质量超差": "Quality deviation",
   "最久积压 {0}": "oldest waiting {0}",
   "只看非空闲": "Busy only",
+  "最近 2 小时没有批次事件": "No batch events in the last 2 hours",
   "第 {0} 步": "Step {0}",
   "需处理": "Needs attention",
   "参考": "Reference",

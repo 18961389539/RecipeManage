@@ -393,6 +393,18 @@ export interface DashboardDto {
   heldBatches?: number;
   /** 待放行批次里最早的创建时刻；没有待放行时为 null。磁贴用它说"最久积压多久"。 */
   oldestPendingReleaseAt?: string | null;
+  /** 最近 2 小时的批次重要事件（故障/保持/质检/转阶段等），新的在前，最多 9 条。 */
+  recentEvents?: DashboardEventDto[] | null;
+}
+
+/** 运行总览时间线里的一行。批次号由后端投影时连批表取。 */
+export interface DashboardEventDto {
+  at: string;
+  batchNo: string;
+  batchId: string;
+  stepCode: string;
+  kind: string;
+  detail?: string | null;
 }
 
 export interface AuditLogDto {

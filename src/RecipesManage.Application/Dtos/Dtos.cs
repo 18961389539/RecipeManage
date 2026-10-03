@@ -339,7 +339,22 @@ public sealed record DashboardDto(
     int PendingLabBatches = 0,
     int HeldBatches = 0,
     /// <summary>待放行批次里最早的创建时刻。数字只会变大，积压多久才知道该不该急；没有待放行时为 null。</summary>
-    DateTimeOffset? OldestPendingReleaseAt = null);
+    DateTimeOffset? OldestPendingReleaseAt = null,
+    /// <summary>
+    /// 最近 2 小时的批次重要事件（故障/保持/质检/转阶段/跳步/归档/复位/确认），
+    /// 新的在前，最多 9 条。写参/触发/回读/等待这类微动作不上时间线——那是每步都有的心跳，
+    /// 放进来会把真正要人看的事件淹没。
+    /// </summary>
+    IReadOnlyList<DashboardEventDto>? RecentEvents = null);
+
+/// <summary>运行总览时间线里的一行。批次号在事件表里没有冗余，投影时连批表取。</summary>
+public sealed record DashboardEventDto(
+    DateTimeOffset At,
+    string BatchNo,
+    Guid BatchId,
+    string StepCode,
+    string Kind,
+    string? Detail);
 
 public sealed record MaterialLotDto(
     Guid Id,

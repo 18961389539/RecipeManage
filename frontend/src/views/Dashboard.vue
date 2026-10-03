@@ -76,7 +76,23 @@
     />
     <div class="dash-main">
       <el-card :header="$t('执行态势')" class="chart-card">
-        <div ref="chartEl" class="chart-box" />
+        <div v-if="!hasData" class="event-empty">{{ $t("数据不可用") }}</div>
+        <div v-else-if="!(dash?.recentEvents?.length)" class="event-empty">{{ $t("最近 2 小时没有批次事件") }}</div>
+        <!-- 一次数据都没拿到时不要画空时间线：那和"一切正常"长得一模一样。 -->
+        <ul v-else class="event-line">
+          <li
+            v-for="(e, i) in dash?.recentEvents ?? []"
+            :key="i"
+            class="event-row"
+            :class="{ clickable: !!e.batchId }"
+            :title="e.detail ?? e.stepCode"
+            @click="e.batchId && $router.push(`/batches/${e.batchId}`)"
+          >
+            <span class="event-time">{{ fmtTime(Date.parse(e.at)) }}</span>
+            <span class="event-batch">{{ e.batchNo }}</span>
+            <span class="event-kind" :class="`kind-${e.kind}`">{{ handshakeKindLabel(e.kind) }}</span>
+          </li>
+        </ul>
       </el-card>
       <el-card class="occupancy-card">
         <template #header>
@@ -168,10 +184,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { TableInstance } from "element-plus";
-import echarts, { type EChartsType } from "../utils/echarts";
 import http, { HttpError } from "../api/http";
 import type { BatchListItemDto, DashboardDto, EquipmentOccupancyDto, ExecutionEvent, HealthDto, ProcessAlarmDto, ProcessAlarmPageDto } from "../api/types";
 import { occupancyFromEvent, useExecutionHub } from "../realtime/executionHub";
@@ -180,12 +195,12 @@ import { usePolling } from "../utils/usePolling";
 import { useKeyboardRows } from "../utils/useKeyboardRows";
 import { useAuthStore } from "../stores/auth";
 import { handshakeDisplayPhase } from "../utils/handshake";
-import { palette, type PaletteToken } from "../utils/theme";
 import { t } from "../i18n";
 import HelpTip from "../components/HelpTip.vue";
 import {
   batchStatusLabel,
   batchStatusTagType,
+  handshakeKindLabel,
   handshakePhaseLabel,
   handshakePhaseTip,
   occupancyLabel,
@@ -205,11 +220,9 @@ useKeyboardRows(liveTableRef, () => dash.value?.liveBatches ?? []);
 // 仅首屏展示加载态；轮询刷新不再闪 loading，避免 4s 一次的视觉抖动。
 const initialLoading = ref(true);
 const loadError = ref("");
-const chartEl = ref<HTMLDivElement | null>(null);
 const router = useRouter();
 const canApprovals = computed(() => auth.can("Supervisor", "Quality"));
 const canAlarms = computed(() => auth.can("Admin", "Operator", "Supervisor", "Quality"));
-let chart: EChartsType | null = null;
 // 轮询也必须走合并窗口：绕过 scheduleReload 会和事件驱动的重拉叠打出重复请求。
 const poll = usePolling(() => scheduleReload());
 
@@ -450,106 +463,6 @@ async function load() {
   } catch {
     health.value = { status: "unhealthy" };
   }
-  await nextTick();
-  renderChart();
-}
-
-function renderChart() {
-  if (!chartEl.value) return;
-  chart ??= echarts.init(chartEl.value);
-  // 一次数据都没拿到时不要画 6 根 0 长条：那和"全部正常"的图长得一模一样。
-  if (!hasData.value) {
-    chart.clear();
-    return;
-  }
-  const d = dash.value;
-  // 按语义着色：蓝=在推进，黄=需要人但不致命，红=正在出事。
-  // 六根同色的棒只能比长短，比不出"麻烦在哪根"。
-  const tones: PaletteToken[] = [
-    "--accent-bright", "--accent-bright",
-    "--warn", "--err",
-    "--warn", "--err"
-  ];
-  const colors = tones.map((tok) => palette(tok));
-  const cats = ["执行中", "排队", "保持", "故障", "待放行", "未确认报警"].map((s) => t(s));
-  const raw = [
-    d?.runningBatches ?? 0,
-    d?.queuedBatches ?? 0,
-    d?.heldBatches ?? 0,
-    d?.faultedBatches ?? 0,
-    d?.pendingReleaseBatches ?? 0,
-    d?.openAlarms ?? 0
-  ];
-  // 横向条：卡片只有约 280px 宽，竖条的 6 个中文类名会被 ECharts 自动省略到只剩 3 个
-  // （实测截图里"排队/故障/未确认报警"直接消失）。类名放到 Y 轴就永远完整。
-  // 横向条改用 custom 系列是为了数值截断：34 与 2 同轴时小值棒只剩 1~2px，
-  // 超过阈值的棒画到上限为止、尾部打两道底色切口表示"这里断了"，数值照实标在棒尾。
-  const CAP = 10;
-  const track = palette("--panel");
-  /** axis 触发的默认 tooltip 对 custom 系列只会吐维度值，换成按行号读原始数。 */
-  function tooltipFormatter(params: unknown): string {
-    const first = Array.isArray(params)
-      ? (params[0] as { dataIndex: number } | undefined)
-      : (params as { dataIndex: number });
-    if (!first) return "";
-    return `${cats[first.dataIndex]}：${raw[first.dataIndex]}`;
-  }
-  chart.setOption({
-    backgroundColor: "transparent",
-    grid: { left: 8, right: 36, top: 10, bottom: 6, containLabel: true },
-    tooltip: { trigger: "axis", formatter: tooltipFormatter },
-    xAxis: {
-      type: "value",
-      minInterval: 1,
-      // 数值已经标在每条棒的右端，x 轴刻度是重复信息；200px 宽里挤着 0/5/10/…/30 反而吵。
-      axisLabel: { show: false },
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: { lineStyle: { color: palette("--line"), type: "dashed" } }
-    },
-    yAxis: {
-      type: "category",
-      inverse: true,
-      data: cats,
-      axisTick: { show: false },
-      axisLine: { lineStyle: { color: palette("--line") } },
-      axisLabel: { color: palette("--muted"), fontSize: 11 }
-    },
-    series: [
-      {
-        type: "custom",
-        data: raw.map((v, i) => [i, v]),
-        encode: { x: 1, y: 0 },
-        // 参数类型手写成 echarts 官方类型的结构超集，免得从 "echarts" 深层路径拖类型进来
-        renderItem: (params: { dataIndex: number }, api: { coord: (data: readonly number[]) => number[] }) => {
-          const i = params.dataIndex;
-          const real = raw[i] ?? 0;
-          const shown = Math.min(real, CAP);
-          const p0 = api.coord([0, i]);
-          const p1 = api.coord([shown, i]);
-          const barTop = p1[1] - 6.5;
-          const barW = Math.max(p1[0] - p0[0], 0);
-          const children: object[] = [
-            { type: "rect" as const, shape: { x: p0[0], y: barTop, width: barW, height: 13 }, style: { fill: colors[i] } }
-          ];
-          if (real > CAP && barW > 14) {
-            for (const dx of [-8, -3.5]) {
-              children.push({
-                type: "rect" as const,
-                shape: { x: p1[0] + dx, y: barTop - 2, width: 2, height: 17 },
-                style: { fill: track }
-              });
-            }
-          }
-          children.push({
-            type: "text" as const,
-            style: { text: String(real), x: p1[0] + 8, y: barTop + 5, fill: palette("--text-body"), fontSize: 11 }
-          });
-          return { type: "group" as const, children };
-        }
-      }
-    ]
-  });
 }
 
 // 事件不带总览数据，只能整页重拉；握手事件约 100ms 一条，必须合并后再拉。
@@ -573,18 +486,10 @@ onMounted(async () => {
   await load();
   poll.start();
   tickTimer = window.setInterval(() => (nowTick.value = Date.now()), 1000);
-  window.addEventListener("resize", onResize);
 });
 
-function onResize() {
-  chart?.resize();
-}
-
 onUnmounted(() => {
-  window.removeEventListener("resize", onResize);
   if (tickTimer !== undefined) window.clearInterval(tickTimer);
-  chart?.dispose();
-  chart = null;
 });
 </script>
 
@@ -635,7 +540,8 @@ onUnmounted(() => {
 .ref-item b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 /* 0 不是信息，压到次要色，别和旁边非零的数抢视线 */
 .ref-item.zero b { color: var(--muted); font-weight: 500; }
-/* 态势图只作形状参考，200px 宽足够；把宽度让给设备占用表，它 7 列需要横向空间 */
+/* 态势卡是最近 2 小时的事件时间线：只收值得回头看一眼的事件（故障/保持/质检/转阶段…），
+   写参/触发/回读这类每步都有的微动作不上墙。宽度仍让给设备占用表。 */
 .dash-main {
   display: grid;
   grid-template-columns: minmax(200px, 230px) minmax(0, 1fr);
@@ -646,7 +552,24 @@ onUnmounted(() => {
 @container (max-width: 860px) {
   .dash-main { grid-template-columns: 1fr; }
 }
-.chart-box { height: 200px; }
+.event-empty { color: var(--muted); font-size: 12px; padding: var(--space-2) 0; }
+.event-line { list-style: none; margin: 0; padding: 0; max-height: 236px; overflow-y: auto; }
+.event-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.event-row.clickable { cursor: pointer; }
+.event-row.clickable:hover { background: var(--hover); }
+.event-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.event-batch { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-body); }
+.event-kind { flex: none; font-weight: 500; }
+/* 红=正在出事，黄=等人处置，其余事件用正文色——与态势图时代的语义着色同一套 */
+.event-kind.kind-fault { color: var(--err); }
+.event-kind.kind-hold, .event-kind.kind-quality { color: var(--warn); }
 /* KPI 卡：原先 <div>/<h1> 用浏览器默认样式，字号与间距偏松散且与页面节奏不一致 */
 .kpi :deep(.el-card__body) {
   min-height: 76px;

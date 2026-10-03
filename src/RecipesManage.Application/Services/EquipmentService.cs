@@ -194,6 +194,23 @@ public sealed class EquipmentService
             .Select(b => (DateTimeOffset?)b.CreatedAt)
             .ToListAsync(ct);
 
+        // 时间线只收"值得回头看一眼"的事件：故障/保持/质检/转阶段/跳步/归档/复位/确认。
+        // 写参/触发/回读/等待每个工步都来一遍，放进来等于把信号重新埋回噪音里。
+        var since = DateTimeOffset.UtcNow.AddHours(-2);
+        string[] significant = ["fault", "hold", "quality", "phase", "skip", "archive", "reset", "confirm"];
+        var recentEvents = await _db.HandshakeEvents.AsNoTracking()
+            .Where(e => e.CreatedAt >= since && significant.Contains(e.Kind))
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(9)
+            .Select(e => new DashboardEventDto(
+                e.CreatedAt,
+                _db.Batches.Where(b => b.Id == e.BatchId).Select(b => b.BatchNo).FirstOrDefault(),
+                e.BatchId,
+                e.StepCode,
+                e.Kind,
+                e.Detail))
+            .ToListAsync(ct);
+
         return new DashboardDto(
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Running, ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Queued, ct),
@@ -209,7 +226,8 @@ public sealed class EquipmentService
             // 谓词与 BatchService.ListAsync 的 onlyLabPending 共用 LabSampleQuery.PendingFinal。
             await _db.Batches.CountAsync(b => _db.LabSamples.PendingFinal().Any(s => s.BatchId == b.Id), ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Held, ct),
-            pendingReleaseCreated.Count == 0 ? null : pendingReleaseCreated.Min());
+            pendingReleaseCreated.Count == 0 ? null : pendingReleaseCreated.Min(),
+            recentEvents);
     }
 
     private async Task<Dictionary<Guid, EquipmentOccupant>> OccupancyIndexAsync(CancellationToken ct)
