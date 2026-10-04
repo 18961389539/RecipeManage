@@ -76,10 +76,33 @@ powershell -File deploy\install-watchdog.ps1 -PackagePath .\brmes-1.0.1+abc12345
 `/health` 的 `version` 字段与 `package-manifest.json` 说的是同一件事——**远程支持的第一句话
 可以是"打开 http://localhost:5010/health，把 version 念给我"**，不需要人到现场。
 
-### 3.2 备选：现场机上直接发布（需要该机有 SDK）
+### 3.2 一体式 Windows 安装程序（推荐现场使用）
+
+出包机安装 Inno Setup 6 后，从仓库根目录运行：
+
+```powershell
+.\deploy\build-installer.ps1 -Version 1.0.1
+```
+
+产物为 `artifacts\BRMES-Setup-<版本+提交号>.exe`，旁边有 `.sha256`。这个单文件包含自包含 API、
+已构建的 Vue 界面、服务看门狗和安装/升级/卸载逻辑；现场机不需要 .NET、Node.js 或安装器运行库。
+若构建时源码工作区有未提交变更，文件名和 `/health` 版本会附加 `.dirty`，包清单也会记录该状态。
+目标机以管理员身份运行安装程序，完成后打开 `http://localhost:5010/`。
+
+- 程序安装在 `C:\Program Files\BRMES`；数据库、生产配置、日志和备份放在 `C:\ProgramData\BRMES`。
+- 首次安装自动生成随机 JWT 密钥并限制生产配置 ACL；升级原样保留 JWT 配置和 `App_Data`。
+- 首次管理员随机口令仅在首次建库日志中输出一次，查阅 `C:\ProgramData\BRMES\App_Data\logs\brmes-<UTC日期>.log` 并首次登录后立即修改。
+- 安装器停止旧服务/看门狗后替换程序，启动服务并等待 `/health`。失败时恢复旧程序、服务和计划任务。
+- 旧版 `install-watchdog.ps1` 安装若存在，会先停止服务并把 `App_Data` 与生产配置迁移到新的数据目录；旧目录不会被删除。
+- 卸载会移除服务、看门狗和程序，但默认保留数据库、配置、日志与备份；只有在卸载确认中明确选择删除，才会清理 `C:\ProgramData\BRMES`。
+- 默认只监听本机 `http://localhost:5010`。如需局域网访问，安装时可传 `/BRMESUrl=http://0.0.0.0:5010`；网络开放前应先配置防火墙与现场访问策略。
+
+生产升级直接运行新版安装程序即可。若升级前后修改过安装目录，请先卸载旧版或恢复到原目录；安装程序不会删除旧版现场数据。
+
+### 3.3 备选：现场机上直接发布（需要该机有 SDK）
 
 这条路径还需要 **Node.js**：界面必须先构建进 `wwwroot`（脚本会自动跑 `npm ci && npm run build`）。
-现场机通常两样工具都没有，所以推荐 §3.1 的包；这条留给开发机直装场景。
+现场机通常两样工具都没有，所以推荐 §3.2 的安装程序或 §3.1 的 ZIP 包；这条留给开发机直装场景。
 
 ```powershell
 powershell -File deploy\install-watchdog.ps1 -PublishTo C:\brmes -JwtKey "<至少 32 字节，现场生成>" -BackupKeep 7

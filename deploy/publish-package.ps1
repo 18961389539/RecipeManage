@@ -36,6 +36,8 @@ param(
     [ValidateSet('true', 'false')]
     [string] $SelfContained = 'true',
     [string] $OutDir = '',
+    [switch] $SkipNpmCi,
+    [switch] $SkipFrontendBuild,
     # Extra 'dotnet publish' properties, e.g. -Property @('PublishReadyToRun=true').
     [string[]] $Property = @()
 )
@@ -71,10 +73,13 @@ try {
         $commit = $commit.Trim()
         if ($commit.Length -gt 40) { $commit = $commit.Substring(0, 40) }
     }
+    $workingTreeChanges = @(& git -C $Repository status --porcelain --untracked-files=all -- . ':(exclude)artifacts/**' 2>$null)
+    $workingTreeDirty = ($LASTEXITCODE -eq 0) -and ($workingTreeChanges.Count -gt 0)
 
     if (-not $OutDir) { $OutDir = Join-Path $Repository 'artifacts' }
     # Short sha in the label: the full hash is in package-manifest.json, and a phone call can carry eight.
-    $label = if ($commit.Length -ge 8) { "$Version+$($commit.Substring(0,8))" } else { $Version }
+    $dirtySuffix = if ($workingTreeDirty) { '.dirty' } else { '' }
+    $label = if ($commit.Length -ge 8) { "$Version+$($commit.Substring(0,8))$dirtySuffix" } else { "$Version$dirtySuffix" }
     $safeLabel = $label -replace '[^0-9A-Za-z.+_-]', '-'
     $staging = Join-Path $OutDir "brmes-$safeLabel"
     $zipPath = Join-Path $OutDir "brmes-$safeLabel-$Runtime.zip"
@@ -84,20 +89,31 @@ try {
     # without it installs an API with no UI - the plant PC has no other place to get one.
     $frontend = Join-Path $Repository 'frontend'
     if (-not (Test-Path (Join-Path $frontend 'package.json'))) { throw "no frontend at $frontend" }
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        throw "npm not on PATH: the UI must be built into the package (install Node.js on this build box)"
-    }
-    Step "build frontend -> src\RecipesManage.Api\wwwroot"
-    if ($PSCmdlet.ShouldProcess($frontend, 'npm ci; npm run build')) {
-        Push-Location $frontend
-        try {
-            & npm ci --no-audit --no-fund
-            if ($LASTEXITCODE -ne 0) { throw "npm ci failed with $LASTEXITCODE" }
-            # npm run build is vue-tsc --noEmit && vite build: a type error fails the package here,
-            # not on the plant PC.
-            & npm run build
-            if ($LASTEXITCODE -ne 0) { throw "npm run build failed with $LASTEXITCODE" }
-        } finally { Pop-Location }
+    if ($SkipFrontendBuild) {
+        if (-not (Test-Path (Join-Path $Repository 'src\RecipesManage.Api\wwwroot\index.html'))) {
+            throw '-SkipFrontendBuild requires a previously built API wwwroot\index.html'
+        }
+        Step 'use prebuilt frontend in src\RecipesManage.Api\wwwroot'
+    } else {
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            throw "npm not on PATH: the UI must be built into the package (install Node.js on this build box)"
+        }
+        Step "build frontend -> src\RecipesManage.Api\wwwroot"
+        if ($PSCmdlet.ShouldProcess($frontend, 'npm ci; npm run build')) {
+            Push-Location $frontend
+            try {
+                if (-not $SkipNpmCi) {
+                    & npm ci --no-audit --no-fund
+                    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with $LASTEXITCODE" }
+                } elseif (-not (Test-Path (Join-Path $frontend 'node_modules\.bin\vue-tsc.cmd'))) {
+                    throw '-SkipNpmCi requires existing frontend\node_modules (including vue-tsc)'
+                }
+                # npm run build is vue-tsc --noEmit && vite build: a type error fails the package here,
+                # not on the plant PC.
+                & npm run build
+                if ($LASTEXITCODE -ne 0) { throw "npm run build failed with $LASTEXITCODE" }
+            } finally { Pop-Location }
+        }
     }
 
     Step "publish $Runtime v$label -> $staging"
@@ -124,6 +140,7 @@ try {
             version       = $Version
             informational = $label
             commit        = $commit
+            workingTreeDirty = $workingTreeDirty
             runtime       = $Runtime
             selfContained = [bool]::Parse($SelfContained)
             builtAtUtc    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')

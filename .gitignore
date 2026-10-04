@@ -25,5 +25,5 @@ src/RecipesManage.Api/wwwroot/
 # 单实例互斥的锁文件（内容只是持有者诊断信息）
 *.db.lock
 
-# Api built separately by tests/RecipesManage.Api.Tests (auth matrix)
-artifacts/api-under-test/
+# Release and test build outputs
+artifacts/
