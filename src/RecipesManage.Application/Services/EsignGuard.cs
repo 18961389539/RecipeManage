@@ -38,10 +38,12 @@ public sealed class EsignGuard(IAppDbContext db, ICurrentUser user, IPasswordHas
     /// <param name="meaning">签署当时展示给签名人的含义原文；不要传"之后再算"的东西。</param>
     /// <param name="signerName">默认当前登录人；个别路径需要固定署名时才传。</param>
     public void Record(
-        string action, string entityType, string entityId, string meaning, string? detail, string? signerName = null)
+        string action, string entityType, string entityId, string meaning, string? detail, string? signerName = null,
+        int? contentHashVersion = null, string? contentHash = null)
     {
         var name = signerName ?? user.UserName;
-        db.SignatureRecords.Add(new SignatureRecord(user.UserId, name, action, entityType, entityId, meaning, detail));
+        db.SignatureRecords.Add(new SignatureRecord(
+            user.UserId, name, action, entityType, entityId, meaning, detail, contentHashVersion, contentHash));
         var trimmed = detail?.Trim();
         db.AuditLogs.Add(new AuditLog(
             user.UserId, name, action, entityType, entityId,

@@ -30,6 +30,17 @@ npm run dev
 
 种子数据含已批准主配方 `AL-HT-T6` 与仿真设备 `HT-01`。用操作员创建批次并启动后，后台调度引擎会按四步握手驱动进程内 PLC 仿真器。
 
+## 验证
+
+回归一条命令（后端四个测试项目 + 前端单测 + 类型检查/构建）；加 `-WithE2e` 再起 API 跑冒烟与 Playwright 全套：
+
+```powershell
+powershell -File verify.ps1
+powershell -File verify.ps1 -WithE2e
+```
+
+跑之前先关掉手动启动的 `dotnet run` API：`dotnet test` 会重建 Api，正在运行的进程会锁住输出文件。
+
 ## 架构约束
 
 - **单进程、单实例**：同一份数据库只允许一个应用进程，第二个会被拒绝启动（退出码 75）。

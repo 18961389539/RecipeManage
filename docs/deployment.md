@@ -48,23 +48,29 @@
 ## 3. 安装
 
 **不需要**在目标机上装 .NET SDK：`--self-contained` 的包在开发机上出，现场只解包。
+界面（`wwwroot`）同样在出包机上构建好，现场也不需要 Node。
 
 ### 3.1 推荐：开发机出包，现场解包
 
 ```powershell
 # 开发机：出版本（-Version 覆盖 Directory.Build.props 里的缺省值 1.0.0）
-pwsh -File deploy\publish-package.ps1 -Version 1.0.1
+powershell -File deploy\publish-package.ps1 -Version 1.0.1
 #   -> artifacts\brmes-1.0.1+<短提交号>-win-x64.zip，另有同名 .sha256
 #   -> 压缩包里含 watchdog.ps1 与 package-manifest.json（版本、完整提交号、构建时刻、rid）
 
 # 现场机：核对哈希后解包安装（先带 -WhatIf 看一遍）
 Get-FileHash .\<包名>.zip -Algorithm SHA256      # 应与同名 .sha256 里那串一致
-pwsh -File deploy\install-watchdog.ps1 -PackagePath .\brmes-1.0.1+abc12345-win-x64.zip `
+powershell -File deploy\install-watchdog.ps1 -PackagePath .\brmes-1.0.1+abc12345-win-x64.zip `
     -PublishTo C:\brmes -JwtKey "<至少 32 字节，现场生成>" -BackupKeep 7
 ```
 
 跨版本升级请加 `-Clean`：它只删 `C:\brmes` 里除 `App_Data` 与 `logs` 之外的旧文件（库文件永远不碰）。
 不加就是覆盖式解包，会留下上一版的孤儿文件（原生依赖与 appsettings 段最常见）。
+
+出包脚本会先在 `frontend` 跑 `npm ci && npm run build`（含 `vue-tsc` 类型检查），界面构建进
+`RecipesManage.Api/wwwroot` 随包发布，由 Kestrel 与 API 同源托管——**现场装完直接浏览器打开
+`http://localhost:5010/`**（`-Urls` 默认只绑回环；要从车间别的电脑访问，改成 `-Urls http://0.0.0.0:5010`）。
+开发机不需要这一步：前端照旧 `npm run dev`（5173）+ 代理，见 README。
 
 出包时版本被同时写进 `Version` 与 `InformationalVersion`，后者带 `+提交号`，于是
 `/health` 的 `version` 字段与 `package-manifest.json` 说的是同一件事——**远程支持的第一句话
@@ -72,8 +78,11 @@ pwsh -File deploy\install-watchdog.ps1 -PackagePath .\brmes-1.0.1+abc12345-win-x
 
 ### 3.2 备选：现场机上直接发布（需要该机有 SDK）
 
+这条路径还需要 **Node.js**：界面必须先构建进 `wwwroot`（脚本会自动跑 `npm ci && npm run build`）。
+现场机通常两样工具都没有，所以推荐 §3.1 的包；这条留给开发机直装场景。
+
 ```powershell
-pwsh -File deploy\install-watchdog.ps1 -PublishTo C:\brmes -JwtKey "<至少 32 字节，现场生成>" -BackupKeep 7
+powershell -File deploy\install-watchdog.ps1 -PublishTo C:\brmes -JwtKey "<至少 32 字节，现场生成>" -BackupKeep 7
 ```
 
 `install-watchdog.ps1` 做的事，全部支持 `-WhatIf` 先看一遍：
@@ -198,5 +207,16 @@ taskkill /im RecipesManage.Api.exe /f             # 4) 一分钟内应被看门�
   且空闲页够多**时才 `VACUUM`（SQLite 删行只把页挂到 freelist，文件永不自缩）。
   阈值在 `Maintenance:MinFreeRatio` / `MinFreeMegabytes`；管理员也能在「用户与备份」页点「立即维护」当场跑一轮。
   顺序是刻意的：VACUUM 要重写整个库文件，所以手里必须已有当天刚验过的快照。
-- **恢复演练**：停应用 → 把 `recipes.db` **连同 `recipes.db-wal`、`recipes.db-shm`** 一起改名保留（或移走）→ 复制一份 `brmes-<utc>.db` 过去命名为 `recipes.db` → 起应用 → `/health` + 打开一个历史批记录。**没演过的备份不算备份。**
-  必须清掉旧的 `-wal` / `-shm`：留着它们，SQLite 会把旧库的日志套到刚恢复的库上，轻则丢数据，重则打不开。
+- **恢复演练**：用 `deploy\restore-backup.ps1`——它把下面这串手工步骤变成代码：校验快照（SQLite 头 + 换入后 SHA256 比对）
+  → 停服务并**先禁用看门狗**（否则会和我们抢着重启）→ 把 `recipes.db` **连同 `recipes.db-wal`、`recipes.db-shm`**
+  隔离到 `App_Data\pre-restore-<utc>\` → 换入快照 → 拉起并等 `/health`。探活失败会自动回滚旧库并报错说"旧库已复位"。
+  `-WhatIf` 干跑；`-NoStart` 只换文件不拉起（演练/维护窗口）。
+
+  ```powershell
+  # 先干跑看一眼，再实做（恢复目标库路径默认 PublishTo\App_Data\recipes.db）
+  .\deploy\restore-backup.ps1 -Backup C:\brmes\App_Data\backups\brmes-20261003-021500.db -PublishTo C:\brmes -WhatIf
+  .\deploy\restore-backup.ps1 -Backup C:\brmes\App_Data\backups\brmes-20261003-021500.db -PublishTo C:\brmes
+  ```
+
+  手工路径保留为最后手段：必须清掉旧的 `-wal` / `-shm`——留着它们，SQLite 会把旧库的日志套到刚恢复的库上，轻则丢数据，重则打不开。
+  **没演过的备份不算备份**：用 `-NoStart` 对一份拷贝做一遍也算演练。

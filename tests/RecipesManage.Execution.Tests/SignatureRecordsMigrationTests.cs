@@ -1,4 +1,6 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using RecipesManage.Domain.Identity;
 using RecipesManage.Infrastructure.Persistence;
 using Xunit;
 
@@ -43,6 +45,11 @@ public sealed class SignatureRecordsMigrationTests
 
             var rows = await db.SignatureRecords.AsNoTracking().ToListAsync();
             Assert.Equal(4, rows.Count);
+            Assert.All(rows, row =>
+            {
+                Assert.Null(row.ContentHashVersion);
+                Assert.Null(row.ContentHash);
+            });
 
             var start = rows.Single(r => r.Action == "batch.start.esign");
             Assert.Equal(StartMeaning, start.Meaning);
@@ -86,6 +93,44 @@ public sealed class SignatureRecordsMigrationTests
         await using var db = new AppDbContext(options);
         await db.Database.MigrateAsync(CancellationToken.None);
         Assert.Empty(await db.SignatureRecords.ToListAsync());
+    }
+
+    [Fact]
+    public async Task SignatureRecords_RejectUpdatesAndDeletes_ButAllowAppends()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"brmes-sigimmutable-{Guid.NewGuid():N}.db");
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite($"Data Source={path}").Options;
+        try
+        {
+            await using var db = new AppDbContext(options);
+            await db.Database.MigrateAsync(CancellationToken.None);
+
+            var signature = new SignatureRecord(
+                Guid.NewGuid(), "quality", "batch.release.esign", "ProductionBatch", "batch-1",
+                "批准本批放行。", "符合归档质检", 1, new string('A', 64));
+            db.SignatureRecords.Add(signature);
+            await db.SaveChangesAsync();
+
+            const string ChangedDetail = "edited after signing";
+            var updateError = await Assert.ThrowsAsync<SqliteException>(() =>
+                db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE signature_records SET \"Detail\" = {ChangedDetail} WHERE \"Id\" = {signature.Id}"));
+            Assert.Contains("immutable", updateError.Message, StringComparison.OrdinalIgnoreCase);
+
+            var deleteError = await Assert.ThrowsAsync<SqliteException>(() =>
+                db.Database.ExecuteSqlInterpolatedAsync(
+                    $"DELETE FROM signature_records WHERE \"Id\" = {signature.Id}"));
+            Assert.Contains("immutable", deleteError.Message, StringComparison.OrdinalIgnoreCase);
+
+            var persisted = await db.SignatureRecords.AsNoTracking().SingleAsync();
+            Assert.Equal("符合归档质检", persisted.Detail);
+            Assert.Equal(new string('A', 64), persisted.ContentHash);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { File.Delete(path); } catch (IOException) { }
+        }
     }
 
     private static string IdFor(string key) => key switch

@@ -111,6 +111,7 @@ const en: Record<string, string> = {
   "该类还没有相模板": "This class has no templates yet",
   "执行类": "Execution kind",
   "程序号": "Program no.",
+  "工艺操作": "Operation",
   "操作": "Action",
   "看门狗": "Watchdog",
   "参数槽": "Parameter slot",
@@ -205,6 +206,8 @@ const en: Record<string, string> = {
   "已中止": "Aborted",
   "仅显示有待检终样的批次。打开电子批记录判定样品。":
     "Showing only batches with a pending final sample. Judge them in the electronic batch record.",
+  "还没有批次：先在「主配方设计」把一份配方提交审核，批准后即可在这里创建生产批次。":
+    "No batches yet: submit a recipe for approval under “Master recipes (design)”; once approved, create production batches here.",
   "批次号": "Batch no.",
   "控制配方": "Control recipe",
   "版本": "Version",
@@ -233,6 +236,35 @@ const en: Record<string, string> = {
   "人工确认": "Manual confirm",
   "恢复执行": "Resume",
   "跳过当前工步": "Skip current step",
+  "保持已请求": "Hold requested",
+  "当前握手阶段不可跳过：等到等待 PLC 就绪、保持、人工确认或主控等待后再试。":
+    "This step cannot be skipped in the current handshake phase. Try again when waiting for PLC ready, held, awaiting manual confirmation, or waiting for the host.",
+  "归档实测超出规格，已保持批次且禁止写下一步。质量/主管审核后恢复执行。":
+    "Archived results are out of specification. The batch is held and the next step cannot be written until quality or a supervisor reviews it.",
+  "人工确认等待中被保持，未写 PLC。恢复后继续等待电子签名确认。":
+    "The batch was held while awaiting manual confirmation; nothing was written to the PLC. After resuming, it will continue waiting for an e-signature.",
+  "已写 Host_Hold 并收到 PLC_Held。恢复执行将清位并继续剩余工步时长，禁止盲写下一步。":
+    "Host_Hold was written and PLC_Held was received. Resuming clears the hold and continues the remaining step time; do not write the next step blindly.",
+  "等待 PLC_Ready 超时：检查握手位与通讯，确认 PLC 空闲后再重新排队。":
+    "Timed out waiting for PLC_Ready. Check the handshake tags and connection; confirm the PLC is idle before re-queueing.",
+  "工步执行中心跳丢失：检查看门狗时间与现场心跳程序。":
+    "The step execution heartbeat was lost. Check the watchdog timeout and the on-site heartbeat program.",
+  "工步看门狗超时：核对设定值与 PLC 程序，必要时延长该工步看门狗。":
+    "The step watchdog timed out. Check the setpoints and PLC program; increase the step watchdog timeout if needed.",
+  "Trigger_Write 后未收到 Step_Running：禁止盲写下一步，先复位握手位。":
+    "Step_Running was not received after Trigger_Write. Do not write the next step blindly; reset the handshake tags first.",
+  "PLC 报 Step_Error：读取 Error_Code 后按设备手册处理。":
+    "The PLC reported Step_Error. Read Error_Code and follow the equipment manual.",
+  "状态机拒绝跨阶段写参，保持四步握手顺序。":
+    "The state machine rejected a write outside the current phase. Follow the four-step handshake sequence.",
+  "写参回读与快照不一致：禁止 Trigger_Write，检查点表与 PLC 程序后再重新排队。":
+    "The parameter readback does not match the snapshot. Do not issue Trigger_Write; check the tag map and PLC program before re-queueing.",
+  "Host_Hold 后未收到 PLC_Held：禁止盲写下一步，检查保持握手位。":
+    "PLC_Held was not received after Host_Hold. Do not write the next step blindly; check the hold handshake tags.",
+  "读 PLC 持续失败，超出容忍窗口：先到现场确认设备实际状态（PLC 可能仍在按程序运行），恢复通讯后再重新排队。":
+    "PLC reads failed beyond the tolerance window. Verify the equipment state on site first (the PLC may still be running); restore communication before re-queueing.",
+  "可在故障清除后重新排队，调度将从当前工步索引恢复握手。":
+    "After clearing the fault, re-queue the batch to resume the handshake from the current step.",
   "中止": "Abort",
   "返回批次列表": "Back to batches",
   "电子批记录": "Electronic batch record",
@@ -336,11 +368,13 @@ const en: Record<string, string> = {
   "子批": "Child lots",
   "尚未拆分子批。": "No child lots split yet.",
   "关联生产批次（投料 / 产出）": "Linked production batches (input / output)",
+  "窄屏可左右滑动物料谱系表查看其他字段。": "Swipe the material genealogy table sideways on narrow screens to view more fields.",
   "本批未关联生产批次": "This lot is not linked to any production batch",
   "生产批": "Batch",
   "角色": "Role",
   "物料": "Material",
   "数量": "Quantity",
+  "数量未登记": "Quantity not recorded",
   "子批号": "Child lot no.",
   "拆分": "Split",
   "物料批次谱系": "Material lot genealogy",
@@ -367,6 +401,9 @@ const en: Record<string, string> = {
   "停用": "Disabled",
   "选择左侧一条链，或点「新建链」": "Select a chain on the left, or choose “New chain”",
   "保存并电子签名": "Save with e-signature",
+  "放弃修改": "Discard changes",
+  "放弃未保存的修改": "Discard unsaved changes",
+  "当前草稿有未保存的修改，继续将丢失这些修改。": "The draft has unsaved changes; continuing will discard them.",
   "如 short-qa": "e.g. short-qa",
   "如 小变更短链": "e.g. Minor change short chain",
   "审核节点（自上而下依次签）": "Review nodes (signed top to bottom)",
@@ -427,6 +464,9 @@ const en: Record<string, string> = {
   "上位机": "Host-side",
   "+ 并行单元规程": "+ parallel unit procedure",
   "删除工步": "Delete step",
+  "参数 {0} 槽、连线 {1} 条": "{0} parameter slots and {1} links",
+  "将删除工步「{0}」及其 {1}，此操作不可撤销。":
+    "This deletes step “{0}” together with its {1}. This cannot be undone.",
   "工艺连线：同一单元内串行；并行单元不要互连。跨单元只从末工步进入下一单元首工步（汇合质检）。":
     "Links: serial within one unit; do not cross-link parallel units. Across units, only the last step may enter the next unit's first step (joining at quality).",
   "删除连线": "Delete link",
@@ -470,7 +510,53 @@ const en: Record<string, string> = {
   "登录名": "Login name",
   "显示名": "Display name",
   "新密码": "New password",
+  "确认新密码": "Confirm new password",
+  "确认密码": "Confirm password",
+  "两次输入的密码不一致。": "The two passwords do not match.",
+  "停用后该账号无法登录，可随时重新启用。": "A disabled account cannot sign in, and can be re-enabled at any time.",
   "留空则不改": "Leave blank to keep unchanged",
+
+  // ---- 零星 toast 与确认框（此前是硬编码中文，英文界面会露中文） ----
+  "请填写设备编码。": "Enter an equipment code.",
+  "请填写设备名称。": "Enter an equipment name.",
+  "必须填写单元规程名称": "The unit procedure name is required",
+  "请选择首工步相模板": "Select the first step's phase template",
+  "已删除相模板": "Phase template deleted",
+  "留空用类型名": "Blank uses the type name",
+  "请填写相模板编码。": "Enter a phase template code.",
+  "写 PLC 程序号用 1–6 或 9–99": "PLC-writing program numbers use 1–6 or 9–99",
+  "相模板已保存": "Phase template saved",
+  "已更新主配方抬头": "Master recipe header updated",
+  "该记录没有对应页面。": "This record has no linked page.",
+  "已请求保持：上位机写 Host_Hold，等待 PLC_Held 后暂停剩余时长。":
+    "Hold requested: the host writes Host_Hold and pauses the remaining duration after PLC_Held.",
+  "已提交人工确认，调度将完成该工步且不写 PLC。":
+    "Manual confirmation submitted; the scheduler will complete this step without writing to the PLC.",
+  "已拆分": "Split completed",
+  "工艺有未保存的修改，继续将丢弃这些改动。": "The procedure has unsaved changes; continuing will discard them.",
+  "未保存修改": "Unsaved changes",
+  "丢弃并离开": "Discard and leave",
+  "留下": "Stay",
+  "请选择不同的前驱与后继工步": "Select different predecessor and successor steps",
+  "该连线已存在": "This link already exists",
+  "没有可汇合的末工步（所有工步已有后继）":
+    "No terminal steps to join (every step already has a successor)",
+  "请选择与上一版本不同的版本再对比": "Pick a version different from the previous one to compare",
+  "已电子签名保存工艺": "Procedure saved with e-signature",
+  "已电子签名并提交多级审核（工艺主管 → 质量）":
+    "E-signed and submitted for multi-level review (process supervisor → quality)",
+  "审计记录加载失败：{0}": "Failed to load audit records: {0}",
+  "批次列表加载失败：{0}": "Failed to load the batch list: {0}",
+  "批次详情加载失败：{0}": "Failed to load the batch detail: {0}",
+  "质量已放行": "Released by quality",
+  "保持已请求：{0}": "Hold requested: {0}",
+  "跳步已请求：{0}": "Skip requested: {0}",
+  "批次保持": "Batch held",
+  "本批 {0} 条未确认过程报警": "{0} unacknowledged process alarms on this batch",
+  "谱系加载失败：{0}": "Failed to load the genealogy: {0}",
+  "待审核配方加载失败：{0}": "Failed to load recipes awaiting review: {0}",
+  "没有匹配的待审配方": "No matching recipes awaiting review",
+  "没有待审核配方": "No recipes awaiting review",
 
   // ==== labels.ts 字典值（经 translate() 在运行时取用，源码里没有 $t 字样） ====
   // 握手相位 / 批次与工步状态
@@ -982,6 +1068,14 @@ const en: Record<string, string> = {
   "结果": "Result",
   "样品号": "Sample no.",
   "判定": "Disposition",
+  "判定签名校验": "Disposition signature integrity",
+  "摘要匹配": "Content hash matches",
+  "历史签名无摘要": "Legacy signature without hash",
+  "内容不匹配": "Content mismatch",
+  "不支持的摘要版本": "Unsupported hash version",
+  "缺少电子签名记录": "E-signature record missing",
+  "处置证据摘要": "Disposition evidence hash",
+  "证据摘要校验": "Evidence hash integrity",
   "取样人": "Sampled by",
   "快照设定": "Snapshot setpoint",
   "握手故障批次": "Handshake-faulted batches",
@@ -995,8 +1089,10 @@ const en: Record<string, string> = {
   "搜索设备类 / 相模板": "Search equipment class / phase template",
   "搜索编码 / 名称 / 主机": "Search code / name / host",
   "设备列表加载失败：{0}": "Failed to load equipment: {0}",
+  "窄屏下左右滑动表格查看其余列和行操作。": "On narrow screens, swipe the table to view remaining columns and row actions.",
   "没有匹配的设备": "No matching equipment",
   "暂无设备": "No equipment yet",
+  "新装机建议顺序：先在这里登记设备与握手点表，再到「相库」建相模板，配方里才能引用到工步。": "For a fresh installation: register equipment and handshake tag maps here first, then create phase templates in the phase library, so recipes can reference the steps.",
   "未分类": "Unclassified",
   "是": "Yes",
   "否": "No",
@@ -1098,6 +1194,10 @@ const en: Record<string, string> = {
   "批次执行电子签名": "Batch execution e-signatures",
   "尚无启动 / 保持 / 跳步 / 放行签署（旧批次可在审计日志查看动作码）。": "No start, hold, skip or release signatures yet (older batches show their action codes in the audit log).",
   "本批次无握手/调度报警。": "No handshake or scheduling alarms for this batch.",
+  "本批次尚无握手事件（未启动，或未产生过合法动作）。":
+    "No handshake events for this batch yet (not started, or no valid action has occurred).",
+  "本批次还没有过程样本（启动执行并进入工步后才开始采样）。":
+    "No process samples for this batch yet (sampling starts once execution begins and a step is running).",
   "整张工艺 → 单元规程 → 操作 → 工步。下图画布与监控页同源，按冻结连线排布。": "The whole procedure → unit procedures → operations → phases. The canvas below shares its source with the monitor page and lays out the frozen connections.",
   "冻结设定矩阵（设定 / 归档实测）": "Frozen setpoint matrix (setpoints / archived actuals)",
   "实验室样品（LIMS，与 PLC 测点分开）": "Lab samples (LIMS, kept separate from PLC tags)",
@@ -1112,6 +1212,7 @@ const en: Record<string, string> = {
   "导入完成：新建 {0}，跳过 {1}": "Import finished: {0} created, {1} skipped",
   "写参槽 {0} … {1}。": "Parameter slots {0} … {1}.",
   "PLC 握手位 · {0}": "PLC handshake tags · {0}",
+  "只显示非 0 位": "Show only non-zero bits",
   "删除 {0} {1} 只影响新编排，已保存工步仍带原程序号。": "Deleting {0} {1} only affects new arrangements; saved steps keep their original programme number.",
   "新增工步：{0}": "Added steps: {0}",
   "删除工步：{0}": "Removed steps: {0}",
@@ -1150,6 +1251,10 @@ const en: Record<string, string> = {
   "产品 {0} · 审核版 v{1} · 状态 {2}": "Product {0} · under review v{1} · status {2}",
   "变更说明：{0}": "Change note: {0}",
   "相对生效版 v{0} 的差异": "Differences against the effective version v{0}",
+  "正在加载版本差异…": "Loading version differences…",
+  "版本差异加载失败，未展示完整差异，暂不能通过审核。":
+    "Version differences could not be loaded. Approval is unavailable until the complete diff is shown.",
+  "重试加载差异": "Retry loading differences",
   "配方详情加载失败：{0}": "Failed to load the recipe: {0}",
   "当前节点：{0}": "Current node: {0}",
   "{0} 没有相模板。": "{0} has no phase templates.",
@@ -1192,6 +1297,7 @@ const en: Record<string, string> = {
   "产品 {0} · {1} v{2}": "Product {0} · {1} v{2}",
   "无草稿": "No draft",
   "只读浏览 v{0}（{1}）。草稿才可改工步与参数。": "Read-only view of v{0} ({1}). Only a draft allows editing steps and parameters.",
+  "点右上「升版」基于本版创建可编辑草稿，提交后走审批链。": "Use “New version” at the top right to create an editable draft from this version; submission then follows the approval chain.",
   "参数 {0} 槽": "{0} parameter slots",
   "审核": "Review",
   // 合并双栏签名框的栏名与占位（eBR 的放行 / 拒收 / 样品判定也走这个框）。

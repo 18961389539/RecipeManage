@@ -34,6 +34,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { t } from "../i18n";
 import type { EquipmentClassDto } from "../api/types";
 import { templateProgram } from "../utils/phaseTemplate";
 import HelpTip from "./HelpTip.vue";
@@ -75,11 +76,11 @@ watch(() => form.classId, syncTemplate);
 function confirm() {
   const unit = form.unit.trim();
   if (!unit) {
-    ElMessage.warning("必须填写单元规程名称");
+    ElMessage.warning(t("必须填写单元规程名称"));
     return;
   }
   if (!form.templateId) {
-    ElMessage.warning("请选择首工步相模板");
+    ElMessage.warning(t("请选择首工步相模板"));
     return;
   }
   emit("add", { unit, classId: form.classId, templateId: form.templateId });

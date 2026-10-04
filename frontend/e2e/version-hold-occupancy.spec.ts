@@ -79,8 +79,42 @@ test("version bump hold occupancy and resume without blind write", async ({ page
 
   await loginAs(page, "工艺主管");
   await page.goto("/approvals");
+  await page.getByRole("textbox", { name: "搜索编码 / 名称 / 产品" }).fill(code);
+  await expect(page.getByRole("cell", { name: code, exact: true })).toBeVisible();
+  await expect(page.locator(".head b")).toBeVisible();
+  await expect(page.locator(".el-loading-mask")).toHaveCount(0);
+  await expect(page.locator(".diff-block")).toBeVisible();
+  let compareRequests = 0;
+  let allowCompareSuccess = false;
+  const compareRoute = /\/compare/;
+  await page.route(compareRoute, async (route) => {
+    compareRequests += 1;
+    if (!allowCompareSuccess) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "temporary compare outage" })
+      });
+    } else {
+      await route.continue();
+    }
+  });
   await page.getByRole("cell", { name: code, exact: true }).click();
+  await expect.poll(() => compareRequests).toBeGreaterThan(0);
+  await expect(page.getByRole("alert").filter({ hasText: "版本差异加载失败" })).toBeVisible();
+  const approveButton = page.getByRole("button", { name: "通过并电子签名" });
+  await expect(approveButton).toBeDisabled();
+  await page.keyboard.press("Control+Enter");
+  await expect(page.locator(".el-message-box")).toHaveCount(0);
+  const retryButton = page.getByRole("button", { name: "重试加载差异" });
+  await expect(retryButton).toBeVisible();
+  const requestCountBeforeRetry = compareRequests;
+  allowCompareSuccess = true;
+  await retryButton.click();
+  await expect.poll(() => compareRequests).toBeGreaterThan(requestCountBeforeRetry);
   await expect(page.getByRole("heading", { name: /相对生效版 v1 的差异/ })).toBeVisible();
+  await expect(approveButton).toBeEnabled();
+  await page.unroute(compareRoute);
   await expect(page.locator(".diff-block")).toContainText("S20.parameters[0].setpoint");
   await expect(page.locator(".diff-block")).toContainText("12");
   await expect(page.locator(".diff-block")).toContainText("8");
@@ -122,7 +156,8 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   await page.goto("/dashboard");
   const occRow = page.getByRole("row")
     .filter({ has: page.getByRole("cell", { name: "HT-01", exact: true }) })
-    .filter({ has: page.getByRole("cell", { name: "Simulator", exact: true }) });
+    // 协议列显示的是 labels.ts 的中文标签（Simulator → 仿真器），不是原始枚举名。
+    .filter({ has: page.getByRole("cell", { name: "仿真器", exact: true }) });
   await expect(occRow.getByRole("cell", { name: "占用", exact: true })).toBeVisible();
   await expect(occRow.getByRole("cell", { name: batchA, exact: true })).toBeVisible();
 
@@ -133,10 +168,11 @@ test("version bump hold occupancy and resume without blind write", async ({ page
   );
   await fillPrompt(page, "启动批次", passwords["车间操作员"]);
   const startResp = await startB;
-  expect(startResp.status(), await startResp.text()).toBe(400);
+  // 设备被占用是"重试可能成功"的冲突，不是参数错：产品把它映射成 423 Locked（见 ExceptionHandlingMiddleware）。
+  expect(startResp.status(), await startResp.text()).toBe(423);
   expect((await startResp.json() as { code: string }).code).toBe("EQ_BUSY");
   await expect(page.locator(".el-message").filter({ hasText: /绑定设备已有批次/ })).toBeVisible();
-  await expect(page.locator(".page-title")).toContainText("· Created ·");
+  await expect(page.locator(".page-title")).toContainText("· 已创建 ·");
 
   await page.goto(firstUrl);
   await page.getByRole("button", { name: "恢复执行" }).click();

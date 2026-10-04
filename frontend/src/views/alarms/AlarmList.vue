@@ -2,7 +2,7 @@
   <div>
     <div class="page-title">
       <div>
-        <h2>{{ $t("过程报警") }}</h2>
+        <h2>{{ $t("过程报警") }}<PageGuideButton guide-key="alarms" /></h2>
         <span>{{ $t("握手故障、质检超差和调度异常。确认后仍保留，供放行与追溯。") }}</span>
       </div>
       <div>
@@ -33,15 +33,17 @@
       show-icon
      
     />
+    <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
     <el-table
       ref="tableRef"
       :data="items"
       v-loading="loading"
-      class="clickable-rows"
+      class="clickable-rows alarm-table"
       scrollbar-always-on
       max-height="calc(100vh - 292px)"
       :empty-text="emptyText"
       :default-sort="defaultSort"
+      :row-class-name="alarmRowClass"
       @sort-change="onSortChange"
       @row-click="(row: ProcessAlarmDto) => $router.push(`/batches/${row.batchId}`)"
     >
@@ -56,8 +58,9 @@
           <el-tag size="small" :type="alarmSeverityTagType(row.severity)" effect="dark">{{ alarmSeverityLabel(row.severity) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="message" :label="$t('说明')" />
-      <el-table-column prop="acknowledgedAt" :label="$t('确认')" width="140" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
+      <el-table-column prop="message" :label="$t('说明')" min-width="220" show-overflow-tooltip />
+      <!-- 「确认」在桌面/平板固定右侧；手机解除固定以留出表格内容空间，仍可横向滑动逐条确认。 -->
+      <el-table-column prop="acknowledgedAt" :label="$t('确认')" width="140" :fixed="isMobile ? false : 'right'" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
           <span v-if="row.acknowledgedAt">{{ row.acknowledgedBy }}</span>
           <el-button v-else-if="auth.can('Operator', 'Supervisor', 'Quality')" link type="primary"
@@ -79,6 +82,7 @@ import type { TableInstance } from "element-plus";
 import http from "../../api/http";
 import type { ProcessAlarmDto, ProcessAlarmPageDto } from "../../api/types";
 import { useAuthStore } from "../../stores/auth";
+import { useAlarmBadgeStore } from "../../stores/alarms";
 import { useExecutionHub } from "../../realtime/executionHub";
 import { alarmSeverityLabel, alarmSeverityTagType } from "../../utils/labels";
 import { formatDateTime } from "../../utils/format";
@@ -87,9 +91,12 @@ import { useCoalescedReload } from "../../utils/useCoalescedReload";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
+import { useIsMobile } from "../../utils/useMedia";
 import HelpTip from "../../components/HelpTip.vue";
 
 const auth = useAuthStore();
+const isMobile = useIsMobile();
+const alarmBadge = useAlarmBadgeStore();
 const items = ref<ProcessAlarmDto[]>([]);
 const tableRef = ref<TableInstance>();
 const query = ref("");
@@ -115,6 +122,9 @@ const emptyText = computed(() => {
 });
 const canAck = computed(() => auth.can("Operator", "Supervisor", "Quality"));
 const openCount = computed(() => items.value.filter((a) => !a.acknowledgedAt).length);
+function alarmRowClass({ row }: { row: ProcessAlarmDto }) {
+  return row.acknowledgedAt ? "" : "alarm-pending";
+}
 // 整行可点，但 EP 渲染的 tr 不可聚焦——键盘用户此前打不开任何报警。
 useKeyboardRows(tableRef, () => items.value);
 
@@ -138,6 +148,8 @@ async function ack(row: ProcessAlarmDto) {
   try {
     await http.post(`/alarms/${row.id}/ack`);
     await load();
+    // 侧栏徽标跟着减：确认完数字还挂着会像没生效。
+    void alarmBadge.refresh();
     // 「未确认」筛选下确认成功后整行会消失，不提示容易被当成误操作或记录丢失。
     ElMessage.success(t("已确认报警 {0}", row.code));
   } catch (e) {
@@ -168,12 +180,14 @@ async function ackVisible() {
       ok += 1;
     }
     await load();
-    ElMessage.success(`已确认 ${ok} 条报警`);
+    ElMessage.success(t("已确认 {0} 条报警", ok));
   } catch (e) {
     await load();
-    ElMessage.error(`已确认 ${ok} 条，其余失败：${(e as Error).message}`);
+    ElMessage.error(t("已确认 {0} 条，其余失败：{1}", ok, (e as Error).message));
   } finally {
     acking.value = "";
+    // 成功与部分失败都刷新：批量里已经确认掉的那几条要让侧栏徽标立刻反映。
+    void alarmBadge.refresh();
   }
 }
 
@@ -189,3 +203,9 @@ useExecutionHub({
 
 onMounted(load);
 </script>
+
+<style scoped>
+.alarm-table :deep(.alarm-pending > td:first-child) {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+</style>

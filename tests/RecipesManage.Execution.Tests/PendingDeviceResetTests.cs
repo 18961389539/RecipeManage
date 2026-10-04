@@ -134,6 +134,122 @@ public sealed class PendingDeviceResetTests
     }
 
     [Fact]
+    public async Task NewLeaseWaitsUntilPendingResetHasFinishedWritingToTheDevice()
+    {
+        var rack = new SimulatedPlcRack();
+        var dbPath = NewDbPath("brmes-reset-lease-gate");
+        var writeGate = new ResetWriteGate();
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), rack, services =>
+        {
+            services.AddSingleton<PlcDriverFactory>();
+            services.Replace(ServiceDescriptor.Singleton<IPlcDriverFactory>(
+                sp => new BlockingFactory(sp.GetRequiredService<PlcDriverFactory>(), writeGate)));
+        });
+
+        try
+        {
+            var equipmentId = await SeedOrphanAsync(host, rack, "ORPHAN-GATE");
+            var station = rack.Get(equipmentId);
+            await host.StartAsync();
+            await writeGate.Entered.WaitAsync(TimeSpan.FromSeconds(8));
+
+            using var scope = host.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var (batchId, _) = await SeedTwoStepBatchAsync(
+                db, "LEASE-CANDIDATE", "IT-LEASE-GATE", "B-LEASE-GATE");
+            var batch = await db.Batches.SingleAsync(b => b.Id == batchId);
+            var leases = new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance);
+            var acquire = leases.AcquireAsync(
+                batch, [equipmentId], new Dictionary<Guid, string> { [equipmentId] = "ORPHAN-GATE" });
+
+            var completed = await Task.WhenAny(acquire, Task.Delay(150));
+            Assert.NotSame(acquire, completed);
+
+            writeGate.Release();
+            await acquire.WaitAsync(TimeSpan.FromSeconds(8));
+
+            Assert.False(await db.PendingDeviceResets.AnyAsync(r => r.EquipmentId == equipmentId));
+            var lease = await db.EquipmentLeases.SingleAsync(l => l.EquipmentId == equipmentId);
+            Assert.Equal(batchId, lease.BatchId);
+            var signals = station.ReadSignals();
+            Assert.False(signals.StepRunning);
+            Assert.False(signals.StepComplete);
+            Assert.False(signals.TriggerWriteEcho);
+            Assert.False(signals.PlcHeld);
+            Assert.False(signals.HostHoldEcho);
+        }
+        finally
+        {
+            writeGate.Release();
+            DisposeHost(dbPath, host);
+        }
+    }
+
+    [Fact]
+    public async Task AbortMarkerRenewalWaitsForResetAndIsNotDeletedWithTheOldMarker()
+    {
+        var rack = new SimulatedPlcRack();
+        var dbPath = NewDbPath("brmes-reset-abort-gate");
+        var writeGate = new ResetWriteGate();
+        var host = CreateHost(dbPath, new ConcurrentBag<ExecutionEvent>(), rack, services =>
+        {
+            services.AddSingleton<PlcDriverFactory>();
+            services.Replace(ServiceDescriptor.Singleton<IPlcDriverFactory>(
+                sp => new BlockingFactory(sp.GetRequiredService<PlcDriverFactory>(), writeGate)));
+        });
+
+        try
+        {
+            var equipmentId = await SeedOrphanAsync(host, rack, "ORPHAN-ABORT-GATE");
+            await host.StartAsync();
+            await writeGate.Entered.WaitAsync(TimeSpan.FromSeconds(8));
+
+            using var scope = host.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var (sourceId, _) = await SeedTwoStepBatchAsync(
+                db, "ABORT-SEED", "IT-ABORT-GATE", "B-ABORT-SEED");
+            var source = await db.Batches.SingleAsync(b => b.Id == sourceId);
+            var snapshot = SnapshotJson.Deserialize(source.ControlRecipeJson)!;
+            var operatorUser = new AppUser("op-abort-gate", "操作员",
+                new BcryptPasswordHasher().Hash(Password), UserRole.Operator);
+            var batch = ProductionBatch.Create(
+                "B-ABORT-GATE", equipmentId, snapshot, source.ControlRecipeJson, operatorUser.Id);
+            foreach (var step in snapshot.Steps)
+                batch.StepExecutions.Add(new BatchStepExecution(
+                    batch.Id, step.StepId, step.Code, step.Name, step.Type, step.Ordinal));
+            batch.Queue();
+            batch.MarkRunning(DateTimeOffset.UtcNow);
+            db.Users.Add(operatorUser);
+            db.Batches.Add(batch);
+            await db.SaveChangesAsync();
+
+            var hasher = new BcryptPasswordHasher();
+            var user = new ServiceHarness.RoleUser(
+                operatorUser.Id, UserRole.Operator, operatorUser.UserName, operatorUser.DisplayName);
+            var service = ServiceHarness.NewBatchService(
+                db, user, new ServiceHarness.RecordingScheduler(), hasher, new ServiceHarness.NoopPdf(),
+                new ServiceHarness.NoopPublisher(), ServiceHarness.NewMaterialLotService(db, user, hasher),
+                new EquipmentLeaseService(db, NullLogger<EquipmentLeaseService>.Instance));
+            var abort = service.AbortAsync(batch.Id, "复位期间中止", Password, CancellationToken.None);
+
+            Assert.NotSame(abort, await Task.WhenAny(abort, Task.Delay(150)));
+
+            writeGate.Release();
+            await abort.WaitAsync(TimeSpan.FromSeconds(8));
+
+            var marker = await db.PendingDeviceResets.AsNoTracking().SingleAsync();
+            Assert.Equal(equipmentId, marker.EquipmentId);
+            Assert.Equal(batch.Id, marker.BatchId);
+            Assert.Equal(batch.BatchNo, marker.BatchNo);
+        }
+        finally
+        {
+            writeGate.Release();
+            DisposeHost(dbPath, host);
+        }
+    }
+
+    [Fact]
     public async Task UnreachableDevice_KeepsItsMarker_AndIsResetOnceTheLinkComesBack()
     {
         var rack = new SimulatedPlcRack();
@@ -233,6 +349,34 @@ public sealed class PendingDeviceResetTests
         private int _attempts;
         public int Attempts => Volatile.Read(ref _attempts);
         public void Attempt() => Interlocked.Increment(ref _attempts);
+    }
+
+    private sealed class ResetWriteGate
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new(false);
+
+        public Task Entered => _entered.Task;
+        public void SignalEntered() => _entered.TrySetResult();
+        public void Release() => _release.Set();
+        public bool Wait() => _release.Wait(TimeSpan.FromSeconds(10));
+    }
+
+    private sealed class BlockingFactory(IPlcDriverFactory inner, ResetWriteGate gate) : IPlcDriverFactory
+    {
+        private int _blocked;
+
+        public IPlcHandshakeClient Create(EquipmentLine equipment)
+        {
+            if (Interlocked.Exchange(ref _blocked, 1) == 0)
+            {
+                gate.SignalEntered();
+                if (!gate.Wait())
+                    throw new TimeoutException("测试未及时释放设备复位写入");
+            }
+
+            return inner.Create(equipment);
+        }
     }
 
     /// <summary>可以"拔网线"的驱动工厂：断开时创建驱动就失败，等同于 PLC 连不上。</summary>

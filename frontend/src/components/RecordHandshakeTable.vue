@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="rows" size="small" border max-height="420">
+  <el-table v-if="rows?.length" :data="rows" size="small" border max-height="420">
     <el-table-column :label="$t('时间')" width="180" fixed>
       <template #default="{ row }">{{ formatDateTime(row.at) }}</template>
     </el-table-column>
@@ -12,6 +12,7 @@
     </el-table-column>
     <el-table-column prop="detail" :label="$t('说明')" />
   </el-table>
+  <p v-else class="none-note">{{ $t("本批次尚无握手事件（未启动，或未产生过合法动作）。") }}</p>
 </template>
 
 <script setup lang="ts">

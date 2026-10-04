@@ -7,7 +7,9 @@
       <p v-if="!diff.changes.length && !diff.addedSteps.length && !diff.removedSteps.length" class="muted">
         {{ $t("两个版本工艺内容相同") }}
       </p>
-      <el-table v-else :data="diff.changes" size="small" max-height="360">
+      <!-- 只有"整步增删"而字段没变时，上面两行已经说完了；再摊一张空表出来，
+          表里的"暂无数据"会和上面那句"新增工步"读起来自相矛盾。 -->
+      <el-table v-if="diff.changes.length" :data="diff.changes" size="small" max-height="360">
         <el-table-column prop="path" :label="$t('路径')" min-width="180" fixed />
         <el-table-column prop="before" :label="$t('之前')" />
         <el-table-column prop="after" :label="$t('之后')" />

@@ -2,7 +2,7 @@
   <div>
     <div class="page-title">
       <div>
-        <h2>{{ $t("用户与备份") }}</h2>
+        <h2>{{ $t("用户与备份") }}<PageGuideButton guide-key="users" /></h2>
         <span>{{ $t("账号与角色，以及数据库备份。") }}</span>
       </div>
       <div>
@@ -98,8 +98,14 @@
           </el-select>
         </el-form-item>
         <el-form-item v-if="!form.id" :label="$t('密码')" prop="password"><el-input v-model="form.password" type="password" show-password /></el-form-item>
+        <el-form-item v-if="!form.id" :label="$t('确认密码')" prop="confirmPassword"><el-input v-model="form.confirmPassword" type="password" show-password /></el-form-item>
         <el-form-item v-else :label="$t('新密码')" prop="newPassword"><el-input v-model="form.newPassword" type="password" show-password :placeholder="$t('留空则不改')" /></el-form-item>
-        <el-form-item v-if="form.id" :label="$t('启用')"><el-switch v-model="form.isActive" /></el-form-item>
+        <el-form-item v-if="form.id" :label="$t('确认新密码')" prop="confirmPassword"><el-input v-model="form.confirmPassword" type="password" show-password :placeholder="$t('留空则不改')" /></el-form-item>
+        <el-form-item v-if="form.id" :label="$t('启用')">
+          <!-- 停用是"影响别人能否干活"的开关：把后果说在开关旁边，不留到用户登录失败才发现。 -->
+          <el-switch v-model="form.isActive" />
+          <span class="form-hint">{{ $t("停用后该账号无法登录，可随时重新启用。") }}</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="visible = false">{{ $t("取消") }}</el-button>
@@ -159,6 +165,7 @@ const form = reactive({
   role: "Operator" as UserRole,
   password: "",
   newPassword: "",
+  confirmPassword: "",
   isActive: true
 });
 
@@ -168,6 +175,12 @@ function duplicateUserName(_rule: unknown, value: unknown, done: (error?: Error)
   const name = String(value ?? "").trim().toLowerCase();
   const taken = items.value.some((u) => u.id !== form.id && u.userName.toLowerCase() === name);
   done(name && taken ? new Error(t("登录名已存在。")) : undefined);
+}
+/** 两次输入必须一致（新建比 password、改密比 newPassword）；没打算填/改密码就不校验。 */
+function confirmPasswordMatch(_rule: unknown, value: unknown, done: (error?: Error) => void) {
+  const target = form.id ? form.newPassword : form.password;
+  if (!target) return done();
+  done(value === target ? undefined : new Error(t("两次输入的密码不一致。")));
 }
 const rules = computed<FormRules<typeof form>>(() => ({
   userName: [
@@ -181,7 +194,9 @@ const rules = computed<FormRules<typeof form>>(() => ({
     { min: 8, message: t("密码至少 8 位。"), trigger: "blur" }
   ],
   // 编辑态留空表示不改密，只有填了才校验长度（后端同口径）。
-  newPassword: form.newPassword ? [{ min: 8, message: t("密码至少 8 位。"), trigger: "blur" }] : []
+  newPassword: form.newPassword ? [{ min: 8, message: t("密码至少 8 位。"), trigger: "blur" }] : [],
+  // 口令打错一个字符就要现场等"登录失败"，这里让两次输入先在本地对上。
+  confirmPassword: [{ validator: confirmPasswordMatch, trigger: "blur" }]
 }));
 
 async function load() {
@@ -246,7 +261,7 @@ function formatBytes(bytes: number): string {
 }
 
 function openCreate() {
-  Object.assign(form, { id: "", userName: "", displayName: "", role: "Operator", password: "", newPassword: "", isActive: true });
+  Object.assign(form, { id: "", userName: "", displayName: "", role: "Operator", password: "", newPassword: "", confirmPassword: "", isActive: true });
   visible.value = true;
   // 重开窗口要清掉上一次的红字，否则残留的报错会挂在已经改对的字段上。
   void nextTick(() => formRef.value?.clearValidate());
@@ -260,6 +275,7 @@ function openEdit(row: UserDto) {
     role: row.role,
     password: "",
     newPassword: "",
+    confirmPassword: "",
     isActive: row.isActive !== false
   });
   visible.value = true;
@@ -340,4 +356,6 @@ onMounted(() => {
 .backup-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
 .backup-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .backup-card :deep(.el-descriptions) { margin-bottom: var(--space-3); }
+/* 开关旁的后果说明：次要色小字，与表单标签同一行不抢焦点 */
+.form-hint { margin-left: var(--space-2); color: var(--muted); font-size: 12px; }
 </style>

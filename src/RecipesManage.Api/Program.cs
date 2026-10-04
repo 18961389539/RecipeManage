@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -86,6 +87,25 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+// 界面与 API 同源：出包时前端构建进 wwwroot（frontend/vite.config.ts 的 outDir），由 Kestrel 直接托管，
+// 现场只需要一个端口。开发机没有这个目录，静态文件中间件是空操作，前端照旧走 vite dev（5173）。
+app.UseDefaultFiles();
+// 缓存策略必须按文件分两类，否则"升级了但界面没变"：
+//   /assets/* 是构建时带内容哈希的文件名，内容一变名字就变，可以长缓存（immutable）；
+//   index.html 是入口，它指向"当前这批哈希文件名"。它一旦被浏览器缓存住，用户升级后拿到的
+//   仍是旧入口，并会去请求已经被删掉的旧 /assets/xxx.js（那里只会 404，页面白屏或样式错乱），
+//   现场只能靠强刷救——所以入口必须每次回源确认（no-cache 允许 304，不是禁用缓存）。
+// 不设 Cache-Control 时浏览器按 Last-Modified 推断一个"启发式新鲜期"，恰好会造成这种旧入口。
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers.CacheControl =
+            ctx.Context.Request.Path.StartsWithSegments("/assets")
+                ? "public,max-age=31536000,immutable"
+                : "no-cache";
+    }
+});
 app.UseCors("spa");
 app.UseAuthentication();
 // 令牌里的角色是签发时的快照（默认 12 小时才过期），这里按库内当前用户复核后才进授权。
@@ -101,6 +121,41 @@ app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
         ? Results.Ok(RecipesDatabase.HealthBody(RecipesDatabase.Sqlite, true, schema))
         : Results.Json(RecipesDatabase.HealthBody(RecipesDatabase.Sqlite, false), statusCode: 503);
 }).AllowAnonymous();
+
+// SPA 的 history 路由回退：未匹配的非文件请求回 index.html。但 /api 与 /hubs 下的未知路径保持 404——
+// 被 index.html 吞掉的话，客户端拿到的是 HTML，排障时看到的是一页界面而不是"接口不存在"。
+app.MapFallback(async context =>
+{
+    if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/hubs"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsJsonAsync(new { code = "NOT_FOUND", message = "接口不存在。" });
+        return;
+    }
+
+    // 带扩展名的请求不是前端路由（缺的 favicon、升级后浏览器仍请求的旧 /assets/xxx.js）：
+    // 直接 404。回 index.html 会让浏览器把 HTML 当脚本解析，报的是看不懂的语法错误。
+    if (Path.HasExtension(context.Request.Path.Value))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+    var index = Path.Combine(webRoot, "index.html");
+    if (!File.Exists(index))
+    {
+        // 开发机没有构建产物：给一句能照做的话，而不是 FileNotFound 的 500。
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsync("前端未构建：开发环境请运行 frontend 的 npm run dev（http://localhost:5173）。");
+        return;
+    }
+
+    // SPA 回退返回的也是入口页，缓存口径必须与 UseStaticFiles 那侧一致（见上面的说明）。
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(index);
+});
 app.Run();
 
 // 顶层语句里一旦有 `return 75`（单实例被拒），整条 Main 就变成 int 返回，

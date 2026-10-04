@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,7 +25,8 @@ public sealed class OccupancyAndImportTests
         await using var db = OpenDb();
         var hasher = new BcryptPasswordHasher();
         var operatorUser = new AppUser("operator", "车间操作员", hasher.Hash("Operator@123"), UserRole.Operator);
-        db.Users.Add(operatorUser);
+        var qualityUser = new AppUser("quality", "质量工程师", hasher.Hash("Quality@123"), UserRole.Quality);
+        db.Users.AddRange(operatorUser, qualityUser);
         var equipment = new EquipmentLine(
             "HT-OCC", "occupancy furnace", PlcProtocol.Simulator, "127.0.0.1", 102,
             "S7_1200", 0, 1, "{}", "it");
@@ -58,8 +59,41 @@ public sealed class OccupancyAndImportTests
         var created = await batches.CreateAsync(new CreateBatchRequest(
             "BOCC1", recipe.Id, equipment.Id), CancellationToken.None);
         Assert.DoesNotContain(events, e => e.Type == "occupancy");
+        db.SignatureRecords.Add(new SignatureRecord(
+            operatorUser.Id, "operator", "batch.start.esign", "ProductionBatch", created.Id.ToString(),
+            ElectronicSignature.Batch("batch.start.esign"), "legacy"));
+        await db.SaveChangesAsync();
 
         await batches.StartAsync(created.Id, "Operator@123", CancellationToken.None);
+
+        var startSignature = await db.SignatureRecords.SingleAsync(s =>
+            s.EntityId == created.Id.ToString() && s.Action == "batch.start.esign" && s.ContentHashVersion != null);
+        Assert.Equal(BatchActionSignatureContent.CurrentVersion, startSignature.ContentHashVersion);
+        Assert.Matches("^[A-F0-9]{64}$", startSignature.ContentHash);
+        var quality = new RoleUser(qualityUser.Id, UserRole.Quality, "quality", "质量工程师");
+        var qualityLots = ServiceHarness.NewMaterialLotService(db, quality, hasher);
+        var record = await ServiceHarness.NewBatchQuery(db, quality, qualityLots)
+            .RecordAsync(created.Id, CancellationToken.None);
+        Assert.Equal("Unbound", Assert.Single(record.Esigns!,
+            s => s.Action == "batch.start.esign" && s.ContentHashVersion is null).Integrity);
+        Assert.Equal("Verified", Assert.Single(record.Esigns!,
+            s => s.Action == "batch.start.esign" && s.ContentHashVersion is not null).Integrity);
+
+        db.ProcessSamples.Add(new ProcessSample(
+            created.Id, null, DateTimeOffset.UtcNow, "TEMPERATURE", 120, "C"));
+        await db.SaveChangesAsync();
+        var progressed = await ServiceHarness.NewBatchQuery(db, quality, qualityLots)
+            .RecordAsync(created.Id, CancellationToken.None);
+        Assert.Equal("Verified", Assert.Single(progressed.Esigns!,
+            s => s.Action == "batch.start.esign" && s.ContentHashVersion is not null).Integrity);
+
+        const string TamperedReason = "tampered reason";
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE signature_records SET \"Detail\" = {TamperedReason} WHERE \"Id\" = {startSignature.Id}");
+        var tampered = await ServiceHarness.NewBatchQuery(db, quality, qualityLots)
+            .RecordAsync(created.Id, CancellationToken.None);
+        Assert.Equal("Mismatch", Assert.Single(tampered.Esigns!,
+            s => s.Action == "batch.start.esign" && s.ContentHashVersion is not null).Integrity);
 
         var occ = Assert.Single(events, e => e.Type == "occupancy");
         var rows = Assert.IsAssignableFrom<IReadOnlyList<EquipmentOccupancyDto>>(occ.Payload);

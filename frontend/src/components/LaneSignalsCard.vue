@@ -3,14 +3,16 @@
     <template #header>
       <div class="trend-head">
         <span>{{ $t("PLC 握手位 · {0}", [lane.equipmentCode]) }}</span>
-        <span class="muted">
+        <span class="muted head-right">
+          <!-- 位名对非 PLC 背景的操作员是噪声：可以只看当前为 1 的位（默认仍全量，诊断时不用再点） -->
+          <el-checkbox v-model="onlyOn" size="small">{{ $t("只显示非 0 位") }}</el-checkbox>
           <HelpTip :term="handshakePhaseTip(lane.phase)">{{ handshakePhaseLabel(lane.phase) }}</HelpTip>
         </span>
       </div>
     </template>
     <div class="muted gap-after-sm">{{ lane.unitProcedure }} · {{ lane.stepCode }} · {{ stepOutcomeLabel(lane.outcome) }}</div>
     <div class="signal-grid">
-      <div v-for="cell in lamps" :key="cell.label" class="signal-cell">
+      <div v-for="cell in shownLamps" :key="cell.label" class="signal-cell">
         <HelpTip :term="cell.label">{{ cell.label }}</HelpTip>
         <i class="dot" :class="cell.on && cell.kind ? cell.kind : ''" />
       </div>
@@ -25,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { LaneHandshakeDto } from "../api/types";
 import { handshakePhaseLabel, handshakePhaseTip, stepOutcomeLabel } from "../utils/labels";
 import { signalCounters, signalLamps, signalsAllOff, type PlcSignals } from "../utils/plcSignals";
@@ -37,7 +39,10 @@ import HelpTip from "./HelpTip.vue";
  */
 const props = defineProps<{ lane: LaneHandshakeDto; signals: PlcSignals }>();
 
+const onlyOn = ref(false);
 const lamps = computed(() => signalLamps(props.signals));
+/** 只看当前为 1 的位：整排 0 的位在正常运行时只是背景噪声，全量列表留给诊断场景。 */
+const shownLamps = computed(() => (onlyOn.value ? lamps.value.filter((c) => c.on) : lamps.value));
 const counters = computed(() => signalCounters(props.signals));
 const allOff = computed(() => signalsAllOff(props.signals));
 </script>
@@ -45,6 +50,7 @@ const allOff = computed(() => signalsAllOff(props.signals));
 <style scoped>
 .muted { color: var(--muted); font-size: 12px; }
 .trend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.head-right { display: inline-flex; align-items: center; gap: var(--space-3); }
 .signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: var(--space-2); }
 .signal-cell {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);

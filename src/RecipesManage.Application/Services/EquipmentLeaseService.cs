@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Domain.Batches;
@@ -17,6 +17,7 @@ public sealed class EquipmentLeaseService
 {
     private readonly IAppDbContext _db;
     private readonly ILogger<EquipmentLeaseService> _log;
+    private readonly EquipmentOperationGate _operationGate = EquipmentOperationGate.Shared;
 
     public EquipmentLeaseService(IAppDbContext db, ILogger<EquipmentLeaseService> log)
     {
@@ -33,6 +34,8 @@ public sealed class EquipmentLeaseService
     {
         if (equipmentIds.Count == 0)
             return;
+
+        await using var operation = await _operationGate.AcquireAsync(equipmentIds, ct);
 
         var mine = await _db.EquipmentLeases
             .Where(l => l.BatchId == batch.Id)

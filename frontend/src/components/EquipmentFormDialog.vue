@@ -1,14 +1,14 @@
 <template>
-  <el-dialog v-model="visible" :title="form.id ? $t('设备 / 握手点表') : $t('新增设备')" width="720px">
+  <el-dialog v-model="visible" class="equipment-dialog" :title="form.id ? $t('设备 / 握手点表') : $t('新增设备')" width="720px">
     <p class="param-hint">
       {{ $t("写参槽 {0} … {1}。", [tagMap.params[0] || "—", tagMap.params[PARAM_SLOTS - 1] || "—"]) }}
       <el-button link type="primary" @click="activeTab = 'params'">{{ $t("核对地址") }}</el-button>
     </p>
-    <el-form label-width="110px" :disabled="!canEdit">
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" :disabled="!canEdit">
       <el-tabs v-model="activeTab" class="equip-form-tabs">
         <el-tab-pane :label="$t('基本与超时')" name="basic">
-          <el-form-item :label="$t('编码')"><el-input v-model="form.code" :disabled="!!form.id" /></el-form-item>
-          <el-form-item :label="$t('名称')"><el-input v-model="form.name" /></el-form-item>
+          <el-form-item :label="$t('编码')" prop="code"><el-input v-model="form.code" :disabled="!!form.id" /></el-form-item>
+          <el-form-item :label="$t('名称')" prop="name"><el-input v-model="form.name" /></el-form-item>
           <el-form-item :label="$t('协议')">
             <el-select v-model="form.protocol" style="width:100%">
               <el-option v-for="p in protocols" :key="p" :label="protocolLabel(p)" :value="p" />
@@ -18,7 +18,11 @@
           <el-form-item :label="$t('端口')"><el-input-number v-model="form.port" /></el-form-item>
           <el-form-item :label="$t('型号')"><el-input v-model="form.plcModel" /></el-form-item>
           <el-form-item :label="$t('机架 / 插槽')">
-            <el-input-number v-model="form.rack" /> / <el-input-number v-model="form.slot" />
+            <div class="rack-slot-controls">
+              <el-input-number v-model="form.rack" />
+              <span aria-hidden="true">/</span>
+              <el-input-number v-model="form.slot" />
+            </div>
           </el-form-item>
           <el-form-item :label="$t('启用')"><el-switch v-model="form.enabled" /></el-form-item>
           <el-form-item :label="$t('设备类')">
@@ -85,6 +89,8 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import type { FormInstance, FormRules } from "element-plus";
+import { t } from "../i18n";
 import { saveEquipment } from "../api/equipment";
 import type { EquipmentClassDto, EquipmentDto, PlcProtocol } from "../api/types";
 import { protocolLabel } from "../utils/labels";
@@ -112,6 +118,15 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ saved: [] }>();
 
 const protocols: PlcProtocol[] = ["Simulator", "SiemensS7", "ModbusTcp", "OpcUa"];
+const formRef = ref<FormInstance>();
+/**
+ * 前端即时提示；服务端与领域实体也会拒绝空白值，不能只依赖界面校验。
+ * 放在「基本与超时」页签里，校验失败时要把页签切回去，否则红字藏在未显示的页签里。
+ */
+const rules: FormRules = {
+  code: [{ required: true, message: t("请填写设备编码。"), trigger: "blur" }],
+  name: [{ required: true, message: t("请填写设备名称。"), trigger: "blur" }]
+};
 // 点表里 11 个同构的字符串地址项：列成表渲染，避免 11 段只差一个键名的模板。
 const tagFields = [
   { key: "stepId", term: "Step_ID" },
@@ -173,6 +188,10 @@ function removeMeasured(index: number) {
 }
 
 async function save() {
+  if (!(await formRef.value?.validate().catch(() => false))) {
+    activeTab.value = "basic";
+    return;
+  }
   saving.value = true;
   try {
     await saveEquipment(form.id || null, {
@@ -209,6 +228,15 @@ async function save() {
   margin-bottom: var(--space-2);
 }
 .param-grid :deep(.el-form-item) { margin-bottom: var(--space-2); }
+.rack-slot-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 320px;
+}
+.rack-slot-controls :deep(.el-input-number) { width: 100%; min-width: 0; }
 .measured-list {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
@@ -216,4 +244,9 @@ async function save() {
   align-items: center;
 }
 .equip-form-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-3); }
+@media (max-width: 420px) {
+  .param-grid,
+  .measured-list { grid-template-columns: minmax(0, 1fr); }
+  .measured-list :deep(.el-button) { justify-self: start; }
+}
 </style>

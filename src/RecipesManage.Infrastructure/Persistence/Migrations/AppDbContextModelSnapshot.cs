@@ -134,7 +134,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("BatchId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Detail")
@@ -268,7 +269,7 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("AcknowledgedAt")
+                    b.Property<string>("AcknowledgedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("AcknowledgedBy")
@@ -292,7 +293,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("RaisedAt")
+                    b.Property<string>("RaisedAt")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Severity")
@@ -329,7 +331,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("SampledAt")
+                    b.Property<string>("SampledAt")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("StepId")
@@ -364,7 +367,7 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("CompletedAt")
+                    b.Property<string>("CompletedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("ConcurrencyStamp")
@@ -375,7 +378,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("CreatedBy")
@@ -417,13 +421,13 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<string>("ReleaseComment")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("ReleasedAt")
+                    b.Property<string>("ReleasedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ReleasedBy")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("StartedAt")
+                    b.Property<string>("StartedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Status")
@@ -747,6 +751,12 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ContentHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ContentHashVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -825,7 +835,8 @@ namespace RecipesManage.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LotNumber")

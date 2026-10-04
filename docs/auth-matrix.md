@@ -25,11 +25,13 @@
 - **`/health`（根路径）**：`Program.cs` 里的最小 API，匿名；与表里的 `/api/health` 内容一致，供看门狗与外部探活。
 - **`/hubs/execution`（SignalR）**：`ExecutionHub` 为 `[Authorize]`，登录即可订阅；只推送、不接受写操作。
 
-## 读接口：目前对任何已登录用户开放
+## 读接口：业务数据登录即可，归档与审计单独收紧
 
-表里所有 `GET`（除 `admin` 名下的用户 / 备份 / 维护 / 审批链配置之外）都只要求登录，服务层也没有二次校验。
-这包括 `GET /api/audit`（全局审计日志）、批记录与 PDF、配方、批次、物料谱系。这是**现状，不是评审过的决定**：
-GMP 场景里"谁能看审计日志 / 批记录"通常要单独定，若要收紧，在 `Capabilities` 加能力、控制器挂策略，本表会随之变。
+- **电子批记录与 PDF**（`GET /api/batches/{id}/record`、`record.pdf`）：能力 `batch.record.view`——主管 / 质量 / 管理员。
+  批记录是归档凭据（含签名与检验数据）；操作员的取样入口在监控页（`lot.handle`），不需要打开归档件。
+- **全局审计日志**（`GET /api/audit`）：能力 `audit.view`——质量 / 管理员。
+- 其余 `GET`（配方、批次、设备、物料谱系、报警）：只要求登录——车间需要看见现状。
+两道门同样适用：控制器策略是第一道，`AuditService.QueryAsync` 与 `BatchQueryService.RecordAsync` 里各有一道 `EnsureCan`。
 
 ## 有意只要求"登录即可"的写接口
 
@@ -56,6 +58,8 @@ GMP 场景里"谁能看审计日志 / 批记录"通常要单独定，若要收�
 | `equipment.operate` | ✓ |  | ✓ |  | ✓ |
 | `equipment.simulate` |  |  | ✓ |  | ✓ |
 | `phase.library` | ✓ | ✓ |  |  |  |
+| `audit.view` | ✓ |  |  | ✓ |  |
+| `batch.record.view` | ✓ |  | ✓ | ✓ |  |
 
 ### 接口 × 门槛
 
@@ -67,7 +71,7 @@ GMP 场景里"谁能看审计日志 / 批记录"通常要单独定，若要收�
 | GET | `/api/approval-chains` | 登录即可 | 任何已登录用户 |
 | POST | `/api/approval-chains` | `admin` | 管理员 |
 | DELETE | `/api/approval-chains/{id:guid}` | `admin` | 管理员 |
-| GET | `/api/audit` | 登录即可 | 任何已登录用户 |
+| GET | `/api/audit` | `audit.view` | 管理员、质量 |
 | POST | `/api/auth/login` | 匿名 | 任何人 |
 | GET | `/api/auth/me` | 登录即可 | 任何已登录用户 |
 | GET | `/api/batches` | 登录即可 | 任何已登录用户 |
@@ -81,8 +85,8 @@ GMP 场景里"谁能看审计日志 / 批记录"通常要单独定，若要收�
 | GET | `/api/batches/{id:guid}/lab-samples` | 登录即可 | 任何已登录用户 |
 | POST | `/api/batches/{id:guid}/lab-samples` | `lot.handle` | 管理员、主管、质量、操作员 |
 | POST | `/api/batches/{id:guid}/lab-samples/{sampleId:guid}/disposition` | `quality.disposition` | 质量 |
-| GET | `/api/batches/{id:guid}/record` | 登录即可 | 任何已登录用户 |
-| GET | `/api/batches/{id:guid}/record.pdf` | 登录即可 | 任何已登录用户 |
+| GET | `/api/batches/{id:guid}/record` | `batch.record.view` | 管理员、主管、质量 |
+| GET | `/api/batches/{id:guid}/record.pdf` | `batch.record.view` | 管理员、主管、质量 |
 | POST | `/api/batches/{id:guid}/reject-disposition` | `quality.disposition` | 质量 |
 | POST | `/api/batches/{id:guid}/release` | `quality.disposition` | 质量 |
 | POST | `/api/batches/{id:guid}/resume` | `batch.operate` | 主管、操作员 |

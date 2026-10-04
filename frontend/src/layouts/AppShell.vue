@@ -1,29 +1,52 @@
 <template>
-  <el-container class="shell">
-    <el-aside :width="asideWidth" class="aside" :class="{ collapsed: hideLabels, 'drawer-open': drawerOpen }">
+  <el-container class="shell" @keydown.esc.window="closeDrawer">
+    <el-aside
+      id="app-sidebar"
+      :width="asideWidth"
+      class="aside"
+      :class="{ collapsed: hideLabels, 'drawer-open': drawerOpen }"
+      :inert="isMobile && !drawerOpen"
+      :aria-hidden="isMobile && !drawerOpen"
+    >
       <div class="brand-row">
         <div v-if="!hideLabels" class="brand">BRMES</div>
         <el-button v-if="!isMobile" class="collapse-btn" link @click="collapsed = !collapsed" :title="collapsed ? $t('展开菜单') : $t('收起菜单')">
           {{ collapsed ? "»" : "«" }}
         </el-button>
-        <el-button v-else class="collapse-btn" link :title="$t('关闭菜单')" @click="drawerOpen = false">×</el-button>
+        <el-button v-else class="collapse-btn" link :title="$t('关闭菜单')" :aria-label="$t('关闭菜单')" @click="drawerOpen = false">×</el-button>
       </div>
       <div v-if="!hideLabels" class="sub">{{ $t("工艺配方管理与实时执行") }}</div>
       <el-menu
         :router="true"
         :collapse="hideLabels"
         :collapse-transition="false"
-        :default-active="$route.path" background-color="var(--sunken)" text-color="var(--text-body)" active-text-color="var(--accent-bright)">
+        :default-active="activeMenuPath" background-color="var(--sunken)" text-color="var(--text-body)" active-text-color="var(--accent-bright)">
         <!-- 条目与角色全部派生自路由表（router/index.ts menuItems），这里不再维护第二份名单 -->
         <el-menu-item v-for="item in menu" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
+          <!-- 未确认报警计数：不在监控/报警页时也能看到有报警等着处理。aria-hidden 避免数字
+               混进菜单项的可访问名（e2e 与读屏按名匹配条目）。收起态 EP 会隐藏文字，一起藏掉。 -->
+          <span
+            v-if="item.path === '/alarms' && alarmBadge.open > 0 && !hideLabels"
+            class="menu-badge"
+            aria-hidden="true"
+          >{{ alarmBadge.open > 99 ? "99+" : alarmBadge.open }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
-    <el-container>
+    <el-container id="app-content" :inert="isMobile && drawerOpen">
       <el-header class="header">
         <span class="head-left">
-          <el-button v-if="isMobile" class="menu-btn" link :title="$t('打开菜单')" @click="drawerOpen = true">≡</el-button>
+          <el-button
+            v-if="isMobile"
+            class="menu-btn"
+            link
+            :title="$t('打开菜单')"
+            :aria-label="$t('打开菜单')"
+            aria-controls="app-sidebar"
+            :aria-expanded="drawerOpen"
+            @click="drawerOpen = true"
+          >≡</el-button>
           <span class="section">{{ title }}</span>
         </span>
         <span class="user">
@@ -58,13 +81,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { menuItems } from "../router";
 import { currentLocale, setLocale, t } from "../i18n";
 import type { AppLocale } from "../i18n";
 import { useAuthStore } from "../stores/auth";
+import { useAlarmBadgeStore } from "../stores/alarms";
 import { stopExecutionHub } from "../realtime/executionHub";
 import { userRoleLabel } from "../utils/labels";
 import { useIsMobile } from "../utils/useMedia";
@@ -73,6 +97,7 @@ import HelpTip from "../components/HelpTip.vue";
 import RealtimeStatus from "../components/RealtimeStatus.vue";
 
 const auth = useAuthStore();
+const alarmBadge = useAlarmBadgeStore();
 const route = useRoute();
 const router = useRouter();
 const collapsed = ref(false);
@@ -92,6 +117,14 @@ const menu = computed(() =>
     // 不往路由里再塞一份英文常量——那会变成第二个真源。
     .map(item => ({ ...item, label: t(item.label) }))
 );
+// 详情页归属其最近的侧栏父路由，保证路由深入后仍能辨认当前模块。
+const activeMenuPath = computed(() => {
+  const currentPath = route.path;
+  return menu.value
+    .map((item) => item.path)
+    .filter((path) => currentPath === path || currentPath.startsWith(`${path}/`))
+    .sort((a, b) => b.length - a.length)[0] ?? currentPath;
+});
 // 演示账号的显示名就是角色名（系统管理员 / 工艺工程师），顶栏再挂角色标签会读成两遍。
 const sessionName = computed(() => {
   const user = auth.user;
@@ -108,10 +141,40 @@ const asideWidth = computed(() => (isMobile.value ? "232px" : collapsed.value ? 
 const title = computed(() => t((route.meta.title as string | undefined) ?? "BRMES"));
 const isRealtimePage = computed(() => route.meta.realtime === true);
 
-watch(() => route.fullPath, () => { drawerOpen.value = false; });
+watch(() => route.fullPath, () => {
+  drawerOpen.value = false;
+  // 路由切换顺带刷一次报警计数：在报警页确认完离开时，数字不必等下一个 30 秒周期。
+  void alarmBadge.refresh();
+});
+watch(drawerOpen, async (open) => {
+  if (!isMobile.value) return;
+  await nextTick();
+  if (open) {
+    document.querySelector<HTMLElement>("#app-sidebar .el-menu-item:not(.is-disabled)")?.focus();
+  } else {
+    document.querySelector<HTMLButtonElement>(".menu-btn")?.focus();
+  }
+});
 watch(isMobile, (mobile) => {
   drawerOpen.value = false;
   if (mobile) collapsed.value = false;
+});
+function closeDrawer() {
+  if (isMobile.value) drawerOpen.value = false;
+}
+
+/**
+ * 未确认报警计数：进页面拉一次，之后每 30 秒一次。
+ * 取数口径与失败静默的理由见 stores/alarms.ts（这是提示，不是告警通道）。
+ */
+const ALARM_REFRESH_MS = 30_000;
+let alarmTimer: number | undefined;
+onMounted(() => {
+  void alarmBadge.refresh();
+  alarmTimer = window.setInterval(() => void alarmBadge.refresh(), ALARM_REFRESH_MS);
+});
+onUnmounted(() => {
+  if (alarmTimer) clearInterval(alarmTimer);
 });
 
 async function logout() {
@@ -153,10 +216,22 @@ async function logout() {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .aside .el-menu .el-menu-item.is-active {
-  background-color: var(--raised);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background-color: var(--tint);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .aside .el-menu .el-menu-item:hover:not(.is-active) { background-color: var(--hover); }
+/* 侧栏未确认报警计数：数字贴右端；红底上用深色字（--bg）保证 11px 数字的对比度 */
+.menu-badge {
+  margin-left: auto;
+  padding: 0 var(--space-1);
+  border-radius: 999px;
+  background: var(--err);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
 .header {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   background: var(--panel); border-bottom: 1px solid var(--line); color: var(--text);
@@ -195,5 +270,8 @@ async function logout() {
 .brand-row .el-button.is-link { min-width: 24px; min-height: 24px; }
 @media (max-width: 1100px) {
   .user-name { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aside, .aside .el-menu-item { transition: none; }
 }
 </style>

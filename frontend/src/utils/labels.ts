@@ -355,6 +355,20 @@ export const labSampleTypeLabel = (v?: string | null) => translate(labSampleType
 export const databaseLabel = (v?: string | null) => translate(databaseDict, v, "SQLite");
 export const auditActionLabel = (v?: string | null) => translate(auditActionDict, v);
 
+/**
+ * 审计搜索的中文扩展：动作/实体两列在表格里显示中文标签（auditActionDict / auditEntityDict），
+ * 而库里存的是 code。输入命中中文标签时把对应 code 一并送给服务端做 OR 匹配——
+ * 审计搜索改到"全库"以后，"放行""生产批次"这类词才不会因为库里没有中文而搜不到。
+ */
+export function auditSearchTokens(q: string): string[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return [];
+  const dicts: Dict[] = [auditActionDict, auditEntityDict];
+  return dicts.flatMap((dict) =>
+    Object.entries(dict).filter(([, label]) => label.toLowerCase().includes(needle)).map(([code]) => code)
+  );
+}
+
 /** 与后端 ElectronicSignature.Batch 逐字对齐；弹窗与 eBR 共用，禁止在视图里另写一份。 */
 const esignMeaningDict: Dict = {
   "batch.start.esign": "我作为操作员确认控制配方快照完整有效，启动本批四步握手，禁止盲写。",

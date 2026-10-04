@@ -25,7 +25,11 @@
             <template #header><HelpTip term="程序号" /></template>
             <template #default="{ row }">{{ templateProgram(row) }}</template>
           </el-table-column>
-          <el-table-column prop="operation" :label="$t('操作')" min-width="140" />
+          <!-- 这列是 ISA-88 的 Operation（工艺操作），不是"操作按钮"。
+               两列此前都叫「操作」，同一张表里两个同名列分不清哪个是数据哪个是动作。 -->
+          <el-table-column prop="operation" min-width="140">
+            <template #header><HelpTip term="Operation">{{ $t("工艺操作") }}</HelpTip></template>
+          </el-table-column>
           <el-table-column prop="watchdogSeconds" :label="$t('看门狗')" width="80" />
           <el-table-column :label="$t('参数槽')" width="72">
             <template #default="{ row }">{{ row.parameters.length }}</template>
@@ -129,7 +133,7 @@ async function remove(cls: EquipmentClassDto, row: PhaseTemplateDto) {
   busy.value = row.id;
   try {
     await deletePhaseTemplate(cls.id, row.id);
-    ElMessage.success("已删除相模板");
+    ElMessage.success(t("已删除相模板"));
     emit("changed");
   } catch (e) {
     ElMessage.error((e as Error).message);

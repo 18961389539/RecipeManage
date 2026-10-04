@@ -68,14 +68,16 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
                             d.RelativeColumn();
                             d.RelativeColumn(2);
                             d.RelativeColumn();
+                            d.RelativeColumn(1.4f);
                         });
-                        HeaderRow(table, "动作", "签署人", "时间", "含义", "意见");
+                        HeaderRow(table, "动作", "签署人", "时间", "含义", "意见", "证据摘要校验");
                         var esigns = record.Esigns ?? [];
                         if (esigns.Count == 0)
-                            BodyRow(table, "—", "—", "—", "尚无启动 / 保持 / 跳步 / 放行签署", "旧批次仅有审计动作码");
+                            BodyRow(table, "—", "—", "—", "尚无启动 / 保持 / 跳步 / 放行签署", "旧批次仅有审计动作码", "—");
                         else
                             foreach (var e in esigns)
-                                BodyRow(table, e.Action, e.UserName ?? "", Format(e.At), e.Meaning, e.Extra ?? "");
+                                BodyRow(table, e.Action, e.UserName ?? "", Format(e.At), e.Meaning,
+                                    e.Extra ?? "", BatchSignatureIntegrityLabel(e.Integrity, e.ContentHash));
                     }));
                     col.Item().Element(c => Section(c, "批次放行电子签名", table =>
                     {
@@ -127,6 +129,34 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
                         else
                             foreach (var s in labs)
                                 BodyRow(table, s.SampleCode, s.SampleType.ToString(), s.Disposition.ToString(), s.TakenBy, s.Comment ?? "");
+                    }));
+                    col.Item().Element(c => Section(c, "化验判定电子签名与内容摘要", table =>
+                    {
+                        table.ColumnsDefinition(d =>
+                        {
+                            d.ConstantColumn(58);
+                            d.ConstantColumn(62);
+                            d.ConstantColumn(78);
+                            d.RelativeColumn(1.2f);
+                            d.ConstantColumn(60);
+                            d.RelativeColumn(2f);
+                        });
+                        HeaderRow(table, "样品", "签署人", "签署时间", "签署含义", "校验", "SHA-256");
+                        var labs = record.LabSamples ?? [];
+                        if (labs.Count == 0)
+                            BodyRow(table, "—", "—", "—", "—", "—", "本批次无实验室样品");
+                        else
+                            foreach (var sample in labs)
+                            {
+                                var signature = sample.DispositionSignature;
+                                BodyRow(table,
+                                    sample.SampleCode,
+                                    signature?.SignerName ?? "—",
+                                    Format(signature?.At),
+                                    signature?.Meaning ?? "—",
+                                    SignatureIntegrityLabel(signature?.Integrity, sample.Disposition),
+                                    signature?.ContentHash ?? "—");
+                            }
                     }));
                     col.Item().Element(c => Section(c, "ISA-88 控制配方快照", table =>
                     {
@@ -354,8 +384,26 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
             Cell(table, "缩放", (record.Snapshot.ScaleFactor ?? 1).ToString("0.###"));
             Cell(table, "放行人", record.ReleasedBy ?? "待放行");
             Cell(table, "放行时间", Format(record.ReleasedAt));
+            Cell(table, "处置证据摘要",
+                record.EvidenceHash is { Length: > 0 } hash
+                    ? $"v{record.EvidenceHashVersion} SHA-256 {hash}"
+                    : "未生成",
+                span: 4);
             Cell(table, "单元设备", units, span: 4);
         });
+    }
+
+    private static string BatchSignatureIntegrityLabel(string? integrity, string? hash)
+    {
+        var label = integrity switch
+        {
+            "Verified" => "摘要匹配",
+            "Unbound" => "历史未绑定",
+            "Mismatch" => "内容不匹配",
+            "Unsupported" => "版本不支持",
+            _ => "—"
+        };
+        return hash is { Length: >= 12 } ? $"{label} {hash[..12]}…" : label;
     }
 
     private static void Section(IContainer container, string title, Action<TableDescriptor> content)
@@ -390,4 +438,15 @@ public sealed class BatchRecordPdf : IBatchRecordPdf
 
     private static string Format(DateTimeOffset? value) =>
         value is null ? "—" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string SignatureIntegrityLabel(string? integrity, LabSampleDisposition disposition) =>
+        integrity switch
+        {
+            "Verified" => "匹配",
+            "Unbound" => "历史无摘要",
+            "Mismatch" => "不匹配",
+            "Unsupported" => "版本未知",
+            _ when disposition == LabSampleDisposition.Pending => "待判定",
+            _ => "缺少签名"
+        };
 }

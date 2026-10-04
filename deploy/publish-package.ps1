@@ -79,6 +79,27 @@ try {
     $staging = Join-Path $OutDir "brmes-$safeLabel"
     $zipPath = Join-Path $OutDir "brmes-$safeLabel-$Runtime.zip"
 
+    # The UI must ship in the same build as the API: the frontend compiles into the API's wwwroot
+    # (frontend/vite.config.ts sets outDir), and dotnet publish carries it into the zip. A package
+    # without it installs an API with no UI - the plant PC has no other place to get one.
+    $frontend = Join-Path $Repository 'frontend'
+    if (-not (Test-Path (Join-Path $frontend 'package.json'))) { throw "no frontend at $frontend" }
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "npm not on PATH: the UI must be built into the package (install Node.js on this build box)"
+    }
+    Step "build frontend -> src\RecipesManage.Api\wwwroot"
+    if ($PSCmdlet.ShouldProcess($frontend, 'npm ci; npm run build')) {
+        Push-Location $frontend
+        try {
+            & npm ci --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed with $LASTEXITCODE" }
+            # npm run build is vue-tsc --noEmit && vite build: a type error fails the package here,
+            # not on the plant PC.
+            & npm run build
+            if ($LASTEXITCODE -ne 0) { throw "npm run build failed with $LASTEXITCODE" }
+        } finally { Pop-Location }
+    }
+
     Step "publish $Runtime v$label -> $staging"
     if ($PSCmdlet.ShouldProcess($staging, 'dotnet publish')) {
         New-Item -ItemType Directory -Path $staging -Force | Out-Null

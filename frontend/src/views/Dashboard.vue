@@ -1,7 +1,7 @@
 <template>
   <div class="dash-page">
     <div class="page-title">
-      <h2>{{ $t("运行总览") }}</h2>
+      <h2>{{ $t("运行总览") }}<PageGuideButton guide-key="dashboard" /></h2>
       <div class="health-pill" :class="pillClass">
         <i class="dot" :class="pillDot" />
         <HelpTip v-if="pillState === 'ok'" term="服务健康" :extra="healthDetail" plain>
@@ -21,7 +21,9 @@
         :role="kpiClickable(k) ? 'button' : undefined"
         :tabindex="kpiClickable(k) ? 0 : undefined"
         @click="openKpi(k)"
+        @keydown.space.prevent
         @keyup.enter="openKpi(k)"
+        @keyup.space="openKpi(k)"
       >
         <div class="kpi-label">{{ k.label }}</div>
         <!-- 没有数据就画一个破折号，绝不画 0：0 是"确认没有故障"，— 是"不知道"。
@@ -83,14 +85,20 @@
           <li
             v-for="(e, i) in dash?.recentEvents ?? []"
             :key="i"
-            class="event-row"
-            :class="{ clickable: !!e.batchId }"
-            :title="e.detail ?? e.stepCode"
-            @click="e.batchId && $router.push(`/batches/${e.batchId}`)"
+            class="event-item"
           >
-            <span class="event-time">{{ fmtTime(Date.parse(e.at)) }}</span>
-            <span class="event-batch">{{ e.batchNo }}</span>
-            <span class="event-kind" :class="`kind-${e.kind}`">{{ handshakeKindLabel(e.kind) }}</span>
+            <button
+              type="button"
+              class="event-row"
+              :class="{ clickable: !!e.batchId }"
+              :disabled="!e.batchId"
+              :title="e.detail ?? e.stepCode"
+              @click="e.batchId && $router.push(`/batches/${e.batchId}`)"
+            >
+              <span class="event-time">{{ fmtTime(Date.parse(e.at)) }}</span>
+              <span class="event-batch">{{ e.batchNo }}</span>
+              <span class="event-kind" :class="`kind-${e.kind}`">{{ handshakeKindLabel(e.kind) }}</span>
+            </button>
           </li>
         </ul>
       </el-card>
@@ -556,16 +564,25 @@ onUnmounted(() => {
 }
 .event-empty { color: var(--muted); font-size: 12px; padding: var(--space-2) 0; }
 .event-line { list-style: none; margin: 0; padding: 0; max-height: 236px; overflow-y: auto; }
+.event-item { margin: 0; padding: 0; }
 .event-row {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  width: 100%;
   padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   font-size: 12px;
   border-radius: 5px;
 }
 .event-row.clickable { cursor: pointer; }
 .event-row.clickable:hover { background: var(--hover); }
+.event-row.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.event-row:disabled { cursor: default; }
 .event-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .event-batch { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-body); }
 .event-kind { flex: none; font-weight: 500; }
@@ -643,6 +660,7 @@ onUnmounted(() => {
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 /* 可点击的 KPI 卡此前只有 cursor:pointer，缺悬停反馈 */
 .clickable:hover { border-color: var(--accent); background-color: var(--raised); }
+.kpi.clickable:focus-visible { border-color: var(--accent); background-color: var(--raised); }
 .kpi-group {
   display: flex;
   align-items: center;

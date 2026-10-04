@@ -9,6 +9,10 @@ export default defineConfig({
     include: ["src/**/*.spec.ts"]
   },
   build: {
+    // 产物直接落到 API 的 wwwroot：出包时 dotnet publish 会带着它一起进 zip，现场一个进程、一个端口
+    // （开发时前端仍走 vite dev + 代理，这个目录不存在也不影响）。该目录在 .gitignore 里，不入库。
+    outDir: "../src/RecipesManage.Api/wwwroot",
+    emptyOutDir: true,
     rollupOptions: {
       output: {
         // 只固定四个体积大、且整包同进同出的依赖组：命名稳定 → 业务代码改动不再让 vendor 的

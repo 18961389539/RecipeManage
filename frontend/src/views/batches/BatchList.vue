@@ -2,7 +2,7 @@
   <div>
     <div class="page-title">
       <div>
-        <h2>{{ $t("生产批次") }}</h2>
+        <h2>{{ $t("生产批次") }}<PageGuideButton guide-key="batches" /></h2>
         <span>{{ $t("从已批准主配方生成控制配方，并跟踪执行到放行。") }}</span>
       </div>
       <div>
@@ -38,7 +38,7 @@
       v-if="loadError"
       :closable="false"
       type="error"
-      :title="`批次列表加载失败：${loadError}`"
+      :title="$t('批次列表加载失败：{0}', [loadError])"
       show-icon
      
     />
@@ -75,7 +75,10 @@
         <template #default="{ row }">
           <div class="status-pills">
             <el-tag size="small" :type="batchStatusTagType(row.status)" effect="dark">{{ batchStatusLabel(row.status) }}</el-tag>
-            <el-tag v-if="row.pendingFinalSample" size="small" type="warning" effect="plain">{{ $t("待检终样") }}</el-tag>
+            <!-- 两个标签并排会被读成同一种"状态"：悬停解释第二个是"待检终样"待办，不是批次状态。 -->
+            <HelpTip v-if="row.pendingFinalSample" term="待检终样" plain placement="bottom">
+              <el-tag size="small" type="warning" effect="plain">{{ $t("待检终样") }}</el-tag>
+            </HelpTip>
           </div>
         </template>
       </el-table-column>
@@ -91,6 +94,11 @@
     </el-table>
     <el-pagination class="pager" layout="total, prev, pager, next" background small :page-size="take"
       :current-page="page" :total="total" hide-on-single-page @current-change="onPageChange" />
+    <!-- 空库时给新装机指路：批次的唯一来源是"已批准主配方"，比"暂无批次"四个字有用得多。
+         取数失败时不出现——那时"还没有批次"是假信息，用户该去看上面的错误提示。 -->
+    <div v-if="!initialLoading && !loadError && !items.length && !filtered" class="muted gap-before">
+      {{ $t("还没有批次：先在「主配方设计」把一份配方提交审核，批准后即可在这里创建生产批次。") }}
+    </div>
     <el-dialog v-model="visible" :title="$t('创建批次 / 生成控制配方快照')" width="640px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" @submit.prevent="create">
         <el-form-item :label="$t('批次号')" prop="batchNo"><el-input v-model="form.batchNo" /></el-form-item>

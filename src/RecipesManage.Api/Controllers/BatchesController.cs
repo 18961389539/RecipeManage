@@ -39,9 +39,11 @@ public sealed class BatchesController(BatchService batches, BatchQueryService qu
         query.SnapshotDriftAsync(id, ct);
 
     [HttpGet("{id:guid}/record")]
+    [Authorize(Policy = AuthorizationPolicies.BatchRecordView)]
     public Task<BatchRecordDto> Record(Guid id, CancellationToken ct) => query.RecordAsync(id, ct);
 
     [HttpGet("{id:guid}/record.pdf")]
+    [Authorize(Policy = AuthorizationPolicies.BatchRecordView)]
     public async Task<IActionResult> RecordPdf(Guid id, CancellationToken ct)
     {
         var pdf = await query.ExportPdfAsync(id, ct);
@@ -99,12 +101,14 @@ public sealed class BatchesController(BatchService batches, BatchQueryService qu
     [HttpPost("{id:guid}/release")]
     [Authorize(Policy = AuthorizationPolicies.QualityDisposition)]
     public Task<BatchDetailDto> Release(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
-        batches.ReleaseAsync(id, request.Reason ?? "质量放行", request.Password, ct);
+        batches.ReleaseAsync(id, request.Reason ?? "质量放行", request.Password,
+            request.EvidenceHashVersion, request.EvidenceHash, ct);
 
     [HttpPost("{id:guid}/reject-disposition")]
     [Authorize(Policy = AuthorizationPolicies.QualityDisposition)]
     public Task<BatchDetailDto> RejectDisposition(Guid id, [FromBody] EsignActionRequest request, CancellationToken ct) =>
-        batches.RejectDispositionAsync(id, request.Reason ?? "", request.Password, ct);
+        batches.RejectDispositionAsync(id, request.Reason ?? "", request.Password,
+            request.EvidenceHashVersion, request.EvidenceHash, ct);
 
     [HttpGet("{id:guid}/lab-samples")]
     public Task<IReadOnlyList<LabSampleDto>> LabSamples(Guid id, CancellationToken ct) =>

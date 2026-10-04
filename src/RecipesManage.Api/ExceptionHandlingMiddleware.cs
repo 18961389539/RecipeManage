@@ -20,7 +20,8 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
     private static readonly HashSet<string> ConflictCodes =
     [
         "CONFLICT", "DUP_BATCH", "DUP_CODE", "DUP_LOT", "DUP_SAMPLE", "DUP_USER",
-        "ALREADY_DONE", "ALREADY_DECIDED", "DRAFT_EXISTS", "VERSION_MISMATCH"
+        "ALREADY_DONE", "ALREADY_DECIDED", "DRAFT_EXISTS", "VERSION_MISMATCH",
+        "EVIDENCE_STALE", "EVIDENCE_INVALID"
     ];
 
     public async Task Invoke(HttpContext context)

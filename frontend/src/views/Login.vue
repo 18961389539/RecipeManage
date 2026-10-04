@@ -1,7 +1,7 @@
 <template>
   <div class="login">
     <el-card class="card">
-      <h2>{{ $t("工艺配方管理与实时执行系统") }}</h2>
+      <h2>{{ $t("工艺配方管理与实时执行系统") }}<PageGuideButton guide-key="login" /></h2>
       <p>{{ $t("离散制造 · 批次配方管理与执行") }}</p>
       <el-form @submit.prevent="onSubmit" label-position="top">
         <el-form-item :label="$t('用户名')">

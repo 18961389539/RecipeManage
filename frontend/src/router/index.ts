@@ -40,7 +40,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import("../views/recipes/ApprovalChainAdmin.vue")
       },
       { path: "batches", meta: { title: "批次执行态", realtime: true, nav: { label: "批次执行", icon: List } }, component: () => import("../views/batches/BatchList.vue") },
-      { path: "batches/:id/record", meta: { title: "批次追溯记录" }, component: () => import("../views/batches/BatchRecord.vue") },
+      {
+        path: "batches/:id/record",
+        // 归档凭据按角色收敛（batch.record.view：主管 / 质量 / 管理员），与后端策略同源；
+        // 操作员的取样入口在监控页（lot.handle）。
+        meta: { roles: ["Admin", "Supervisor", "Quality"] satisfies UserRole[], title: "批次追溯记录" },
+        component: () => import("../views/batches/BatchRecord.vue")
+      },
       { path: "batches/:id", meta: { title: "批次实时监控", realtime: true }, component: () => import("../views/batches/BatchMonitor.vue") },
       { path: "lots", meta: { title: "物料批次", nav: { label: "物料谱系", icon: Box } }, component: () => import("../views/materials/LotList.vue") },
       { path: "lots/:id", meta: { title: "物料谱系" }, component: () => import("../views/materials/LotGenealogy.vue") },
@@ -56,7 +62,8 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: "audit",
-        meta: { roles: ["Admin", "Quality", "Supervisor", "ProcessEngineer"] satisfies UserRole[], title: "操作审计", nav: { label: "操作审计", icon: View } },
+        // 全局审计日志只有质量与管理员可读（audit.view）：与后端策略同源，菜单/守卫共用这张名单。
+        meta: { roles: ["Admin", "Quality"] satisfies UserRole[], title: "操作审计", nav: { label: "操作审计", icon: View } },
         component: () => import("../views/audit/AuditLog.vue")
       },
       {

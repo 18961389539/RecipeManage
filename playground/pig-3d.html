@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>3D 小猪</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe8ff; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #2b2130; }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; touch-action: none; }
+
+  .hud {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    pointer-events: none;
+  }
+  .hud button {
+    pointer-events: auto;
+    border: 0; border-radius: 999px; padding: 9px 18px;
+    background: rgba(255,255,255,.82); color: #4a2f42;
+    font: inherit; font-weight: 600; cursor: pointer;
+    box-shadow: 0 6px 18px rgba(80,50,70,.18);
+    backdrop-filter: blur(8px);
+    transition: transform .12s ease, background .2s ease;
+  }
+  .hud button:hover { transform: translateY(-2px); }
+  .hud button.on { background: #ff9db8; color: #fff; }
+  .hud .swatch { width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 3px solid #fff; }
+
+  .title {
+    position: fixed; top: 22px; left: 0; right: 0; text-align: center; pointer-events: none;
+  }
+  .title h1 { margin: 0; font-size: 22px; letter-spacing: 2px; color: #5a3a50; text-shadow: 0 2px 0 rgba(255,255,255,.7); }
+  .title p { margin: 4px 0 0; font-size: 12px; color: rgba(90,58,80,.7); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="title">
+  <h1>小 猪</h1>
+  <p>拖动旋转 · 滚轮缩放 · 点一下它会叫</p>
+</div>
+
+<div class="hud">
+  <button id="btnWalk">散步</button>
+  <button id="btnJump">跳一下</button>
+  <button id="btnSound" class="on">音效</button>
+  <button id="c1" class="swatch on" style="background:#ff8fb6" title="粉色"></button>
+  <button id="c2" class="swatch" style="background:#f7b78a" title="橘色"></button>
+  <button id="c3" class="swatch" style="background:#b9b2c9" title="灰色"></button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const PALETTE = {
+  pink: { skin: 0xff8fb6, shade: 0xef7a9c, snout: 0xff7fa2, ear: 0xe56b8b, hoof: 0xc2547e },
+  orange: { skin: 0xf5a867, shade: 0xe08d4c, snout: 0xef9a63, ear: 0xcf7a3d, hoof: 0xa85f2f },
+  gray: { skin: 0xa79db9, shade: 0x8e84a1, snout: 0x9c8ea6, ear: 0x7f7491, hoof: 0x5f5670 }
+};
+
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const HORIZON = new THREE.Color(0xf0f7e0);
+scene.fog = new THREE.Fog(HORIZON, 22, 78);
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 400);
+camera.position.set(6.2, 3.4, 7.6);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.35, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 3.2;
+controls.maxDistance = 26;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.update();
+
+/* ---------- 天空与光照 ---------- */
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(180, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: {
+      top: { value: new THREE.Color(0x74b6f2) },
+      bottom: { value: HORIZON.clone() },
+      offset: { value: 0.12 },
+      exponent: { value: 0.9 }
+    },
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform vec3 top; uniform vec3 bottom; uniform float offset; uniform float exponent;
+      varying vec3 vP;
+      void main(){
+        float h = normalize(vP + vec3(0.0, offset, 0.0)).y;
+        gl_FragColor = vec4(mix(bottom, top, pow(max(h,0.0), exponent)), 1.0);
+      }`
+  })
+);
+scene.add(sky);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xffd2e2, 0.62));
+
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.42);
+sun.position.set(7, 11, 5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 40;
+sun.shadow.camera.left = -12;
+sun.shadow.camera.right = 12;
+sun.shadow.camera.top = 12;
+sun.shadow.camera.bottom = -12;
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+const rim = new THREE.DirectionalLight(0xffd9ea, 0.35);
+rim.position.set(-6, 4, -7);
+scene.add(rim);
+
+/* ---------- 地面 ---------- */
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(160, 72),
+  new THREE.MeshStandardMaterial({ color: 0x9ccf82, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// 边缘渐隐的色块（泥坑 / 深草）
+function patch(radius, x, z, colorHex, core = 0.42) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const c = cv.getContext('2d');
+  const rgb = `${(colorHex >> 16) & 255},${(colorHex >> 8) & 255},${colorHex & 255}`;
+  const grd = c.createRadialGradient(128, 128, 8, 128, 128, 126);
+  grd.addColorStop(0, `rgba(${rgb},1)`);
+  grd.addColorStop(core, `rgba(${rgb},0.96)`);
+  grd.addColorStop(1, `rgba(${rgb},0)`);
+  c.fillStyle = grd;
+  c.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const m = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 48),
+    new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 1, depthWrite: false })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.012, z);
+  m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+patch(2.6, -3.6, 2.8, 0x9a7458);
+patch(1.5, -2.6, 3.9, 0x82604a, 0.3);
+patch(4.2, 4.6, -3.8, 0x86bd6c);
+patch(3.0, 6.5, 4.5, 0x8ec474);
+
+/* ---------- 小花与食槽 ---------- */
+const rnd = (() => { let s = 20261002; return () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff); })();
+const petalMat = new THREE.MeshStandardMaterial({ color: 0xfff4fb, roughness: .8 });
+const centerMat = new THREE.MeshStandardMaterial({ color: 0xffd35c, roughness: .7 });
+const stemMat = new THREE.MeshStandardMaterial({ color: 0x6fa85a, roughness: 1 });
+
+for (let i = 0; i < 26; i++) {
+  const a = rnd() * Math.PI * 2;
+  const r = 3.2 + rnd() * 11;
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  if (Math.hypot(x + 3.6, z - 2.8) < 3.0) continue;
+  const h = 0.28 + rnd() * 0.2;
+  const f = new THREE.Group();
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.026, h, 6), stemMat);
+  stem.position.y = h / 2;
+  f.add(stem);
+  const head = new THREE.Group();
+  head.position.y = h;
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), rnd() > 0.5 ? centerMat : petalMat);
+  head.add(core);
+  for (let p = 0; p < 5; p++) {
+    const petal = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), rnd() > 0.4 ? petalMat : centerMat);
+    petal.scale.set(1, 0.35, 1);
+    const pa = (p / 5) * Math.PI * 2;
+    petal.position.set(Math.cos(pa) * 0.09, 0, Math.sin(pa) * 0.09);
+    head.add(petal);
+  }
+  f.add(head);
+  f.position.set(x, 0, z);
+  f.children.forEach(c => c.traverse(o => { if (o.isMesh) o.castShadow = true; }));
+  scene.add(f);
+}
+
+const woodMat = new THREE.MeshStandardMaterial({ color: 0xc08a5a, roughness: .9 });
+const trough = new THREE.Group();
+{
+  const box = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.42, 0.75), woodMat);
+  box.position.y = 0.26;
+  trough.add(box);
+  const inner = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.16, 0.58),
+    new THREE.MeshStandardMaterial({ color: 0xe7c98f, roughness: 1 })
+  );
+  inner.position.y = 0.36;
+  trough.add(inner);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.12), woodMat);
+    leg.position.set(sx * 0.7, 0.08, sz * 0.26);
+    trough.add(leg);
+  }
+}
+trough.position.set(5.8, 0, 4.4);
+trough.rotation.y = -0.95;
+trough.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+scene.add(trough);
+
+/* ---------- 小猪 ---------- */
+function toonGradient(steps) {
+  const data = new Uint8Array(steps);
+  for (let i = 0; i < steps; i++) data[i] = Math.round(58 + (i / (steps - 1)) * 197);
+  const tex = new THREE.DataTexture(data, steps, 1, THREE.RedFormat);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+const gradientMap = toonGradient(5);
+const toon = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap, ...extra });
+
+const mats = {
+  skin: toon(PALETTE.pink.skin),
+  shade: toon(PALETTE.pink.shade),
+  snout: toon(PALETTE.pink.snout),
+  ear: toon(PALETTE.pink.ear, { side: THREE.DoubleSide }),
+  hoof: toon(PALETTE.pink.hoof),
+  dark: new THREE.MeshStandardMaterial({ color: 0x2c1b26, roughness: .25 }),
+  gloss: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .1 })
+};
+const cast = (m) => { m.castShadow = true; m.receiveShadow = true; return m; };
+
+const pig = new THREE.Group();
+scene.add(pig);
+
+// 身体
+const body = new THREE.Group();
+body.position.y = 1.24;
+pig.add(body);
+const belly = cast(new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), mats.skin));
+belly.scale.set(1.5, 1.02, 1.04);
+body.add(belly);
+
+// 头
+const head = new THREE.Group();
+head.position.set(1.5, 0.42, 0);
+body.add(head);
+
+const skull = cast(new THREE.Mesh(new THREE.SphereGeometry(0.66, 48, 36), mats.skin));
+skull.scale.set(1.02, 0.95, 0.98);
+head.add(skull);
+
+// 鼻子
+const snoutGroup = new THREE.Group();
+snoutGroup.position.set(0.5, -0.04, 0);
+head.add(snoutGroup);
+const snout = cast(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.24, 32), mats.snout));
+snout.rotation.z = Math.PI / 2;
+snoutGroup.add(snout);
+const snoutTip = cast(new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 24), mats.snout));
+snoutTip.position.x = 0.12;
+snoutTip.scale.set(0.32, 1, 1);
+snoutGroup.add(snoutTip);
+for (const s of [1, -1]) {
+  const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), mats.dark);
+  nostril.position.set(0.19, 0.05, s * 0.115);
+  nostril.scale.set(0.5, 1.4, 0.8);
+  snoutGroup.add(nostril);
+}
+
+// 耳朵（三角软耳）
+function makeEar() {
+  const s = new THREE.Shape();
+  s.moveTo(-0.17, 0);
+  s.quadraticCurveTo(-0.26, 0.3, -0.02, 0.6);
+  s.quadraticCurveTo(0.2, 0.44, 0.16, 0.02);
+  s.quadraticCurveTo(0.02, -0.08, -0.17, 0);
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.07, bevelEnabled: true, bevelSize: 0.022, bevelThickness: 0.02, bevelSegments: 3, curveSegments: 16 });
+  g.translate(0, 0, -0.035);
+  const m = cast(new THREE.Mesh(g, mats.ear));
+  return m;
+}
+const ears = [];
+const EAR_X = 0.34, EAR_Z = 0.72;
+for (const side of [1, -1]) {
+  const pivot = new THREE.Group();
+  pivot.position.set(0.02, 0.5, side * 0.34);
+  pivot.rotation.set(EAR_X, side * -0.6, side * EAR_Z);
+  const ear = makeEar();
+  pivot.add(ear);
+  head.add(pivot);
+  ears.push({ pivot, side });
+}
+
+// 眼睛
+const eyes = [];
+for (const side of [1, -1]) {
+  const g = new THREE.Group();
+  g.position.set(0.34, 0.15, side * 0.44);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 18), mats.gloss);
+  g.add(ball);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 16), mats.dark);
+  pupil.position.set(0.07, 0.005, side * 0.045);
+  g.add(pupil);
+  const spark = new THREE.Mesh(new THREE.SphereGeometry(0.026, 12, 10), mats.gloss);
+  spark.position.set(0.105, 0.055, side * 0.02);
+  g.add(spark);
+  head.add(g);
+  eyes.push(g);
+}
+
+// 腿
+const legs = [];
+for (const [x, z, front] of [[0.92, 0.56, 1], [0.92, -0.56, 1], [-0.98, 0.56, 0], [-0.98, -0.56, 0]]) {
+  const pivot = new THREE.Group();
+  pivot.position.set(x, -0.42, z);
+  body.add(pivot);
+  const limb = cast(new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.155, 0.62, 20), mats.skin));
+  limb.position.y = -0.31;
+  pivot.add(limb);
+  const hoof = cast(new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.185, 0.22, 20), mats.hoof));
+  hoof.position.y = -0.71;
+  pivot.add(hoof);
+  legs.push({ pivot, front, side: z > 0 ? 1 : -1 });
+}
+
+// 卷尾巴
+const tailPts = [];
+for (let i = 0; i <= 26; i++) {
+  const u = i / 26, a = u * Math.PI * 3.2, r = 0.07 + 0.19 * u;
+  tailPts.push(new THREE.Vector3(-0.04 - u * 0.16, Math.cos(a) * r, Math.sin(a) * r));
+}
+const tailPivot = new THREE.Group();
+tailPivot.position.set(-1.5, 0.2, 0);
+const tail = cast(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tailPts), 48, 0.062, 10, false), mats.shade));
+tailPivot.add(tail);
+body.add(tailPivot);
+
+const focus = new THREE.Vector3();
+const _delta = new THREE.Vector3();
+const _prevTarget = controls.target.clone();
+
+/* ---------- 交互 ---------- */
+const state = { walking: false, angle: Math.PI * 0.35, jumpAt: -1, jumpStrength: 1, sound: true };
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let audioCtx = null;
+function squeak(base = 460) {
+  if (!state.sound) return;
+  audioCtx ||= new (AudioContext || webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const t = audioCtx.currentTime;
+  const g = audioCtx.createGain();
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = base * 1.7; bp.Q.value = 1.1;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.035);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  bp.connect(g).connect(audioCtx.destination);
+  for (const [type, mul, det] of [['sawtooth', 0.75, 0], ['triangle', 1.5, 7]]) {
+    const o = audioCtx.createOscillator();
+    o.type = type; o.detune.value = det;
+    o.frequency.setValueAtTime(base * mul * 0.7, t);
+    o.frequency.exponentialRampToValueAtTime(base * mul * 1.95, t + 0.08);
+    o.frequency.exponentialRampToValueAtTime(base * mul * 0.6, t + 0.28);
+    o.connect(bp); o.start(t); o.stop(t + 0.32);
+  }
+}
+
+function jump(strength = 1) {
+  state.jumpAt = clock.elapsedTime;
+  state.jumpStrength = strength;
+}
+
+const ray = new THREE.Raycaster();
+const ptr = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) return;
+  ptr.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  if (ray.intersectObjects(pig.children, true).length) {
+    squeak(380 + Math.random() * 180);
+    jump(0.55);
+  }
+});
+
+const btnWalk = document.getElementById('btnWalk');
+btnWalk.onclick = () => {
+  state.walking = !state.walking;
+  btnWalk.classList.toggle('on', state.walking);
+  btnWalk.textContent = state.walking ? '站着歇会儿' : '散步';
+  if (state.walking) squeak(520);
+};
+document.getElementById('btnJump').onclick = () => { jump(1); squeak(600); };
+const btnSound = document.getElementById('btnSound');
+btnSound.onclick = () => { state.sound = !state.sound; btnSound.classList.toggle('on', state.sound); if (state.sound) squeak(560); };
+
+const swatches = [['c1', 'pink'], ['c2', 'orange'], ['c3', 'gray']];
+swatches.forEach(([id, key]) => {
+  document.getElementById(id).onclick = (e) => {
+    const p = PALETTE[key];
+    mats.skin.color.setHex(p.skin); mats.shade.color.setHex(p.shade);
+    mats.snout.color.setHex(p.snout); mats.ear.color.setHex(p.ear); mats.hoof.color.setHex(p.hoof);
+    document.querySelectorAll('.swatch').forEach(b => b.classList.remove('on'));
+    e.currentTarget.classList.add('on');
+    squeak(700);
+  };
+});
+
+/* ---------- 动画 ---------- */
+const clock = new THREE.Clock();
+const RADIUS = 5.0;
+let nextBlink = 1.5, blink = 0, tailPhase = 0;
+
+function animate() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  tailPhase += dt * (state.walking ? 9 : 3.1);
+
+  // 呼吸 + 头部摆动
+  const breathe = reduced ? 0 : Math.sin(t * 1.9) * 0.022;
+  belly.scale.set(1.5, 1.02 + breathe, 1.04 + breathe * 0.5);
+  head.rotation.z = Math.sin(t * 1.35) * 0.05;
+  head.rotation.y = Math.sin(t * 0.55) * 0.16;
+  head.rotation.x = Math.sin(t * 0.9 + 1) * 0.05 - (state.walking ? 0.08 : 0);
+  snoutGroup.rotation.z = Math.sin(t * 2.4) * 0.05;
+
+  // 耳朵与尾巴
+  for (const { pivot, side } of ears) {
+    pivot.rotation.x = EAR_X + Math.sin(t * 1.6 + side) * 0.16;
+    pivot.rotation.z = side * (EAR_Z + Math.sin(t * 1.1 + side * 2) * 0.08);
+  }
+  tailPivot.rotation.x = Math.sin(tailPhase) * 0.35;
+  tailPivot.rotation.z = Math.cos(tailPhase * 0.7) * 0.22;
+
+  // 眨眼
+  if (t > nextBlink) { blink = 0.14; nextBlink = t + 2 + Math.random() * 3.5; }
+  if (blink > 0) blink -= dt;
+  const lid = blink > 0 ? 0.16 : 1;
+  for (const e of eyes) e.scale.y += (lid - e.scale.y) * 0.4;
+
+  // 跳跃
+  let jy = 0;
+  const jt = t - state.jumpAt;
+  if (state.jumpAt > 0 && jt < 0.72) {
+    const u = jt / 0.72;
+    jy = Math.sin(u * Math.PI) * 0.85 * state.jumpStrength;
+    body.rotation.z = Math.sin(u * Math.PI) * 0.12;
+    legs.forEach((l, i) => { l.pivot.rotation.x = Math.sin(u * Math.PI) * (i < 2 ? -0.7 : 0.6); });
+  } else if (state.walking) {
+    // 绕圈小跑
+    state.angle += dt * 0.42;
+    pig.position.set(Math.cos(state.angle) * RADIUS, 0, Math.sin(state.angle) * RADIUS);
+    pig.rotation.y = state.angle + Math.PI / 2;
+    const cyc = t * 7.2;
+    legs.forEach(l => {
+      const phase = (l.front ? 0 : Math.PI) + (l.side > 0 ? 0 : Math.PI);
+      l.pivot.rotation.x = Math.sin(cyc + phase) * 0.45;
+    });
+    body.position.y = 1.24 + Math.abs(Math.sin(cyc)) * 0.09;
+    body.rotation.z = Math.sin(cyc * 0.5) * 0.05;
+  } else {
+    legs.forEach((l, i) => {
+      const rest = i < 2 ? 0.02 : -0.02;
+      l.pivot.rotation.x += (rest - l.pivot.rotation.x) * 0.12;
+    });
+    body.position.y += (1.24 - body.position.y) * 0.12;
+    body.rotation.z += (0 - body.rotation.z) * 0.1;
+    pig.position.x += (0 - pig.position.x) * 0.05;
+    pig.position.z += (0 - pig.position.z) * 0.05;
+    pig.rotation.y += (0 - pig.rotation.y) * 0.05;
+    state.angle = Math.atan2(pig.position.z, pig.position.x);
+  }
+
+  pig.position.y = jy;
+
+  focus.set(state.walking ? pig.position.x : 0, 1.35 + jy * 0.6, state.walking ? pig.position.z : 0);
+  controls.target.lerp(focus, 0.06);
+  camera.position.add(_delta.subVectors(controls.target, _prevTarget));
+  _prevTarget.copy(controls.target);
+  controls.update();
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(animate);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
@@ -40,6 +40,11 @@ public sealed class EquipmentService
     public async Task<EquipmentDto> UpsertAsync(Guid? id, UpsertEquipmentRequest request, CancellationToken ct)
     {
         _user.EnsureCan(Capabilities.EquipmentAdmin, "仅管理员可配置设备与 PLC 点表。");
+
+        if (string.IsNullOrWhiteSpace(request.Code))
+            throw new DomainException("EQ_CODE_REQUIRED", "设备编码不能为空。");
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new DomainException("EQ_NAME_REQUIRED", "设备名称不能为空。");
 
         TagMapValidator.Parse(request.TagMapJson);
 
@@ -204,7 +209,9 @@ public sealed class EquipmentService
             .Take(9)
             .Select(e => new DashboardEventDto(
                 e.CreatedAt,
-                _db.Batches.Where(b => b.Id == e.BatchId).Select(b => b.BatchNo).FirstOrDefault(),
+                // 子查询可能找不到批次行（历史事件/已清理数据）：DTO 的批次号是非空串，缺了给空串，
+                // 编译警告（CS8604）随之消失，运行行为与以前一致。
+                _db.Batches.Where(b => b.Id == e.BatchId).Select(b => b.BatchNo).FirstOrDefault() ?? "",
                 e.BatchId,
                 e.StepCode,
                 e.Kind,

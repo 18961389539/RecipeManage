@@ -16,6 +16,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { t } from "../i18n";
 import { updateRecipeHeader } from "../api/recipes";
 import type { RecipeDetailDto } from "../api/types";
 
@@ -45,7 +46,7 @@ async function save() {
       productName: form.productName,
       description: form.description || null
     });
-    ElMessage.success("已更新主配方抬头");
+    ElMessage.success(t("已更新主配方抬头"));
     visible.value = false;
     emit("saved");
   } catch (e) {

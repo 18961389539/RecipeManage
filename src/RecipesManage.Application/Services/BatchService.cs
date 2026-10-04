@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Domain.Batches;
@@ -113,7 +113,7 @@ public sealed class BatchService
 
         var retry = batch.Status == BatchStatus.Faulted;
         batch.Queue();
-        AuditEsign(retry ? "batch.retry.esign" : "batch.start.esign", batch.Id, batch.BatchNo);
+        AuditEsign(retry ? "batch.retry.esign" : "batch.start.esign", batch, batch.BatchNo);
         await SaveBatchStateAsync(ct);
         await OccupancyRealtime.PublishAsync(_db, _publisher, batch.Id, ct);
         await _scheduler.EnqueueStartAsync(batch.Id, ct);
@@ -127,12 +127,16 @@ public sealed class BatchService
         var batch = await LoadAsync(id, ct);
         // 排队中的批次从没碰过设备，不欠复位；已经启动过（运行 / 保持 / 故障）的，设备上可能留着握手位。
         var deviceTouched = batch.Status != BatchStatus.Queued;
-        batch.Abort(string.IsNullOrWhiteSpace(reason) ? "操作员中止" : reason);
-        if (deviceTouched)
-            await MarkDevicesPendingResetAsync(batch, ct);
-        await ClearIntentsAsync(batch.Id, ct);
-        AuditEsign("batch.abort.esign", batch.Id, reason);
-        await SaveBatchStateAsync(ct);
+        var equipmentIds = SnapshotJson.BoundEquipmentIds(batch);
+        await using (await EquipmentOperationGate.Shared.AcquireAsync(equipmentIds, ct))
+        {
+            batch.Abort(string.IsNullOrWhiteSpace(reason) ? "操作员中止" : reason);
+            if (deviceTouched)
+                await MarkDevicesPendingResetAsync(batch, ct);
+            await ClearIntentsAsync(batch.Id, ct);
+            AuditEsign("batch.abort.esign", batch, reason);
+            await SaveBatchStateAsync(ct);
+        }
         // 租约不在这里放：会话可能还在写 PLC，此时放租约，另一批就能接管同一台设备，
         // 而调度器随后的握手位复位会打在新批次身上。停会话 → 复位 → 放租约由调度器按序做。
         await _scheduler.EnqueueAbortAsync(batch.Id, reason, ct);
@@ -147,7 +151,7 @@ public sealed class BatchService
         if (batch.Status == BatchStatus.Queued)
         {
             batch.Hold(reason);
-            AuditEsign("batch.hold.esign", batch.Id, reason);
+            AuditEsign("batch.hold.esign", batch, reason);
             await SaveBatchStateAsync(ct);
             await OccupancyRealtime.PublishAsync(_db, _publisher, batch.Id, ct);
         }
@@ -155,7 +159,7 @@ public sealed class BatchService
         {
             var holdReason = string.IsNullOrWhiteSpace(reason) ? "操作员保持" : reason.Trim();
             await UpsertIntentAsync(batch.Id, SchedulerIntentKinds.Hold, holdReason, null, ct);
-            AuditEsign("batch.hold.esign", batch.Id, holdReason);
+            AuditEsign("batch.hold.esign", batch, holdReason);
             await SaveBatchStateAsync(ct);
             await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "hold-requested", new
             {
@@ -177,7 +181,7 @@ public sealed class BatchService
         await AcquireEquipmentAsync(batch, ct);
         batch.Resume();
         await ClearIntentsAsync(batch.Id, ct, SchedulerIntentKinds.Hold);
-        AuditEsign("batch.resume.esign", batch.Id, batch.BatchNo);
+        AuditEsign("batch.resume.esign", batch, batch.BatchNo);
         await SaveBatchStateAsync(ct);
         await OccupancyRealtime.PublishAsync(_db, _publisher, batch.Id, ct);
         await _scheduler.EnqueueStartAsync(batch.Id, ct);
@@ -202,7 +206,7 @@ public sealed class BatchService
         if (StepSkip.Decide(batch, exec, laneRow) == SkipMode.ForwardToEngine)
         {
             await UpsertIntentAsync(batch.Id, SchedulerIntentKinds.Skip, skipReason, target.StepId, ct);
-            AuditEsign("batch.skip.esign", batch.Id, $"{skipReason} step={target.Code}");
+            AuditEsign("batch.skip.esign", batch, $"{skipReason} step={target.Code}");
             await SaveBatchStateAsync(ct);
             await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "skip-requested", new
             {
@@ -222,7 +226,7 @@ public sealed class BatchService
         var finished = StepSkip.ApplyOffline(batch, snapshot, exec, skipReason, DateTimeOffset.UtcNow);
         if (!finished)
             await _scheduler.EnqueueStartAsync(batch.Id, ct);
-        AuditEsign("batch.skip.esign", batch.Id, $"{skipReason} step={target.Code}");
+        AuditEsign("batch.skip.esign", batch, $"{skipReason} step={target.Code}");
         await SaveBatchStateAsync(ct);
         if (finished)
             await _leases.ReleaseAsync(batch.Id, ct);
@@ -255,7 +259,7 @@ public sealed class BatchService
             throw new DomainException("CONFIRM_DONE", "该人工确认工步已结束。");
         var confirmComment = string.IsNullOrWhiteSpace(comment) ? "操作员确认" : comment.Trim();
         await UpsertIntentAsync(batch.Id, SchedulerIntentKinds.Confirm, confirmComment, target.StepId, ct);
-        AuditEsign("batch.confirm.esign", batch.Id, string.IsNullOrWhiteSpace(comment) ? target.Code : comment);
+        AuditEsign("batch.confirm.esign", batch, string.IsNullOrWhiteSpace(comment) ? target.Code : comment);
         await SaveBatchStateAsync(ct);
         await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "confirm-requested", new
         {
@@ -267,11 +271,18 @@ public sealed class BatchService
         return await GetAsync(id, ct);
     }
 
-    public async Task<BatchDetailDto> ReleaseAsync(Guid id, string comment, string password, CancellationToken ct)
+    public async Task<BatchDetailDto> ReleaseAsync(
+        Guid id, string comment, string password, int? evidenceHashVersion, string? evidenceHash, CancellationToken ct)
     {
         EnsureCan(Capabilities.QualityDisposition);
         await RequireEsignAsync(password, ct);
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var batch = await LoadAsync(id, ct);
+        var evidence = await RequireDispositionEvidenceAsync(id, evidenceHashVersion, evidenceHash, ct);
+        if (evidence.LabSamples?.Any(s =>
+                s.DispositionSignature?.Integrity is "Mismatch" or "Unsupported") == true)
+            throw new DomainException("EVIDENCE_INVALID",
+                "实验室样品签名内容校验失败，不能质量放行。");
         var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson)
                        ?? throw new DomainException("SNAPSHOT", "控制配方快照损坏。");
         SnapshotIntegrity.DemandSealed(SnapshotIntegrity.Verify(snapshot, SnapshotJson.Options));
@@ -293,21 +304,30 @@ public sealed class BatchService
         }
         batch.Release(_user.UserName ?? "quality", comment, DateTimeOffset.UtcNow);
         await _lots.ApplyBatchDispositionAsync(batch, ct);
-        AuditEsign("batch.release.esign", batch.Id, batch.ReleaseComment, _user.UserName ?? "quality");
+        AuditEsign(
+            "batch.release.esign", batch, batch.ReleaseComment, _user.UserName ?? "quality",
+            BatchRecordEvidenceHash.CurrentVersion, evidence.EvidenceHash);
         await SaveBatchStateAsync(ct);
+        await transaction.CommitAsync(ct);
         await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "released", new { batch.BatchNo, status = batch.Status.ToString() }), ct);
         return await GetAsync(id, ct);
     }
 
-    public async Task<BatchDetailDto> RejectDispositionAsync(Guid id, string reason, string password, CancellationToken ct)
+    public async Task<BatchDetailDto> RejectDispositionAsync(
+        Guid id, string reason, string password, int? evidenceHashVersion, string? evidenceHash, CancellationToken ct)
     {
         EnsureCan(Capabilities.QualityDisposition);
         await RequireEsignAsync(password, ct);
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var batch = await LoadAsync(id, ct);
+        var evidence = await RequireDispositionEvidenceAsync(id, evidenceHashVersion, evidenceHash, ct);
         batch.RejectDisposition(_user.UserName ?? "quality", reason, DateTimeOffset.UtcNow);
         await _lots.ApplyBatchDispositionAsync(batch, ct);
-        AuditEsign("batch.reject.esign", batch.Id, batch.ReleaseComment, _user.UserName ?? "quality");
+        AuditEsign(
+            "batch.reject.esign", batch, batch.ReleaseComment, _user.UserName ?? "quality",
+            BatchRecordEvidenceHash.CurrentVersion, evidence.EvidenceHash);
         await SaveBatchStateAsync(ct);
+        await transaction.CommitAsync(ct);
         await _publisher.PublishAsync(new ExecutionEvent(batch.Id, "disposition-rejected", new { batch.BatchNo, status = batch.Status.ToString() }), ct);
         return await GetAsync(id, ct);
     }
@@ -330,8 +350,35 @@ public sealed class BatchService
 
 
     /// <summary>含义原文在这一刻冻结进 signature_records；之后展示读库里的文本，不再查当前代码里的含义表。</summary>
-    private void AuditEsign(string action, Guid batchId, string? extra, string? userName = null) =>
-        _esign.Record(action, "ProductionBatch", batchId.ToString(), ElectronicSignature.Batch(action), extra, userName);
+    private void AuditEsign(
+        string action, ProductionBatch batch, string? extra, string? userName = null,
+        int? contentHashVersion = null, string? contentHash = null)
+    {
+        var signerName = userName ?? _user.UserName;
+        if (contentHashVersion is null && BatchActionSignatureContent.Supports(action))
+        {
+            var snapshot = SnapshotJson.Deserialize(batch.ControlRecipeJson)
+                           ?? throw new DomainException("SNAPSHOT", "控制配方快照损坏。");
+            contentHashVersion = BatchActionSignatureContent.CurrentVersion;
+            contentHash = BatchActionSignatureContent.Compute(
+                action, "ProductionBatch", batch.Id.ToString(), ElectronicSignature.Batch(action),
+                signerName, extra, snapshot);
+        }
+
+        _esign.Record(
+            action, "ProductionBatch", batch.Id.ToString(), ElectronicSignature.Batch(action), extra, signerName,
+            contentHashVersion, contentHash);
+    }
+
+    private async Task<BatchRecordDto> RequireDispositionEvidenceAsync(
+        Guid batchId, int? version, string? submittedHash, CancellationToken ct)
+    {
+        var record = await _query.RecordAsync(batchId, ct);
+        if (version != BatchRecordEvidenceHash.CurrentVersion ||
+            !BatchRecordEvidenceHash.Matches(version, submittedHash, record.EvidenceHash ?? ""))
+            throw new DomainException("EVIDENCE_STALE", "批记录证据已变化或摘要版本不支持，请刷新并重新核对后签署。");
+        return record;
+    }
 
 
     private async Task EnsureEquipmentClassAsync(ControlRecipeSnapshot snapshot, Guid primaryEquipmentId, CancellationToken ct)

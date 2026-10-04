@@ -32,6 +32,8 @@ public sealed class CapabilitiesTests
         { Capabilities.EquipmentOperateKey, [A, O, S] },
         { Capabilities.EquipmentSimulateKey, [O, S] },
         { Capabilities.PhaseLibraryKey, [A, E] },
+        { Capabilities.AuditViewKey, [Q, A] },
+        { Capabilities.BatchRecordViewKey, [S, Q, A] },
     };
 
     [Theory]

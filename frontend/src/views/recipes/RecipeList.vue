@@ -2,7 +2,7 @@
   <div>
     <div class="page-title">
       <div>
-        <h2>{{ $t("主配方") }}</h2>
+        <h2>{{ $t("主配方") }}<PageGuideButton guide-key="recipes" /></h2>
         <span>{{ $t("维护主配方与单元规程。草稿提交后进入多级审核。") }}</span>
       </div>
       <div>
@@ -176,6 +176,9 @@ async function load() {
 }
 
 function openCreate() {
+  // 表单是模块级 reactive：上次填到一半点了取消，再打开还留着旧值，
+  // 很容易把上一条的编码/名称顺手提交出去（编码还有唯一性）。
+  Object.assign(form, { code: "", name: "", productCode: "", productName: "" });
   createVisible.value = true;
   void nextTick(() => formRef.value?.clearValidate());
 }

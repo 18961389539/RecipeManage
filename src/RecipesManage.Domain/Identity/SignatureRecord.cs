@@ -35,17 +35,29 @@ public sealed class SignatureRecord : Entity
     /// <summary>签名人补充的原因 / 备注（不含含义原文）。</summary>
     public string? Detail { get; private set; }
 
+    /// <summary>被签内容摘要的规范版本；空值表示历史记录没有内容绑定。</summary>
+    public int? ContentHashVersion { get; private set; }
+
+    /// <summary>被签内容的 SHA-256 摘要，大写十六进制。</summary>
+    public string? ContentHash { get; private set; }
+
     public DateTimeOffset SignedAt { get; private set; } = DateTimeOffset.UtcNow;
 
     private SignatureRecord() { }
 
     public SignatureRecord(
-        Guid? userId, string signerName, string action, string entityType, string entityId, string meaning, string? detail)
+        Guid? userId, string signerName, string action, string entityType, string entityId, string meaning,
+        string? detail, int? contentHashVersion = null, string? contentHash = null)
     {
         if (string.IsNullOrWhiteSpace(meaning))
             throw new DomainException("ESIGN", "电子签名必须带有签署含义。");
         if (string.IsNullOrWhiteSpace(action) || string.IsNullOrWhiteSpace(entityType) || string.IsNullOrWhiteSpace(entityId))
             throw new DomainException("ESIGN", "电子签名必须绑定到具体对象。");
+        if ((contentHashVersion is null) != (contentHash is null) ||
+            contentHashVersion is <= 0 ||
+            (contentHash is not null &&
+             (contentHash.Length != 64 || !contentHash.All(Uri.IsHexDigit))))
+            throw new DomainException("ESIGN_HASH", "电子签名内容摘要格式无效。");
 
         UserId = userId;
         SignerName = signerName;
@@ -54,5 +66,7 @@ public sealed class SignatureRecord : Entity
         EntityId = entityId;
         Meaning = meaning;
         Detail = string.IsNullOrWhiteSpace(detail) ? null : detail.Trim();
+        ContentHashVersion = contentHashVersion;
+        ContentHash = contentHash?.ToUpperInvariant();
     }
 }

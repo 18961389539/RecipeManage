@@ -41,6 +41,11 @@ public sealed class EquipmentLine : Entity
         string? description,
         string? watchdogJson = null)
     {
+        if (string.IsNullOrWhiteSpace(code))
+            throw new DomainException("EQ_CODE_REQUIRED", "设备编码不能为空。");
+        if (string.IsNullOrWhiteSpace(name))
+            throw new DomainException("EQ_NAME_REQUIRED", "设备名称不能为空。");
+
         Code = code.Trim().ToUpperInvariant();
         Name = name.Trim();
         Protocol = protocol;
@@ -67,6 +72,9 @@ public sealed class EquipmentLine : Entity
         string? description,
         string? watchdogJson = null)
     {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new DomainException("EQ_NAME_REQUIRED", "设备名称不能为空。");
+
         Name = name.Trim();
         Protocol = protocol;
         Host = host;

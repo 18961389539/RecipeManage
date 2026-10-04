@@ -131,11 +131,26 @@ public sealed class BatchRecordPdfTests
                 i.PlcStepId, i.PlcStepType, i.Parameters, i.WriteToPlc, i.Policy)).ToList(),
             Esigns: [
                 new BatchEsignDto(
-                    "batch.start.esign",
-                    ElectronicSignature.Batch("batch.start.esign"),
-                    "admin",
+                    "batch.release.esign",
+                    ElectronicSignature.Batch("batch.release.esign"),
+                    "qa",
                     DateTimeOffset.UtcNow,
-                    "BPDF1")
+                    "符合归档质检",
+                    1,
+                    new string('B', 64),
+                    "Verified")
+            ],
+            EvidenceHashVersion: 1,
+            EvidenceHash: new string('C', 64),
+            LabSamples:
+            [
+                new LabSampleDto(
+                    Guid.NewGuid(), "QC-PDF-1", Guid.NewGuid(), null, null, null, stepId,
+                    LabSampleType.Final, LabSampleDisposition.Pass, """{"hardness":42}""",
+                    "operator", DateTimeOffset.UtcNow, "qa", DateTimeOffset.UtcNow, "合格",
+                    new LabSampleDispositionSignatureDto(
+                        "qa", DateTimeOffset.UtcNow, "我作为质量审核人对照规格判定本样品。",
+                        "batch=BPDF1 QC-PDF-1:Pass", 1, new string('A', 64), "Verified"))
             ]);
     }
 }

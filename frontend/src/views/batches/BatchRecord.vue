@@ -14,7 +14,7 @@
   <div v-if="record" class="ebr">
     <div class="page-title no-print sticky-actions">
       <div>
-        <h2>{{ $t("电子批记录 · {0}", [record.batchNo]) }}</h2>
+        <h2>{{ $t("电子批记录 · {0}", [record.batchNo]) }}<PageGuideButton guide-key="batchRecord" /></h2>
         <span>{{ record.snapshot.recipeName }} v{{ record.snapshot.versionNumber }} · {{ batchStatusLabel(record.status) }} · {{ $t("快照：{0}", [integrityLabel]) }}</span>
       </div>
       <div>
@@ -239,7 +239,12 @@ async function releaseLot() {
       t("放行意见"),
       false,
       t("请对照归档质检与四步握手填写放行意见。超差时必须说明偏差放行理由。"));
-    await http.post(`/batches/${record.value.batchId}/release`, { password, reason });
+    await http.post(`/batches/${record.value.batchId}/release`, {
+      password,
+      reason,
+      evidenceHashVersion: record.value.evidenceHashVersion,
+      evidenceHash: record.value.evidenceHash
+    });
     ElMessage.success(t("批次已质量放行"));
     await load();
   } catch (e) {
@@ -259,7 +264,12 @@ async function rejectLot() {
       t("拒收意见"),
       true,
       t("请填写拒收意见（对照质检超差或握手异常）。"));
-    await http.post(`/batches/${record.value.batchId}/reject-disposition`, { password, reason });
+    await http.post(`/batches/${record.value.batchId}/reject-disposition`, {
+      password,
+      reason,
+      evidenceHashVersion: record.value.evidenceHashVersion,
+      evidenceHash: record.value.evidenceHash
+    });
     ElMessage.success(t("批次已质量拒收"));
     await load();
   } catch (e) {

@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -173,8 +173,8 @@ public sealed class DesignToHandshakeLoopTests
             Assert.Equal("Valid", SnapshotIntegrity.Verify(snapshot!, SnapshotJson.Options));
             Assert.Equal("LOT-LOOP", snapshot!.LotNumber);
 
-            var operatorUser = await logDb.Users.SingleAsync(u => u.UserName == "operator");
-            var recordUser = new RoleUser(operatorUser.Id, UserRole.Operator, "operator", "车间操作员");
+            var qaUser = await logDb.Users.SingleAsync(u => u.UserName == "qa");
+            var recordUser = new RoleUser(qaUser.Id, UserRole.Quality, "qa", "质量工程师");
             var records = ServiceHarness.NewBatchQuery(
                 logDb,
                 recordUser,

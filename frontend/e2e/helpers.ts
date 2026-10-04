@@ -14,16 +14,19 @@ export async function loginAs(page: Page, role: keyof typeof passwords) {
   // 而确认框的主按钮也叫「退出」——所以点的时候限定在 .user 里，确认的时候限定在弹框里，
   // 少了这一步，任何二次登录的用例都会卡在 waitForURL("**/login")。
   const logout = page.locator(".user button", { hasText: "退出" });
-  if (await logout.isVisible().catch(() => false)) {
+  const roleButton = page.getByRole("button", { name: role, exact: true });
+  // 先等"已登录（有退出按钮）或已到登录页（有角色按钮）"真正稳定，再决定走哪条路：
+  // isVisible() 不等待，顶栏还没渲染时直接判 false → goto /login 又会被路由守卫弹回
+  // /dashboard（已登录），于是永远等不到角色按钮。高负载下这条竞态会让二次登录的用例挂满超时。
+  await expect(logout.or(roleButton)).toBeVisible();
+  if (await logout.isVisible()) {
     await logout.click();
     const box = page.locator(".el-message-box");
     await expect(box).toBeVisible();
     await box.locator(".el-message-box__btns .el-button--primary").click();
     await page.waitForURL("**/login");
-  } else {
-    await page.goto("/login");
   }
-  await page.getByRole("button", { name: role, exact: true }).click();
+  await roleButton.click();
   await page.getByRole("button", { name: "登录" }).click();
   await page.waitForURL("**/dashboard");
   await expect(page.getByRole("button", { name: "退出" })).toBeVisible();
@@ -157,15 +160,18 @@ export async function createBatchFromApproved(
     const row = dialog.locator(".unit-bind").filter({ hasText: unit });
     await expect(row).toBeVisible();
     const already = await row.locator(".el-select").innerText();
-    if (already.includes(prefix) && already.includes("空闲"))
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`^${escapedPrefix}(?: ·|\\s)`).test(already) && already.includes("空闲"))
       continue;
     await row.locator(".el-select").click();
     const list = page.locator(".el-select-dropdown:visible").last();
-    const idle = list.getByRole("option", { name: new RegExp(`^${prefix} · 空闲`) });
-    if (await idle.count())
-      await idle.click();
-    else
-      await list.getByRole("option", { name: /空闲/ }).filter({ hasNotText: "不允许" }).first().click();
+    const requested = list.getByRole("option", {
+      name: new RegExp(`^${escapedPrefix}(?: ·|\\s)`)
+    });
+    await expect(requested, `Requested equipment ${prefix} for ${unit} must be available and compatible`).toHaveCount(1);
+    await expect(requested, `Requested equipment ${prefix} for ${unit} must be selectable`).toBeEnabled();
+    await requested.click();
+    await expect(row.locator(".el-select")).toContainText(prefix);
   }
   if (opts?.scaleFactor != null) {
     const scale = dialog.locator(".el-form-item").filter({ hasText: "缩放因子" }).locator("input");

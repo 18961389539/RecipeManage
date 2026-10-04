@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Equipment;
@@ -12,6 +13,7 @@ namespace RecipesManage.Application.Contracts;
 
 public interface IAppDbContext
 {
+    DatabaseFacade Database { get; }
     DbSet<AppUser> Users { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<SignatureRecord> SignatureRecords { get; }

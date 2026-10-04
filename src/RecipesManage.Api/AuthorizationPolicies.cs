@@ -32,6 +32,8 @@ public static class AuthorizationPolicies
     public const string EquipmentOperate = Capabilities.EquipmentOperateKey;
     public const string EquipmentSimulate = Capabilities.EquipmentSimulateKey;
     public const string PhaseLibrary = Capabilities.PhaseLibraryKey;
+    public const string AuditView = Capabilities.AuditViewKey;
+    public const string BatchRecordView = Capabilities.BatchRecordViewKey;
 
     public static IServiceCollection AddBrmesPolicies(this IServiceCollection services)
     {

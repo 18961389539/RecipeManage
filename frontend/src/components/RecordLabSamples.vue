@@ -11,6 +11,29 @@
     <el-table-column prop="disposition" :label="$t('判定')" width="90">
       <template #default="{ row }">{{ labDispositionLabel(row.disposition) }}</template>
     </el-table-column>
+    <el-table-column :label="$t('判定签名校验')" min-width="210">
+      <template #default="{ row }">
+        <template v-if="row.dispositionSignature">
+          <div>{{ row.dispositionSignature.signerName }} · {{ new Date(row.dispositionSignature.at).toLocaleString() }}</div>
+          <el-tooltip
+            v-if="row.dispositionSignature.contentHash"
+            :content="`SHA-256: ${row.dispositionSignature.contentHash}`"
+            placement="top"
+          >
+            <el-tag size="small" :type="integrityTagType(row.dispositionSignature.integrity)">
+              {{ integrityLabel(row.dispositionSignature.integrity) }}
+            </el-tag>
+          </el-tooltip>
+          <el-tag v-else size="small" type="warning">
+            {{ integrityLabel(row.dispositionSignature.integrity) }}
+          </el-tag>
+        </template>
+        <el-tag v-else-if="row.disposition !== 'Pending'" size="small" type="danger">
+          {{ $t("缺少电子签名记录") }}
+        </el-tag>
+        <span v-else>—</span>
+      </template>
+    </el-table-column>
     <el-table-column prop="takenBy" :label="$t('取样人')" width="110" />
     <el-table-column prop="comment" :label="$t('意见')" />
     <el-table-column v-if="canDispose" :label="$t('操作')" width="160" class-name="no-print">
@@ -39,6 +62,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { LabSampleDisposition, LabSampleDto } from "../api/types";
 import { labDispositionLabel, labSampleTypeLabel } from "../utils/labels";
 import { useAuthStore } from "../stores/auth";
@@ -55,6 +79,16 @@ const emit = defineEmits<{
 }>();
 
 const auth = useAuthStore();
+const { t } = useI18n();
 const quality = computed(() => auth.is("Quality"));
 const canTakeSample = computed(() => auth.can("Operator", "Quality", "Supervisor"));
+const integrityLabels: Record<string, string> = {
+  Verified: "摘要匹配",
+  Unbound: "历史签名无摘要",
+  Mismatch: "内容不匹配",
+  Unsupported: "不支持的摘要版本",
+};
+const integrityLabel = (status: string) => t(integrityLabels[status] ?? status);
+const integrityTagType = (status: string) =>
+  status === "Verified" ? "success" : status === "Unbound" ? "warning" : "danger";
 </script>

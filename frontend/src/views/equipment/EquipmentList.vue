@@ -2,7 +2,7 @@
   <div>
     <div class="page-title">
       <div>
-        <h2>{{ $t("设备与 PLC 驱动") }}</h2>
+        <h2>{{ $t("设备与 PLC 驱动") }}<PageGuideButton guide-key="equipment" /></h2>
         <span>{{ $t("产线设备、连接参数，以及设备类上的相模板。") }}</span>
       </div>
       <div>
@@ -33,11 +33,12 @@
         <template #label>
           <span class="tab-label"><HelpTip term="设备驱动">{{ $t("设备") }}</HelpTip></span>
         </template>
-        <el-table :data="shown" v-loading="loading" scrollbar-always-on max-height="calc(100vh - 340px)" :empty-text="query.trim() ? $t('没有匹配的设备') : $t('暂无设备')">
+        <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
+        <el-table class="equipment-table" :data="shown" v-loading="loading" scrollbar-always-on max-height="calc(100vh - 340px)" :empty-text="query.trim() ? $t('没有匹配的设备') : $t('暂无设备')">
           <el-table-column prop="code" :label="$t('编码')" width="100" fixed sortable :sort-method="sorters.code" />
           <el-table-column prop="name" :label="$t('名称')" sortable :sort-method="sorters.name" />
           <el-table-column prop="protocol" :label="$t('协议')" width="120" sortable :sort-method="sorters.protocol">
-            <template #default="{ row }">{{ protocolLabel(row.protocol) }}</template>
+            <template #default="{ row }"><el-tag type="info" effect="plain" size="small">{{ protocolLabel(row.protocol) }}</el-tag></template>
           </el-table-column>
           <!-- OPC UA 的 host 是整条端点（opc.tcp://host:port/路径），不限宽会把端口列挤成三行错位；
                定宽 + 溢出 tooltip，完整地址悬停可见 -->
@@ -48,16 +49,22 @@
             <template #default="{ row }">{{ row.equipmentClassCode || $t("未分类") }}</template>
           </el-table-column>
           <el-table-column prop="enabled" :label="$t('启用')" width="80" sortable :sort-method="sorters.enabled" :sort-orders="DESC_FIRST">
-            <template #default="{ row }">{{ row.enabled ? $t("是") : $t("否") }}</template>
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" effect="plain" size="small">{{ row.enabled ? $t("是") : $t("否") }}</el-tag>
+            </template>
           </el-table-column>
           <el-table-column prop="occupancy" :label="$t('占用')" width="160" sortable :sort-method="sorters.occupancy">
             <template #header><HelpTip term="设备占用" /></template>
             <template #default="{ row }">
-              <span v-if="row.occupancy === 'Occupied'" class="occ" @click.stop="openOccupant(row)">{{ row.occupyingBatchNo }}</span>
-              <span v-else>{{ $t("空闲") }}</span>
+              <el-tag v-if="row.occupancy === 'Occupied'" class="occupancy-tag" type="warning" effect="plain" size="small">
+                <el-link v-if="row.occupyingBatchId" class="occ-link" type="warning" :underline="false" @click.stop="openOccupant(row)">{{ row.occupyingBatchNo }}</el-link>
+                <span v-else>{{ row.occupyingBatchNo }}</span>
+              </el-tag>
+              <el-tag v-else type="success" effect="plain" size="small">{{ $t("空闲") }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('操作')" width="360">
+          <!-- 桌面/平板将操作列钉在右侧；手机解除固定以释放表内可视宽度，操作仍可横向滑动到达。 -->
+          <el-table-column :label="$t('操作')" width="220" :fixed="isMobile ? false : 'right'">
             <template #default="{ row }">
               <el-button link type="primary" @click="open(row)">{{ auth.can('Admin') ? $t("编辑") : $t("查看") }}</el-button>
               <el-button v-if="auth.can('Admin', 'Operator', 'Supervisor')" link type="primary" :loading="busy === `test:${row.id}`" @click="testConn(row)">{{ $t("测试连接") }}</el-button>
@@ -73,6 +80,11 @@
             </template>
           </el-table-column>
         </el-table>
+        <!-- 空库时给新装机指路：设备与点表是一切的上游，比"暂无设备"四个字有用得多。
+             取数失败时不出现——那时"没有设备"是假信息，用户该去看上面的错误提示。 -->
+        <div v-if="!loading && !error && !shown.length && !query.trim()" class="muted gap-before">
+          {{ $t("新装机建议顺序：先在这里登记设备与握手点表，再到「相库」建相模板，配方里才能引用到工步。") }}
+        </div>
         <el-alert class="gap-before" type="info" show-icon :title="$t('驱动层解耦：Simulator / Siemens S7（IoTClient） / Modbus TCP（IoTClient） / OPC UA（OPC Foundation）。握手变量集合固定，禁止绕过 PLC_Ready 盲写。')" />
       </el-tab-pane>
       <el-tab-pane name="library">
@@ -109,6 +121,7 @@ import { useAuthStore } from "../../stores/auth";
 import { occupancyOrder, protocolLabel } from "../../utils/labels";
 import { matchesQuery } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useIsMobile } from "../../utils/useMedia";
 import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
 import { templateProgram } from "../../utils/phaseTemplate";
 import HelpTip from "../../components/HelpTip.vue";
@@ -121,6 +134,7 @@ import PhaseLibraryPanel from "../../components/PhaseLibraryPanel.vue";
  * 点表 JSON 的翻译在 utils/tagMap（唯一可单测的那部分）。
  */
 const auth = useAuthStore();
+const isMobile = useIsMobile();
 const route = useRoute();
 const router = useRouter();
 const items = ref<EquipmentDto[]>([]);
@@ -308,7 +322,9 @@ useExecutionHub({ onExecution });
 </script>
 
 <style scoped>
-.occ { cursor: pointer; color: var(--accent-bright); }
+.occupancy-tag { max-width: 100%; }
+.occ-link { max-width: 100%; }
+.equipment-table :deep(.el-tag) { vertical-align: middle; }
 .equipment-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-3); }
 .equipment-tabs :deep(.el-tabs__item) { padding: 0 16px; }
 .tab-label { display: inline-flex; align-items: center; gap: 6px; }

@@ -96,7 +96,12 @@ test("web design approve snapshot four-step handshake", async ({ page }) => {
   await expect(page.getByText("工步归档质检")).toBeVisible();
   await expect(page.getByRole("cell", { name: "硬度" }).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "电子批记录" }).click();
+  // 归档件（批记录）不再对操作员开放：监控页不渲染入口，防止点了才 403。
+  await expect(page.getByRole("button", { name: "电子批记录" })).toHaveCount(0);
+  const batchId = page.url().match(/\/batches\/([0-9a-f-]+)/i)![1];
+
+  await loginAs(page, "质量工程师");
+  await page.goto(`/batches/${batchId}/record`);
   await expect(page.getByRole("heading", { name: new RegExp(`电子批记录 · ${batchNo}`) })).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出 PDF/A" }).click();
@@ -107,10 +112,6 @@ test("web design approve snapshot four-step handshake", async ({ page }) => {
   expect(latin.startsWith("%PDF")).toBeTruthy();
   expect(latin.toLowerCase()).toContain("pdfaid");
 
-  const recordUrl = page.url();
-  await loginAs(page, "质量工程师");
-  await page.goto(recordUrl);
-  await expect(page.getByRole("heading", { name: new RegExp(`电子批记录 · ${batchNo}`) })).toBeVisible();
   await page.getByRole("button", { name: "质量放行" }).click();
   await esignReasonAndWait(page, "/release", "POST", "质量放行 · 电子签名", "四步握手与归档质检合格，准予放行", passwords["质量工程师"]);
   await expect(page.locator(".page-title")).toContainText("· 已放行 ·");

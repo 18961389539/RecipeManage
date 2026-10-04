@@ -38,6 +38,8 @@ public static class Capabilities
     public const string EquipmentOperateKey = "equipment.operate";
     public const string EquipmentSimulateKey = "equipment.simulate";
     public const string PhaseLibraryKey = "phase.library";
+    public const string AuditViewKey = "audit.view";
+    public const string BatchRecordViewKey = "batch.record.view";
 
     private static Capability Of(string key, params UserRole[] roles) => new(key, roles);
 
@@ -93,9 +95,23 @@ public static class Capabilities
     /// <summary>管理员 / 工艺工程师：相模板库。</summary>
     public static readonly Capability PhaseLibrary = Of(PhaseLibraryKey, UserRole.Admin, UserRole.ProcessEngineer);
 
+    /// <summary>
+    /// 质量 / 管理员：全局审计日志。GMP 审计追踪的读者是质量与系统管理，
+    /// 不对车间通览开放——其余业务数据（配方 / 批次 / 设备 / 物料）仍是登录即可。
+    /// </summary>
+    public static readonly Capability AuditView = Of(AuditViewKey, UserRole.Quality, UserRole.Admin);
+
+    /// <summary>
+    /// 主管 / 质量 / 管理员：电子批记录与 PDF 导出。批记录是归档凭据（含签名与检验数据），
+    /// 给生产监督与质量；操作员在监控页看实时执行，不再持有归档件的查看权。
+    /// </summary>
+    public static readonly Capability BatchRecordView =
+        Of(BatchRecordViewKey, UserRole.Supervisor, UserRole.Quality, UserRole.Admin);
+
     public static IReadOnlyList<Capability> All { get; } =
     [
         Admin, RecipeAuthor, RecipeExport, BatchOperate, BatchSkip, BatchConfirm, QualityDisposition,
         AlarmAck, LotReceive, LotHandle, EquipmentAdmin, EquipmentOperate, EquipmentSimulate, PhaseLibrary,
+        AuditView, BatchRecordView,
     ];
 }

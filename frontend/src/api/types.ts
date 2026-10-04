@@ -587,6 +587,8 @@ export interface BatchRecordDto {
   materials?: BatchMaterialUseDto[];
   labSamples?: LabSampleDto[];
   esigns?: BatchEsignDto[];
+  evidenceHashVersion: number;
+  evidenceHash: string;
 }
 
 export interface BatchEsignDto {
@@ -595,6 +597,9 @@ export interface BatchEsignDto {
   userName?: string | null;
   at: string;
   extra?: string | null;
+  contentHashVersion?: number | null;
+  contentHash?: string | null;
+  integrity?: "Verified" | "Unbound" | "Mismatch" | "Unsupported" | null;
 }
 
 export type MaterialLotSource = "Received" | "Produced" | "Split";
@@ -645,6 +650,17 @@ export interface LabSampleDto {
   dispositionBy?: string | null;
   disposedAt?: string | null;
   comment?: string | null;
+  dispositionSignature?: LabSampleDispositionSignatureDto | null;
+}
+
+export interface LabSampleDispositionSignatureDto {
+  signerName: string;
+  at: string;
+  meaning: string;
+  extra?: string | null;
+  contentHashVersion?: number | null;
+  contentHash?: string | null;
+  integrity: "Verified" | "Unbound" | "Mismatch" | "Unsupported";
 }
 
 export interface LotGenealogyDto {

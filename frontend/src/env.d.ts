@@ -15,3 +15,9 @@ declare module "vue-router" {
     realtime?: boolean;
   }
 }
+
+declare module "vue" {
+  export interface GlobalComponents {
+    PageGuideButton: typeof import("./components/PageGuideButton.vue").default;
+  }
+}

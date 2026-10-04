@@ -50,7 +50,7 @@ test("hold during StepRunning writes Host_Hold and waits PLC_Held", async ({ pag
 
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("StepRunning", { timeout: 30_000 });
+  await expect(page.locator(".page-title")).toContainText("工步执行中", { timeout: 30_000 });
 
   await page.getByRole("button", { name: "保持" }).click();
   await esignReasonAndWait(page, "/hold", "POST", "保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "StepRunning 保持", passwords["车间操作员"]);
@@ -61,5 +61,5 @@ test("hold during StepRunning writes Host_Hold and waits PLC_Held", async ({ pag
 
   await page.getByRole("button", { name: "中止" }).click();
   await esignReasonAndWait(page, "/abort", "POST", "中止批次", "E2E 保持验证后中止", passwords["车间操作员"]);
-  await expect(page.locator(".page-title")).toContainText("· Aborted ·", { timeout: 30_000 });
+  await expect(page.locator(".page-title")).toContainText("· 已中止 ·", { timeout: 30_000 });
 });

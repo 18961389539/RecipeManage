@@ -67,6 +67,9 @@ test("supervisor skips ManualConfirm without writing PLC", async ({ page }) => {
   const batchNo = `BSKP${uniqueStamp()}`;
   await loginAs(page, "车间操作员");
   await createBatchFromApproved(page, batchNo, "AL-HT-CFM", "HT-01");
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start execution", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "中文", exact: true }).click();
   await page.getByRole("button", { name: "启动执行" }).click();
   await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
   await expect(page.locator(".handshake-status").filter({ hasText: "等待人工确认" }).first()).toBeVisible({ timeout: 45_000 });
@@ -74,6 +77,10 @@ test("supervisor skips ManualConfirm without writing PLC", async ({ page }) => {
 
   await loginAs(page, "工艺主管");
   await page.goto(batchUrl);
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Skip current step", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hold", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "中文", exact: true }).click();
   await expect(page.getByRole("button", { name: "跳过当前工步" })).toBeVisible();
   await page.getByRole("button", { name: "跳过当前工步" }).click();
   await esignReasonAndWait(page, "/skip", "POST", "跳过当前工步（仅 PLC_Ready / 等待 / 人工确认，且未写参）", "E2E 跳过人工确认", passwords["工艺主管"]);
@@ -95,7 +102,15 @@ test("NoAck handshake fault raises alarm and operator can acknowledge", async ({
     await createBatchFromApproved(page, batchNo, "AL-HT-CFM", "HT-01");
     await page.getByRole("button", { name: "启动执行" }).click();
     await esignAndWait(page, "/start", "POST", "启动批次", passwords["车间操作员"]);
-    await expect(page.locator(".page-title")).toContainText("· 故障 ·", { timeout: 45_000 });
+    await expect(page.locator(".batch-meta-item").nth(1)).toHaveText("故障", { timeout: 45_000 });
+    const batchUrl = page.url();
+    await page.goto("/alarms");
+    const pendingRow = page.locator(".alarm-table .el-table__body tr").filter({ hasText: batchNo });
+    await expect(pendingRow).toBeVisible();
+    await expect(pendingRow).toHaveClass(/alarm-pending/);
+    await page.goto(batchUrl);
+    // 报警表在监控页的「报警」页签里，默认停在「工步」页签：不先切页签，卡片是 display:none。
+    await page.getByRole("tab").filter({ hasText: "报警" }).click();
     const alarmCard = page.locator(".el-card").filter({ has: page.locator(".el-card__header", { hasText: "过程报警" }) });
     await expect(alarmCard).toBeVisible();
     await expect(alarmCard).toContainText(/AckTimeout|未收到 Step_Running/);
@@ -103,14 +118,17 @@ test("NoAck handshake fault raises alarm and operator can acknowledge", async ({
     const pendingAck = page.waitForResponse(
       (r) => r.request().method() === "POST" && /\/api\/alarms\/[^/]+\/ack/.test(new URL(r.url()).pathname)
     );
-    await alarmCard.getByRole("button", { name: "确认" }).click();
+    await alarmCard.getByRole("button", { name: "确认", exact: true }).click();
     expect((await pendingAck).ok()).toBeTruthy();
-    await expect(alarmCard.getByRole("button", { name: "确认" })).toHaveCount(0);
+    // exact 才能把页头的「确认全部 N 条」排除掉：getByRole 的 name 默认是子串匹配，
+    // 不写 exact 会同时命中两个按钮并触发 strict mode 违规。
+    await expect(alarmCard.getByRole("button", { name: "确认", exact: true })).toHaveCount(0);
     await expect(alarmCard.locator(".el-table__body")).toContainText("车间操作员");
 
     await page.goto("/alarms");
     await page.locator(".filter-bar .el-radio-button").filter({ hasText: "全部" }).click();
     const alarmRow = page.locator(".el-table__body").getByRole("row").filter({ hasText: batchNo });
+    await expect(alarmRow).not.toHaveClass(/alarm-pending/);
     await expect(alarmRow).toContainText("车间操作员");
     await expect(alarmRow).toContainText(/AckTimeout/);
   } finally {

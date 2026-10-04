@@ -91,6 +91,8 @@ public static class MessageCatalog
 
         // ---- 设备与点表 ----
         ["设备不存在。"] = "Equipment not found.",
+        ["设备编码不能为空。"] = "The equipment code is required.",
+        ["设备名称不能为空。"] = "The equipment name is required.",
         ["设备编码已存在。"] = "That equipment code already exists.",
         ["设备未启用。"] = "The equipment is not enabled.",
         ["绑定设备已有批次在执行、排队或保持。"] = "The bound equipment already has a batch running, queued or held.",
@@ -129,6 +131,10 @@ public static class MessageCatalog
         ["批次状态已被调度引擎并发更新，请刷新后重试。"] =
             "The batch state was updated concurrently by the scheduling engine; refresh and try again.",
         ["终检样品尚未判定，不能放行。"] = "The final sample has not been judged, so the batch cannot be released.",
+        ["批记录证据已变化或摘要版本不支持，请刷新并重新核对后签署。"] =
+            "The batch-record evidence changed or its hash version is unsupported. Refresh and review it before signing.",
+        ["实验室样品签名内容校验失败，不能质量放行。"] =
+            "A lab-sample signature failed content verification; the batch cannot be released.",
 
         // ---- 样品与质检 ----
         ["样品不存在。"] = "Sample not found.",

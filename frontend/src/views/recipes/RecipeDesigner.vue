@@ -6,7 +6,7 @@
       type="error"
       show-icon
       :closable="false"
-      :title="`配方详情加载失败：${error}`"
+      :title="$t('配方详情加载失败：{0}', [error])"
       :description="$t('请确认该配方是否存在，或返回主配方列表重试。')"
     />
     <el-skeleton v-else :rows="8" animated />
@@ -14,7 +14,7 @@
   <div v-if="detail">
     <div class="page-title sticky-actions">
       <div>
-        <h2>{{ detail.code }} {{ detail.name }}<span v-if="dirty" class="unsaved"> {{ $t("· 未保存") }}</span></h2>
+        <h2>{{ detail.code }} {{ detail.name }}<span v-if="dirty" class="unsaved"> {{ $t("· 未保存") }}</span><PageGuideButton guide-key="recipeDesigner" /></h2>
         <span>{{ $t("产品 {0} · {1} v{2}", [detail.productName, working ? statusLabel(working.status) : $t("无草稿"), working?.versionNumber ?? "—"]) }}</span>
         <!-- 走哪条链是"这份配方要谁签"的声明，和提交动作同属工艺工程师，所以放在这里而不是配置台。 -->
         <HelpTip v-if="canAuthor && working?.status === 'Draft'" term="审批链" plain placement="bottom">
@@ -30,7 +30,7 @@
           </el-select>
         </HelpTip>
       </div>
-      <div>
+      <div class="designer-actions">
         <el-button @click="$router.push('/recipes')">{{ $t("返回配方列表") }}</el-button>
         <el-button v-if="canAuthor" @click="headerVisible = true">{{ $t("编辑抬头") }}</el-button>
         <el-button v-if="canAuthor && working?.status === 'Draft'" @click="autoLayout">{{ $t("ISA-88 泳道排布") }}</el-button>
@@ -70,11 +70,12 @@
       type="warning"
       show-icon
       :title="$t('只读浏览 v{0}（{1}）。草稿才可改工步与参数。', [working.versionNumber, statusLabel(working.status)])"
+      :description="readonlyDraftHint"
     />
     <p v-if="working?.changeNote" class="muted gap-after">{{ $t("变更说明：{0}", [working.changeNote]) }}</p>
 
-    <el-row :gutter="12">
-      <el-col :span="5" :xs="24">
+    <el-row class="designer-layout" :gutter="12">
+      <el-col class="step-list-col" :span="24" :lg="5">
         <el-card :header="$t('工步列表')">
           <div
             v-for="s in working?.steps ?? []"
@@ -83,70 +84,84 @@
             :class="{ on: selectedId === s.id }"
             role="button"
             tabindex="0"
+            :aria-pressed="selectedId === s.id"
             @click="selectedId = s.id"
-            @keydown.enter="selectedId = s.id"
+            @keydown.enter.prevent="selectedId = s.id"
+            @keydown.space.prevent="selectedId = s.id"
           >
-            <b>{{ s.code }}</b> {{ s.name }}
-            <div class="muted">{{ s.unitProcedure || "UP" }} · {{ phaseTypeLabel(s) }}{{ programHint(s) }} · {{ $t("参数 {0} 槽", [s.parameters.length]) }}</div>
+            <span class="step-item-title"><b>{{ s.code }}</b> {{ s.name }}</span>
+            <span class="muted step-item-meta">{{ s.unitProcedure || "UP" }} · {{ phaseTypeLabel(s) }}{{ programHint(s) }} · {{ $t("参数 {0} 槽", [s.parameters.length]) }}</span>
           </div>
         </el-card>
       </el-col>
-      <el-col :span="11" :xs="24">
+      <el-col class="designer-flow-col" :span="24" :lg="11">
         <el-card :header="$t('工艺工步编排（ISA-88 单元规程泳道）')">
-          <div class="palette">
-            <span class="palette-label"><HelpTip term="当前设备类">{{ $t("设备类") }}</HelpTip></span>
-            <el-select
-              v-model="paletteClassId"
-              size="small"
-              style="width: 220px"
-              :disabled="!phaseClasses.length"
-              :placeholder="$t('设备类')"
-              @change="onPaletteClassChange"
-            >
-              <el-option
-                v-for="cls in phaseClasses"
-                :key="cls.id"
-                :label="`${cls.code} · ${cls.name}`"
-                :value="cls.id"
-              />
-            </el-select>
-            <!-- HelpTip 必须包在 el-dropdown 外层：把 tooltip 塞进 dropdown 的触发槽里，
-                 两个弹层组件会抢同一个触发元素，结果是下拉根本打不开。 -->
-            <HelpTip
-              term="从相模板添加"
-              :extra="editable && paletteClass && !paletteTemplates.length ? `${paletteClass.code} 还没有相模板` : ''"
-              plain
-            >
-              <el-dropdown trigger="click" :disabled="!editable || !paletteTemplates.length" @command="addFromTemplate">
-                <el-button size="small" type="primary" :disabled="!editable || !paletteTemplates.length">{{ $t("从相模板添加") }}</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-for="t in paletteTemplates" :key="t.id" :command="t.id">
-                      {{ t.code }} {{ t.name }} · 程序 {{ templateProgram(t) }}
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-            </HelpTip>
-            <el-button v-if="canAuthor || auth.can('Admin')" size="small" link type="primary" @click="openLibrary()">{{ $t("管理相库") }}</el-button>
-            <span class="palette-label">{{ $t("上位机") }}</span>
-            <el-button v-for="t in hostStepTypes" :key="t" size="small" :disabled="!editable" @click="addStep(t)">+ {{ stepTypeLabel(t) }}</el-button>
-            <el-button size="small" type="primary" plain :disabled="!editable" @click="parallelVisible = true">{{ $t("+ 并行单元规程") }}</el-button>
-            <el-button size="small" type="danger" :disabled="!editable || !selected" @click="removeStep">{{ $t("删除工步") }}</el-button>
+          <div v-if="editable" class="palette">
+            <div class="palette-group palette-templates">
+              <span class="palette-label"><HelpTip term="当前设备类">{{ $t("设备类") }}</HelpTip></span>
+              <el-select
+                v-model="paletteClassId"
+                class="palette-select"
+                size="small"
+                :disabled="!phaseClasses.length"
+                :placeholder="$t('设备类')"
+                @change="onPaletteClassChange"
+              >
+                <el-option
+                  v-for="cls in phaseClasses"
+                  :key="cls.id"
+                  :label="`${cls.code} · ${cls.name}`"
+                  :value="cls.id"
+                />
+              </el-select>
+              <!-- Keep HelpTip outside the dropdown trigger to avoid competing poppers. -->
+              <HelpTip
+                term="从相模板添加"
+                :extra="editable && paletteClass && !paletteTemplates.length ? `${paletteClass.code} 还没有相模板` : ''"
+                plain
+              >
+                <el-dropdown trigger="click" :disabled="!editable || !paletteTemplates.length" @command="addFromTemplate">
+                  <el-button size="small" type="primary" :disabled="!editable || !paletteTemplates.length">{{ $t("从相模板添加") }}</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item v-for="t in paletteTemplates" :key="t.id" :command="t.id">
+                        {{ t.code }} {{ t.name }} · 程序 {{ templateProgram(t) }}
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </HelpTip>
+              <el-button v-if="canAuthor || auth.can('Admin')" size="small" link type="primary" @click="openLibrary()">{{ $t("管理相库") }}</el-button>
+            </div>
+            <div class="palette-group">
+              <span class="palette-label">{{ $t("上位机") }}</span>
+              <el-button v-for="t in hostStepTypes" :key="t" size="small" :disabled="!editable" @click="addStep(t)">+ {{ stepTypeLabel(t) }}</el-button>
+            </div>
+            <div class="palette-group palette-structure">
+              <el-button size="small" type="primary" plain :disabled="!editable" @click="parallelVisible = true">{{ $t("+ 并行单元规程") }}</el-button>
+              <el-button size="small" type="danger" :disabled="!editable || !selected" @click="removeStep">{{ $t("删除工步") }}</el-button>
+            </div>
+          </div>
+          <div v-else-if="canAuthor || auth.can('Admin')" class="readonly-library">
+            <el-button size="small" link type="primary" @click="openLibrary()">{{ $t("管理相库") }}</el-button>
           </div>
           <p v-if="editable && paletteClass && !paletteTemplates.length" class="muted">
             {{ $t("{0} 没有相模板。", [paletteClass.code]) }}
             <el-button link type="primary" @click="openLibrary()">{{ $t("去相库添加") }}</el-button>
           </p>
           <div class="lanes">
-            <button
-              v-for="lane in laneNames"
-              :key="lane"
-              class="lane-chip"
-              type="button"
-              :class="{ on: currentLane === lane }"
-              @click="pickLane(lane)"
-            >{{ lane }}<span v-if="laneClassCode(lane)"> · {{ laneClassCode(lane) }}</span></button>
+            <template v-for="lane in laneNames" :key="lane">
+              <button
+                v-if="editable"
+                class="lane-chip"
+                type="button"
+                :class="{ on: currentLane === lane }"
+                @click="pickLane(lane)"
+              >{{ lane }}<span v-if="laneClassCode(lane)"> · {{ laneClassCode(lane) }}</span></button>
+              <span v-else class="lane-chip static" :class="{ on: currentLane === lane }">
+                {{ lane }}<span v-if="laneClassCode(lane)"> · {{ laneClassCode(lane) }}</span>
+              </span>
+            </template>
           </div>
           <div class="flow-canvas" :style="{ height: `${flowHeight}px` }">
             <VueFlow
@@ -184,10 +199,10 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="8" :xs="24">
+      <el-col class="step-inspector-col" :span="24" :lg="8">
         <el-card :header="$t('工步字段')">
           <div v-if="selected">
-            <el-form label-width="96px" size="small">
+            <el-form class="step-fields-form" label-width="96px" size="small">
               <el-form-item :label="$t('编码')"><el-input v-model="selected.code" :disabled="!editable" /></el-form-item>
               <el-form-item :label="$t('名称')"><el-input v-model="selected.name" :disabled="!editable" /></el-form-item>
               <el-form-item>
@@ -215,7 +230,7 @@
                 <el-input v-model="selected.unitProcedure" :disabled="!editable" :placeholder="$t('必填，如 UP-01 加工单元')" />
               </el-form-item>
               <el-form-item>
-                <template #label><HelpTip term="Operation">{{ $t("操作") }}</HelpTip></template>
+                <template #label><HelpTip term="Operation">{{ $t("工艺操作") }}</HelpTip></template>
                 <el-input v-model="selected.operation" :disabled="!editable" :placeholder="$t('必填，如 OP-Heat 升温')" />
               </el-form-item>
               <el-form-item :label="$t('说明')"><el-input v-model="selected.description" :disabled="!editable" /></el-form-item>
@@ -241,7 +256,8 @@
         {{ $t("参数槽位") }}<span v-if="selected" class="muted"> · {{ $t("当前工步 {0} {1}", [selected.code, selected.name]) }}</span>
       </template>
       <template v-if="selected">
-        <el-table :data="selected.parameters" size="small" max-height="420">
+        <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
+        <el-table class="parameter-table" :data="selected.parameters" size="small" max-height="420">
           <el-table-column prop="slotIndex" :label="$t('槽')" width="56" fixed />
           <el-table-column :label="$t('参数')" min-width="180">
             <template #default="{ row }"><el-input v-model="row.name" :disabled="!editable" /></template>
@@ -302,7 +318,9 @@
       <p v-else class="none-note">{{ $t("未选择工步：参数槽位跟着工步走，先在左侧或画布上选一个。") }}</p>
     </el-card>
     <el-card class="gap-before" :header="$t('控制参数矩阵（工步 × 设定值）')">
+      <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
       <SetpointMatrix
+        class="setpoint-matrix"
         :steps="working?.steps ?? []"
         :selected-id="selectedId"
         :readonly="!editable"
@@ -352,6 +370,7 @@ import {
   esignMeaning
 } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
+import { useIsMobile } from "../../utils/useMedia";
 import HelpTip from "../../components/HelpTip.vue";
 import { useAuthStore } from "../../stores/auth";
 import { usePageShortcuts } from "../../shortcuts/registry";
@@ -380,6 +399,7 @@ import { useFlowCanvas } from "../../utils/useFlowCanvas";
  * 页面留的是：草稿对象本身、选中的工步、"未保存"脏检查，以及六个签名/请求动作。
  */
 const { loading, error } = useLoad();
+const isMobile = useIsMobile();
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -409,6 +429,14 @@ const working = computed<RecipeVersionDto | null>(() => {
 const selected = computed(() => working.value?.steps.find((s) => s.id === selectedId.value) ?? null);
 const canAuthor = computed(() => auth.is("ProcessEngineer"));
 const editable = computed(() => canAuthor.value && working.value?.status === "Draft");
+/**
+ * 生效版本对工艺工程师是"起点"：只读黄条以前只说"草稿才可改"，没指向右上角的「升版」，
+ * 第一次用的人会停在只读页找不到编辑入口。非作者（管理员 / 质量）浏览时不需要这句话。
+ */
+const readonlyDraftHint = computed(() =>
+  canAuthor.value && detail.value?.approved && !detail.value.draft
+    ? t("点右上「升版」基于本版创建可编辑草稿，提交后走审批链。")
+    : "");
 const canDecide = computed(() => canDecideReview(working.value, auth.user?.role));
 
 const lanes = useProcedureLanes({ working, selected, phaseClasses, editable });
@@ -450,10 +478,10 @@ const dirty = computed(() => editable.value && procedureStamp(working.value) !==
 async function confirmDiscard(): Promise<boolean> {
   if (!dirty.value) return true;
   try {
-    await ElMessageBox.confirm("工艺有未保存的修改，继续将丢弃这些改动。", "未保存修改", {
+    await ElMessageBox.confirm(t("工艺有未保存的修改，继续将丢弃这些改动。"), t("未保存修改"), {
       type: "warning",
-      confirmButtonText: "丢弃并离开",
-      cancelButtonText: "留下"
+      confirmButtonText: t("丢弃并离开"),
+      cancelButtonText: t("留下")
     });
     return true;
   } catch {
@@ -617,11 +645,11 @@ function addEdgeFromSelect() {
   const from = edgeFromId.value;
   const to = edgeToId.value;
   if (!from || !to || from === to) {
-    ElMessage.warning("请选择不同的前驱与后继工步");
+    ElMessage.warning(t("请选择不同的前驱与后继工步"));
     return;
   }
   if (working.value.edges.some((e) => e.fromStepId === from && e.toStepId === to)) {
-    ElMessage.info("该连线已存在");
+    ElMessage.info(t("该连线已存在"));
     return;
   }
   if (!canJoin(from, to)) {
@@ -638,7 +666,7 @@ function joinToSelected() {
   if (!target) return;
   const terminals = terminalSteps(working.value.steps, working.value.edges, to);
   if (!terminals.length) {
-    ElMessage.info("没有可汇合的末工步（所有工步已有后继）");
+    ElMessage.info(t("没有可汇合的末工步（所有工步已有后继）"));
     return;
   }
   const joined: string[] = [];
@@ -664,9 +692,29 @@ function removeEdgeAt(index: number) {
   working.value.edges.splice(index, 1);
 }
 
-function removeStep() {
+/**
+ * 删除工步：连同它的全部参数槽与所有连线一起消失，且没有撤销。
+ * 这一步的代价是重敲一遍设定值/上下限/单位，所以先确认，并把"要丢什么"读出来——
+ * 只说"确认删除？"的弹窗，用户看不出这次跟删一条连线有什么轻重差别。
+ */
+async function removeStep() {
   if (!working.value || !editable.value || !selectedId.value) return;
   const id = selectedId.value;
+  const step = working.value.steps.find((s) => s.id === id);
+  if (!step) return;
+  const params = step.parameters.length;
+  const edges = working.value.edges.filter((e) => e.fromStepId === id || e.toStepId === id).length;
+  const lost = t("参数 {0} 槽、连线 {1} 条", params, edges);
+  const name = `${step.code} ${step.name}`.trim();
+  try {
+    await ElMessageBox.confirm(
+      t("将删除工步「{0}」及其 {1}，此操作不可撤销。", name, lost),
+      t("删除工步"),
+      { type: "warning", confirmButtonText: t("删除"), cancelButtonText: t("取消") }
+    );
+  } catch {
+    return;
+  }
   working.value.steps = working.value.steps.filter((s) => s.id !== id);
   working.value.edges = working.value.edges.filter((e) => e.fromStepId !== id && e.toStepId !== id);
   selectedId.value = working.value.steps[0]?.id ?? null;
@@ -701,7 +749,7 @@ async function runCompare() {
   const idx = versions.findIndex((v) => v.versionNumber === to);
   const from = (idx > 0 ? versions[idx - 1] : versions[0]).versionNumber;
   if (from === to) {
-    ElMessage.info("请选择与上一版本不同的版本再对比");
+    ElMessage.info(t("请选择与上一版本不同的版本再对比"));
     return;
   }
   try {
@@ -802,7 +850,7 @@ async function save(): Promise<boolean> {
       password,
       changeReason
     });
-    ElMessage.success("已电子签名保存工艺");
+    ElMessage.success(t("已电子签名保存工艺"));
     await load();
     return true;
   } catch (e) {
@@ -820,7 +868,7 @@ async function submit() {
     if (!(await save())) return;
     const password = await esignPassword(t("提交审核"), esignMeaning("recipe.submit.esign"));
     await submitRecipe(detail.value.id, password);
-    ElMessage.success("已电子签名并提交多级审核（工艺主管 → 质量）");
+    ElMessage.success(t("已电子签名并提交多级审核（工艺主管 → 质量）"));
     await load();
   } catch (e) {
     if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));
@@ -920,11 +968,36 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.palette { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); align-items: center; }
+.designer-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+.designer-layout { row-gap: var(--space-3); }
+.palette {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+.palette-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--line);
+}
+.palette-group:last-child { padding-right: 0; border-right: 0; }
+.palette-select { width: 220px; }
 .palette-label { font-size: 11px; color: var(--muted); }
 .chain-pick { width: 232px; margin-left: var(--space-2); vertical-align: middle; }
+.readonly-library { display: flex; justify-content: flex-end; margin-bottom: var(--space-2); }
 .step-item { padding: var(--space-2); border-radius: 8px; cursor: pointer; border: 1px solid transparent; margin-bottom: var(--space-2); }
+.step-item-title { min-width: 0; overflow-wrap: anywhere; }
+.step-item-meta { min-width: 0; }
 .step-item.on { background: var(--tint); border-color: var(--accent); }
+.step-item:hover { background: var(--hover); }
+.step-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .muted { color: var(--muted); font-size: 12px; }
 .versions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0 0 var(--space-3); }
 .ver {
@@ -940,9 +1013,11 @@ onUnmounted(() => {
   background: transparent; cursor: pointer; font-family: inherit;
 }
 .lane-chip.on { color: var(--text); background: var(--tint); border-style: solid; }
+.lane-chip.static { cursor: default; }
 .edge-editor { margin-top: var(--space-3); }
 .edge-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-body); }
 .edge-add { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+.edge-add :deep(.el-select) { flex: 1 1 140px; min-width: 130px; }
 .flow-canvas {
   /* 实际高度由 flowHeight 按内容算（见 useFlowCanvas），这里只保底 */
   min-height: 240px;
@@ -954,4 +1029,32 @@ onUnmounted(() => {
 /* 参数表里的数字控件：el-input-number 默认 150px 宽，塞进窄列会被单元格 overflow 裁掉
    （实测「设定值 12」只露一半、下限/上限看着是空框）。让控件跟随列宽。 */
 .el-table :deep(.el-input-number) { width: 100%; }
+@media (max-width: 1199px) {
+  .step-item {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .step-item-meta { text-align: right; }
+  .step-fields-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-4);
+  }
+  .step-fields-form :deep(.el-form-item) { margin-bottom: var(--space-3); }
+}
+@media (max-width: 767px) {
+  .designer-actions { justify-content: flex-start; }
+  .designer-actions :deep(.el-button) { min-height: 36px; }
+  .step-item { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .step-item-meta { text-align: left; }
+  .palette-group { width: 100%; padding: 0 0 var(--space-2); border-right: 0; border-bottom: 1px solid var(--line); }
+  .palette-group:last-child { padding-bottom: 0; border-bottom: 0; }
+  .palette-select { flex: 1 1 100%; width: 100%; }
+  .chain-pick { width: min(232px, 100%); margin-left: 0; }
+  .step-fields-form { grid-template-columns: minmax(0, 1fr); }
+  .edge-add :deep(.el-select) { flex-basis: 100%; width: 100% !important; }
+  .edge-add :deep(.el-button) { flex: 1 1 auto; }
+}
 </style>

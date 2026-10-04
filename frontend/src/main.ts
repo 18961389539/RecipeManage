@@ -9,6 +9,7 @@ import "element-plus/dist/index.css";
 // 先加载官方暗色变量，再由 styles.css 里的 html.dark 覆盖为项目色板。
 import "element-plus/theme-chalk/dark/css-vars.css";
 import App from "./App.vue";
+import PageGuideButton from "./components/PageGuideButton.vue";
 import router from "./router";
 import { i18n, t } from "./i18n";
 import { reportSessionExpired } from "./api/http";
@@ -23,6 +24,7 @@ app.use(router);
 app.use(i18n);
 // 这里只给个初值；真正随语言切换的是 App.vue 上的 el-config-provider。
 app.use(ElementPlus, { locale: zhCn });
+app.component("PageGuideButton", PageGuideButton);
 
 // 会话过期：留在应用内跳转，不整页重载——location.assign 会连用户填了一半的表单一起丢掉。
 // 必须说明原因，否则莫名其妙回到登录页只会被当成系统故障。

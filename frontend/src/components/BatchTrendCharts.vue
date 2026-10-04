@@ -9,8 +9,11 @@
         </el-radio-group>
       </div>
     </template>
-    <div v-show="chartKind === 'echarts'" ref="chartEl" class="trend-chart" />
-    <div v-show="chartKind === 'uplot'" ref="uplotEl" class="trend-chart" />
+    <!-- 无样本时两个画布都藏起来（v-show 保留 DOM，echarts/uPlot 的绑定不会被拆掉），
+         否则先看到的是一个 260px 高的空白块，用户分不清"没开始采"还是"图坏了"。 -->
+    <div v-show="hasPoints() && chartKind === 'echarts'" ref="chartEl" class="trend-chart" />
+    <div v-show="hasPoints() && chartKind === 'uplot'" ref="uplotEl" class="trend-chart" />
+    <p v-if="!hasPoints()" class="none-note">{{ $t("本批次还没有过程样本（启动执行并进入工步后才开始采样）。") }}</p>
     <p v-if="note" class="trend-note">{{ note }}</p>
   </el-card>
 </template>
@@ -41,6 +44,14 @@ const props = defineProps<{
 const chartEl = ref<HTMLDivElement | null>(null);
 const uplotEl = ref<HTMLDivElement | null>(null);
 const chartKind = ref<"echarts" | "uplot">("uplot");
+/**
+ * 有没有样本点。**必须是函数、不能用 computed**：`series` 是普通对象（高频 push 不走 Vue 响应式，
+ * 见文件头说明），computed 没有可失效的依赖，会在首帧把 false 缓存住，之后样本到了也不更新。
+ * 函数在每次渲染时重新求值，而父页每次取数都会更新 `note`（总量变了），足以驱动这次渲染。
+ */
+function hasPoints(): boolean {
+  return Object.values(props.series).some((pts) => pts.length > 0);
+}
 let chart: EChartsType | null = null;
 let plot: uPlot | null = null;
 

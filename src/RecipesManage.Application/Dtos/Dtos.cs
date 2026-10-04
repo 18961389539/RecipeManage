@@ -198,7 +198,12 @@ public sealed record CreateBatchRequest(
     string? LotNumber = null,
     IReadOnlyDictionary<string, Guid>? UnitEquipment = null,
     IReadOnlyList<Guid>? ChargeLotIds = null);
-public sealed record EsignActionRequest(string Password, string? Reason, Guid? StepId = null);
+public sealed record EsignActionRequest(
+    string Password,
+    string? Reason,
+    Guid? StepId = null,
+    int? EvidenceHashVersion = null,
+    string? EvidenceHash = null);
 public sealed record ConnectionTestDto(bool Connected, bool PlcReady, double LatencyMs, string Protocol, string Message);
 public sealed record BatchListItemDto(
     Guid Id,
@@ -395,7 +400,17 @@ public sealed record LabSampleDto(
     DateTimeOffset TakenAt,
     string? DispositionBy,
     DateTimeOffset? DisposedAt,
-    string? Comment);
+    string? Comment,
+    LabSampleDispositionSignatureDto? DispositionSignature = null);
+
+public sealed record LabSampleDispositionSignatureDto(
+    string SignerName,
+    DateTimeOffset At,
+    string Meaning,
+    string? Extra,
+    int? ContentHashVersion,
+    string? ContentHash,
+    string Integrity);
 
 public sealed record LotGenealogyDto(
     MaterialLotDto Lot,
@@ -600,14 +615,19 @@ public sealed record BatchRecordDto(
     string? ReleaseComment = null,
     IReadOnlyList<BatchMaterialUseDto>? Materials = null,
     IReadOnlyList<LabSampleDto>? LabSamples = null,
-    IReadOnlyList<BatchEsignDto>? Esigns = null);
+    IReadOnlyList<BatchEsignDto>? Esigns = null,
+    int? EvidenceHashVersion = null,
+    string? EvidenceHash = null);
 
 public sealed record BatchEsignDto(
     string Action,
     string Meaning,
     string? UserName,
     DateTimeOffset At,
-    string? Extra);
+    string? Extra,
+    int? ContentHashVersion = null,
+    string? ContentHash = null,
+    string? Integrity = null);
 
 public sealed record ProcessAlarmDto(
     Guid Id,

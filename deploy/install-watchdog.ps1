@@ -86,6 +86,22 @@ if ($PackagePath) {
 } elseif (-not $SkipPublish) {
     $apiProject = Join-Path $Repository 'src\RecipesManage.Api\RecipesManage.Api.csproj'
     if (-not (Test-Path $apiProject)) { throw "no project at $apiProject (pass -Repository)" }
+    # The UI compiles into the API's wwwroot (frontend/vite.config.ts) and must exist before
+    # dotnet publish, or this path installs an API with no UI. Prefer -PackagePath in the field.
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "npm not on PATH: needed to build the UI into the publish output (or use -PackagePath with a package from publish-package.ps1)"
+    }
+    $frontend = Join-Path $Repository 'frontend'
+    Step "build frontend -> src\RecipesManage.Api\wwwroot"
+    if ($PSCmdlet.ShouldProcess($frontend, 'npm ci; npm run build')) {
+        Push-Location $frontend
+        try {
+            & npm ci --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed with $LASTEXITCODE" }
+            & npm run build
+            if ($LASTEXITCODE -ne 0) { throw "npm run build failed with $LASTEXITCODE" }
+        } finally { Pop-Location }
+    }
     Step "publish $apiProject -> $PublishTo"
     if ($PSCmdlet.ShouldProcess($PublishTo, 'dotnet publish')) {
         # Self-contained is the point: the plant PC must not need an SDK matching our build machine.

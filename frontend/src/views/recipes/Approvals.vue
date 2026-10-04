@@ -2,7 +2,7 @@
   <div class="approvals">
     <div class="page-title">
       <div>
-        <h2>{{ $t("多级审核工作台") }}</h2>
+        <h2>{{ $t("多级审核工作台") }}<PageGuideButton guide-key="approvals" /></h2>
         <span>{{ $t("按配方选定的审批链逐级签署；当前角色只能处理轮到自己的那一级。链由管理员在「审批链配置」里维护。") }}</span>
       </div>
       <div>
@@ -19,7 +19,7 @@
       v-if="error"
       :closable="false"
       type="error"
-      :title="`待审核配方加载失败：${error}`"
+      :title="$t('待审核配方加载失败：{0}', [error])"
       show-icon
      
     />
@@ -31,7 +31,7 @@
             :data="items"
             v-loading="loading"
             class="clickable-rows"
-            :empty-text="query.trim() ? '没有匹配的待审配方' : '没有待审核配方'"
+            :empty-text="query.trim() ? $t('没有匹配的待审配方') : $t('没有待审核配方')"
             highlight-current-row
             :row-class-name="rowClass"
             @row-click="(row: RecipeListItemDto) => select(row.id)"
@@ -59,7 +59,7 @@
                 </div>
                 <div>
                   <HelpTip v-if="canDecide" term="通过并电子签名" chord="ctrl+enter" allow-in-input plain placement="bottom">
-                    <el-button type="success" :loading="deciding === 'Approved'" :disabled="!!deciding" @click="decide('Approved')">{{ $t("通过并电子签名") }}</el-button>
+                    <el-button type="success" :loading="deciding === 'Approved'" :disabled="!canApprove" @click="decide('Approved')">{{ $t("通过并电子签名") }}</el-button>
                   </HelpTip>
                   <HelpTip v-if="canDecide" term="驳回" plain placement="bottom">
                     <el-button type="danger" :loading="deciding === 'Rejected'" :disabled="!!deciding" @click="decide('Rejected')">{{ $t("驳回") }}</el-button>
@@ -77,8 +77,26 @@
               :description="pending.meaning || pendingMeaningFallback"
              
             />
+            <div v-if="comparisonRequired && diffLoading" class="diff-status">
+              <el-alert
+                :closable="false"
+                type="info"
+                :title="$t('正在加载版本差异…')"
+                show-icon
+              />
+            </div>
+            <div v-else-if="comparisonRequired && diffError" class="diff-error">
+              <el-alert
+                class="diff-error-message"
+                :closable="false"
+                type="error"
+                :title="$t('版本差异加载失败，未展示完整差异，暂不能通过审核。')"
+                show-icon
+              />
+              <el-button size="small" :loading="diffLoading" @click="retryDiff">{{ $t("重试加载差异") }}</el-button>
+            </div>
             <el-alert class="gap-after"
-              v-else
+              v-if="!pending"
               :closable="false"
               type="success"
               :title="$t('本版本已无待审节点')"
@@ -196,9 +214,13 @@ const detail = ref<RecipeDetailDto | null>(null);
 const selectedId = ref<string | null>(null);
 const selectedStepId = ref<string | null>(null);
 const diff = ref<RecipeVersionDiffDto | null>(null);
+const diffLoading = ref(false);
+const diffError = ref(false);
 const { loading, error, run } = useLoad();
 const detailLoading = ref(false);
 const deciding = ref("");
+let selectionRequestId = 0;
+let diffRequestId = 0;
 
 const review = computed<RecipeVersionDto | null>(() => {
   const versions = detail.value?.versions ?? [];
@@ -212,6 +234,20 @@ const pending = computed(() => headPendingNode(review.value));
 const pendingMeaningFallback = "请再次输入登录密码作为电子签名。";
 
 const canDecide = computed(() => canDecideReview(review.value, auth.user?.role));
+
+const comparisonRequired = computed(() => {
+  const approved = detail.value?.approved?.versionNumber;
+  const reviewing = review.value?.versionNumber;
+  return approved != null && reviewing != null && approved !== reviewing;
+});
+
+const canApprove = computed(() =>
+  canDecide.value
+  && !deciding.value
+  && !detailLoading.value
+  && !diffLoading.value
+  && (!comparisonRequired.value || !!diff.value)
+);
 
 const flowMarkers = computed(() => {
   const map: Record<string, "added" | "changed"> = {};
@@ -261,35 +297,65 @@ async function loadList() {
 }
 
 async function select(id: string) {
+  const requestId = ++selectionRequestId;
+  diffRequestId++;
   selectedId.value = id;
   detailLoading.value = true;
+  diffLoading.value = false;
+  diffError.value = false;
+  diff.value = null;
   try {
-    detail.value = (await http.get<RecipeDetailDto>(`/recipes/${id}`)).data;
+    const response = await http.get<RecipeDetailDto>(`/recipes/${id}`);
+    if (requestId !== selectionRequestId) return;
+    detail.value = response.data;
     selectedStepId.value = review.value?.steps[0]?.id ?? null;
-    diff.value = null;
+    detailLoading.value = false;
     const approved = detail.value.approved?.versionNumber;
     const reviewing = review.value?.versionNumber;
     if (approved && reviewing && approved !== reviewing) {
-      try {
-        diff.value = (await http.get<RecipeVersionDiffDto>(`/recipes/${id}/compare`, {
-          params: { fromVersion: approved, toVersion: reviewing }
-        })).data;
-      } catch {
-        diff.value = null;
-      }
+      await loadDiff(id, approved, reviewing, requestId);
     }
   } catch (e) {
+    if (requestId !== selectionRequestId) return;
     // 原先详情取数失败毫无反馈，右侧区域会一直停在"请选择左侧配方"。
     ElMessage.error(t("配方详情加载失败：{0}", (e as Error).message));
     detail.value = null;
     diff.value = null;
+    diffError.value = false;
   } finally {
-    detailLoading.value = false;
+    if (requestId === selectionRequestId) detailLoading.value = false;
   }
 }
 
+async function loadDiff(id: string, fromVersion: number, toVersion: number, selectionId = selectionRequestId) {
+  const requestId = ++diffRequestId;
+  diffLoading.value = true;
+  diffError.value = false;
+  diff.value = null;
+  try {
+    const response = await http.get<RecipeVersionDiffDto>(`/recipes/${id}/compare`, {
+      params: { fromVersion, toVersion }
+    });
+    if (requestId !== diffRequestId || selectionId !== selectionRequestId || selectedId.value !== id) return;
+    diff.value = response.data;
+  } catch {
+    if (requestId !== diffRequestId || selectionId !== selectionRequestId || selectedId.value !== id) return;
+    diffError.value = true;
+  } finally {
+    if (requestId === diffRequestId && selectionId === selectionRequestId) diffLoading.value = false;
+  }
+}
+
+function retryDiff() {
+  const id = selectedId.value;
+  const approved = detail.value?.approved?.versionNumber;
+  const reviewing = review.value?.versionNumber;
+  if (!id || approved == null || reviewing == null || approved === reviewing) return;
+  void loadDiff(id, approved, reviewing);
+}
+
 async function decide(decision: "Approved" | "Rejected") {
-  if (!detail.value || deciding.value) return;
+  if (!detail.value || deciding.value || (decision === "Approved" && !canApprove.value)) return;
   deciding.value = decision;
   try {
     const meaning = pending.value?.meaning ?? pendingMeaningFallback;
@@ -318,7 +384,7 @@ usePageShortcuts(() => [
     group: "配方审核",
     label: "通过并电子签名",
     allowInInput: true,
-    when: () => canDecide.value && !deciding.value,
+    when: () => canApprove.value,
     run: () => { void decide("Approved"); }
   }
 ]);
@@ -332,4 +398,7 @@ onMounted(loadList);
 h4 { margin: var(--space-4) 0 var(--space-2); font-size: 14px; }
 .diff-block { margin: var(--space-2) 0 var(--space-4); }
 .diff-block p { color: var(--text-body); font-size: 13px; margin: 0 0 var(--space-2); }
+.diff-status { margin: var(--space-2) 0 var(--space-4); }
+.diff-error { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0 var(--space-4); }
+.diff-error-message { flex: 1; min-width: 0; }
 </style>

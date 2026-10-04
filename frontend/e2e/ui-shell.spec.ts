@@ -42,6 +42,11 @@ test.describe("全站壳层", () => {
     await page.goto("/audit");
     await expect(page.locator(".head-left .section")).toHaveText("操作审计");
     await expect(page).toHaveTitle(/^操作审计 · BRMES 工艺配方管理$/);
+
+    const batches = await batchRows(page);
+    expect(batches.length).toBeGreaterThan(0);
+    await page.goto(`/batches/${batches[0].id}`);
+    await expect(page.locator(".el-menu-item.is-active")).toContainText("批次执行");
   });
 
   test("侧栏条目随角色收敛：管理员看不到「多级审核」，但看得到「审批链配置」", async ({ page }) => {
@@ -49,6 +54,65 @@ test.describe("全站壳层", () => {
     await expect(nav.filter({ hasText: "审批链配置" })).toBeVisible();
     await expect(nav.filter({ hasText: "多级审核" })).toHaveCount(0);
     await expect(nav.filter({ hasText: "用户与备份" })).toBeVisible();
+  });
+
+  test("审批链台在窄视口堆叠，链条可键盘选择", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 850 });
+    await page.goto("/approval-chains");
+    const listColumn = page.locator(".chain-list-col");
+    const editorColumn = page.locator(".chain-editor-col");
+    await expect(listColumn).toBeVisible();
+    await expect(editorColumn).toBeVisible();
+    const [listWidth, editorWidth] = await Promise.all([
+      listColumn.evaluate((el) => el.getBoundingClientRect().width),
+      editorColumn.evaluate((el) => el.getBoundingClientRect().width)
+    ]);
+    expect(Math.abs(listWidth - editorWidth)).toBeLessThan(1);
+    await expect(page.locator(".chain-status").getByText("已启用").first()).toBeVisible();
+
+    const standardChain = page.locator(".chain-select").filter({ hasText: "标准三级" });
+    await standardChain.focus();
+    await page.keyboard.press("Space");
+    await expect(page.getByText("编辑 standard")).toBeVisible();
+    await expect(page.getByRole("button", { name: "保存并电子签名" })).toBeDisabled();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator(".steps-table").locator("xpath=preceding-sibling::p[contains(@class,'mobile-table-hint')]")).toBeVisible();
+    const stepScroll = page.locator(".steps-table .el-table__body-wrapper .el-scrollbar__wrap");
+    await expect.poll(() => stepScroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  });
+
+  test("配方设计窄视口纵向展开，参数表可横向浏览", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 850 });
+    const recipes = await apiGet<RecipeRow[]>(page, "/api/recipes");
+    expect(recipes.length).toBeGreaterThan(0);
+    await page.goto(`/recipes/${recipes[0].id}`);
+    await expect(page.locator(".palette")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "管理相库", exact: true })).toBeVisible();
+
+    const columns = [
+      page.locator(".step-list-col"),
+      page.locator(".designer-flow-col"),
+      page.locator(".step-inspector-col")
+    ];
+    const widths = await Promise.all(columns.map((column) =>
+      column.evaluate((el) => el.getBoundingClientRect().width)
+    ));
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(1);
+    await expect(page.locator(".step-fields-form")).toBeVisible();
+    expect(await page.locator(".step-fields-form").evaluate((el) =>
+      getComputedStyle(el).gridTemplateColumns.split(" ").length
+    )).toBe(2);
+
+    const secondStep = page.locator(".step-item").nth(1);
+    await secondStep.focus();
+    await page.keyboard.press("Space");
+    await expect(secondStep).toHaveAttribute("aria-pressed", "true");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator(".parameter-table").locator("xpath=preceding-sibling::p[contains(@class,'mobile-table-hint')]")).toBeVisible();
+    const parameterScroll = page.locator(".parameter-table .el-table__body-wrapper .el-scrollbar__wrap");
+    await expect.poll(() => parameterScroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
   });
 
   test("未知地址落到 404 兜底页，且保留侧栏与回跳入口", async ({ page }) => {
@@ -65,6 +129,11 @@ test.describe("全站壳层", () => {
     await page.goto("/users");
     await expect(page).toHaveURL(/\/dashboard$/);
     await expect(page.getByText(/无权访问「用户与备份」/)).toBeVisible();
+
+    // 批记录（归档凭据）同样按角色收敛：不渲染入口之外，直接改地址也进不去。
+    await page.goto("/batches/00000000-0000-0000-0000-000000000000/record");
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.getByText(/无权访问「批次追溯记录」/)).toBeVisible();
   });
 
   test("实时徽标只在订阅 hub 的页面出现", async ({ page }) => {
@@ -181,10 +250,62 @@ test.describe("列表交互约定", () => {
     await expect(page).toHaveURL(/\/batches\/[0-9a-f-]{36}$/);
   });
 
+  test("批次监控在手机视口下摘要可换行、操作按钮不溢出且可触控", async ({ page }) => {
+    const rows = await batchRows(page);
+    expect(rows.length).toBeGreaterThan(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/batches/${rows[0].id}`);
+
+    const metadata = page.locator(".batch-meta");
+    const actions = page.locator(".batch-actions");
+    await expect(metadata).toBeVisible();
+    await expect(actions).toBeVisible();
+    await expect(actions.locator(".el-button").first()).toBeVisible();
+
+    const layout = await page.evaluate(() => ({
+      viewportWidth: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth
+    }));
+    const [metadataBox, actionsBox] = await Promise.all([
+      metadata.boundingBox(),
+      actions.boundingBox()
+    ]);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(metadataBox).not.toBeNull();
+    expect(actionsBox).not.toBeNull();
+    expect(metadataBox!.x + metadataBox!.width).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    expect(actionsBox!.x + actionsBox!.width).toBeLessThanOrEqual(layout.viewportWidth + 1);
+
+    const buttonHeights = await actions.locator(".el-button").evaluateAll((buttons) =>
+      buttons.map((button) => button.getBoundingClientRect().height)
+    );
+    expect(buttonHeights.length).toBeGreaterThan(0);
+    expect(Math.min(...buttonHeights)).toBeGreaterThanOrEqual(36);
+  });
+
+  test("Dashboard KPI 键盘聚焦有悬停反馈，Space 可打开对应筛选", async ({ page }) => {
+    await page.goto("/dashboard");
+    const kpi = page.getByRole("button", { name: /握手故障批次/ });
+    await expect(kpi).toBeVisible();
+
+    for (let i = 0; i < 30 && !(await kpi.evaluate((el) => el === document.activeElement)); i++) {
+      await page.keyboard.press("Tab");
+    }
+    await expect(kpi).toBeFocused();
+    await expect(kpi).toHaveCSS("background-color", "rgb(22, 32, 58)");
+    await expect(kpi).toHaveCSS("border-color", "rgb(61, 139, 253)");
+
+    await page.keyboard.press("Space");
+    await expect(page).toHaveURL(/\/batches\?status=Faulted$/);
+  });
+
   test("斜杠聚焦本页搜索，输入即筛出空态文案", async ({ page }) => {
     await page.goto("/batches");
-    await page.keyboard.press("/");
+    // 先等搜索框渲染出来再按键：/ 的 when() 判的是"本页有没有搜索框"，
+    // 在页面 chunk 落地前按下去会被判成不可用而静默跳过（实测单跑必失败，整包靠重试侥幸过）。
     const search = page.locator("[data-shortcut-search] input, input[data-shortcut-search]");
+    await search.waitFor({ state: "visible" });
+    await page.keyboard.press("/");
     await expect(search).toBeFocused();
     await search.fill("绝对不存在的关键字 ZZZ");
     await expect(page.getByText("没有匹配的批次")).toBeVisible();
@@ -215,13 +336,70 @@ test.describe("窄屏与打印", () => {
   test("768px 以下侧栏收成抽屉、宽表首列冻结并可横向滚动", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginAs(page, "管理员");
-    await expect(page.locator(".menu-btn")).toBeVisible();
-    await page.locator(".menu-btn").click();
+    const menuButton = page.locator(".menu-btn");
+    const sidebar = page.locator("#app-sidebar");
+    const content = page.locator("#app-content");
+    await expect(menuButton).toBeVisible();
+    await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    await expect(sidebar).toHaveAttribute("inert", "");
+    await menuButton.click();
+    await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator(".drawer-mask")).toBeVisible();
+    await expect(content).toHaveAttribute("inert", "");
+    await expect(sidebar.locator(".el-menu-item").first()).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".drawer-mask")).toHaveCount(0);
+    await expect(menuButton).toBeFocused();
+    await expect(content).not.toHaveAttribute("inert");
+
+    await menuButton.click();
     await expect(page.locator(".drawer-mask")).toBeVisible();
     await page.locator(".drawer-mask").click();
+    await expect(page.locator(".drawer-mask")).toHaveCount(0);
     await page.goto("/batches");
     await expect(page.locator(".el-table__body tr").first()).toBeVisible();
     await expect(page.locator(".el-table-fixed-column--left").first()).toBeVisible();
+
+    await page.goto("/equipment");
+    await expect(page.getByText("窄屏下左右滑动表格查看其余列和行操作。")).toBeVisible();
+    const equipmentTable = page.locator(".equipment-table");
+    const equipmentScroll = equipmentTable.locator(".el-table__body-wrapper .el-scrollbar__wrap");
+    await expect(equipmentTable.locator(".el-table__fixed-right")).toHaveCount(0);
+    await expect.poll(() => equipmentScroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    await equipmentScroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+    await expect.poll(() => equipmentScroll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+
+    await page.getByRole("button", { name: "编辑" }).first().click();
+    const equipmentDialog = page.getByRole("dialog");
+    await expect(equipmentDialog).toBeVisible();
+    const dialogBox = await equipmentDialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(390);
+    await expect(page.locator(".el-form-item").filter({ hasText: "编码" }).locator("input").first()).toBeDisabled();
+    const rackSlot = page.locator(".rack-slot-controls");
+    await expect(rackSlot).toBeVisible();
+    await expect.poll(() => rackSlot.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    await page.getByRole("tab", { name: "写参槽" }).click();
+    const parameterColumns = await page.locator(".param-grid").evaluate(
+      (el) => getComputedStyle(el).gridTemplateColumns.split(/\s+/).length
+    );
+    expect(parameterColumns).toBe(1);
+    await page.getByRole("tab", { name: "握手点表" }).click();
+    await page.getByRole("button", { name: "添加实测点" }).click();
+    const measuredColumns = await page.locator(".measured-list").evaluate(
+      (el) => getComputedStyle(el).gridTemplateColumns.split(/\s+/).length
+    );
+    expect(measuredColumns).toBe(1);
+    await page.getByRole("button", { name: "关闭", exact: true }).click();
+
+    await page.goto("/alarms");
+    await expect(page.getByText("窄屏下左右滑动表格查看其余列和行操作。")).toBeVisible();
+    const alarmTable = page.locator(".alarm-table");
+    const alarmScroll = alarmTable.locator(".el-table__body-wrapper .el-scrollbar__wrap");
+    await expect(alarmTable.locator(".el-table__fixed-right")).toHaveCount(0);
+    await expect.poll(() => alarmScroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
   });
 
   test("电子批记录：打印态藏掉交互件，表格文字翻成纸面墨色", async ({ page }) => {
@@ -315,6 +493,8 @@ test.describe("职责分离（只读断言）", () => {
     await expect(page.locator(".el-menu-item span").filter({ hasText: "多级审核" })).toHaveCount(0);
     await loginAs(page, "工艺主管");
     await expect(page.locator(".el-menu-item span").filter({ hasText: "多级审核" })).toBeVisible();
+    // 全局审计日志只对质量与管理员开放（audit.view），主管的菜单里不再有它。
+    await expect(page.locator(".el-menu-item span").filter({ hasText: "操作审计" })).toHaveCount(0);
     expect(passwords["工艺主管"]).toBeTruthy();
   });
 });

@@ -12,6 +12,12 @@
     <el-descriptions-item :label="$t('放行人')">{{ record.releasedBy || $t("待放行") }}</el-descriptions-item>
     <el-descriptions-item :label="$t('放行时间')">{{ formatDateTime(record.releasedAt) }}</el-descriptions-item>
     <el-descriptions-item :label="$t('放行意见')" :span="3">{{ record.releaseComment || "—" }}</el-descriptions-item>
+    <el-descriptions-item :label="$t('处置证据摘要')" :span="3">
+      <el-tooltip v-if="record.evidenceHash" :content="record.evidenceHash" placement="top">
+        <code>v{{ record.evidenceHashVersion }} · {{ record.evidenceHash.slice(0, 16) }}…</code>
+      </el-tooltip>
+      <span v-else>—</span>
+    </el-descriptions-item>
     <el-descriptions-item :label="$t('单元设备')" :span="3">{{ unitEquipmentText }}</el-descriptions-item>
   </el-descriptions>
 </template>

@@ -1,9 +1,10 @@
 <template>
   <el-dialog v-model="visible" :title="form.id ? $t('编辑相模板') : $t('新增相模板')" width="900px">
     <p class="muted">{{ cls?.code }} · {{ cls?.name }}。编码全局唯一；同一设备类内程序号不能重复。</p>
-    <el-form label-width="108px" :disabled="!canEdit">
-      <el-form-item :label="$t('编码')"><el-input v-model="form.code" :disabled="!!form.id" :placeholder="$t('如 PH-SPRAY')" /></el-form-item>
-      <el-form-item :label="$t('名称')"><el-input v-model="form.name" /></el-form-item>
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="108px" :disabled="!canEdit">
+      <el-form-item :label="$t('编码')" prop="code"><el-input v-model="form.code" :disabled="!!form.id" :placeholder="$t('如 PH-SPRAY')" /></el-form-item>
+      <!-- 名称留空时后端用类型名兜底，写进占位符里说清楚，省得用户以为必填 -->
+      <el-form-item :label="$t('名称')" prop="name"><el-input v-model="form.name" :placeholder="$t('留空用类型名')" /></el-form-item>
       <el-form-item>
         <template #label><HelpTip term="类型别名">{{ $t("类型别名") }}</HelpTip></template>
         <el-select v-model="form.stepType" style="width:100%" @change="onType">
@@ -14,7 +15,10 @@
         <template #label><HelpTip term="程序号">{{ $t("程序号") }}</HelpTip></template>
         <el-input-number v-model="form.plcProgramId" :min="1" :max="99" />
       </el-form-item>
-      <el-form-item :label="$t('操作')"><el-input v-model="form.operation" :placeholder="$t('如 OP-Rinse 水冲洗')" /></el-form-item>
+      <el-form-item>
+        <template #label><HelpTip term="Operation">{{ $t("工艺操作") }}</HelpTip></template>
+        <el-input v-model="form.operation" :placeholder="$t('如 OP-Rinse 水冲洗')" />
+      </el-form-item>
       <el-form-item :label="$t('看门狗（秒）')"><el-input-number v-model="form.watchdogSeconds" :min="5" /></el-form-item>
     </el-form>
     <el-table :data="form.parameters" size="small" max-height="240">
@@ -79,6 +83,8 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import type { FormInstance, FormRules } from "element-plus";
+import { t } from "../i18n";
 import { savePhaseTemplate } from "../api/equipment";
 import type { EquipmentClassDto, PhaseParameterDto, PhaseTemplateDto, StepType } from "../api/types";
 import { measuredTagRequired, parameterSemanticLabel, parameterSemanticOptions, stepTypeLabel } from "../utils/labels";
@@ -95,6 +101,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ saved: [] }>();
 
 const saving = ref(false);
+const formRef = ref<FormInstance>();
+/** 编码后端必填（PHASE_CODE）；名称可空，后端用类型名兜底。改成填的时候就地说，省一次往返。 */
+const rules: FormRules = {
+  code: [{ required: true, message: t("请填写相模板编码。"), trigger: "blur" }]
+};
 const form = reactive({
   id: "",
   code: "",
@@ -152,8 +163,9 @@ function removeParam() {
 
 async function save() {
   if (!props.cls || saving.value) return;
+  if (!(await formRef.value?.validate().catch(() => false))) return;
   if (programOutOfRange(form.plcProgramId)) {
-    ElMessage.warning("写 PLC 程序号用 1–6 或 9–99");
+    ElMessage.warning(t("写 PLC 程序号用 1–6 或 9–99"));
     return;
   }
   saving.value = true;
@@ -167,7 +179,7 @@ async function save() {
       operation: form.operation,
       parameters: form.parameters
     });
-    ElMessage.success("相模板已保存");
+    ElMessage.success(t("相模板已保存"));
     visible.value = false;
     emit("saved");
   } catch (e) {

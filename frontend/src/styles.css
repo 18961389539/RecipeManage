@@ -377,6 +377,8 @@ html.dark .el-button--info:not(.is-plain):not(.is-text):not(.is-link) {
 }
 .el-dialog__body { flex: 1 1 auto; overflow-y: auto; }
 .el-dialog__footer { flex: none; }
+/* 说明弹窗正文负责滚动时，锁住后面的主内容区，避免同时出现两条纵向滚动条。 */
+body:has(.page-guide-dialog) .el-main { overflow: hidden; }
 /* 电子签名合并弹窗的正文（utils/esign.ts 用 VNode 渲染，挂在 body 下，scoped 到不了） */
 .esign-form { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
 .esign-meaning { margin: 0; color: var(--text-body); font-size: 13px; line-height: 1.5; }
@@ -494,6 +496,13 @@ html.dark .vue-flow__background { color: var(--line); }
    探针 200 但读请求一直失败时用它的颜色。 */
 .dot.warn { background: var(--warn); }
 
+.mobile-table-hint {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* ===== ≤768px 手机适配 =====
    与 AppShell 的抽屉断点保持一致（utils/useMedia.ts 用的也是 768px）。
    这里只收全站共用的留白、触摸目标和组件库浮层宽度；各页面自己的多栏栅格
@@ -514,7 +523,7 @@ html.dark .vue-flow__background { color: var(--line); }
   .el-table { font-size: 13px; }
   .el-table th.el-table__cell { font-size: 12px; }
   /* 行内操作按钮是链接态，触控下点击面积太小 */
-  .el-table .el-button.is-link { min-height: 30px; }
+  .el-table .el-button.is-link { min-height: 36px; }
 
   /* 浮层：弹窗与消息框的 width 由组件以行内样式写死（如 560px），只能在此覆盖 */
   .el-dialog { width: 92vw !important; max-width: 92vw; margin-top: 6vh !important; }

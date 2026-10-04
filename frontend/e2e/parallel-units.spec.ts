@@ -45,6 +45,8 @@ test("design parallel unit procedures and execute on two PLCs", async ({ page })
   const parallel = page.getByRole("dialog", { name: "新增并行单元规程" });
   await expect(parallel).toBeVisible();
   await labeledInput(parallel, "单元规程").fill("UP-淬火");
+  await parallel.locator(".el-select").first().click();
+  await page.getByRole("option", { name: /^QUENCH ·/ }).click();
   await parallel.getByRole("button", { name: "添加并行工步" }).click();
   await expect(parallel).toBeHidden();
   await page.locator(".el-table__body tr").filter({ hasText: "冷却时长" }).locator(".el-input-number input").first().fill("1");
@@ -77,7 +79,23 @@ test("design parallel unit procedures and execute on two PLCs", async ({ page })
   await esignReasonAndWait(page, "/decide", "POST", "当前节点：质量", "汇合质检不写 PLC", passwords["质量工程师"]);
 
   await loginAs(page, "车间操作员");
+  const createResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/api\/batches\/?$/.test(new URL(response.url()).pathname)
+  );
   await createBatchFromApproved(page, batchNo, code, "HT-01", { "UP-淬火": "HT-02" });
+  const createdResponse = await createResponse;
+  const request = createdResponse.request().postDataJSON() as {
+    equipmentId: string;
+    unitEquipment?: Record<string, string> | null;
+  };
+  const created = await createdResponse.json() as {
+    snapshot: { unitEquipment?: Record<string, string> | null };
+  };
+  const quenchEquipment = request.unitEquipment?.["UP-淬火"];
+  expect(quenchEquipment, "the selected quench equipment must be sent to the API").toBeTruthy();
+  expect(quenchEquipment, "the quench lane must use a different device than the primary").not.toBe(request.equipmentId);
+  expect(created.snapshot.unitEquipment?.["UP-淬火"]).toBe(quenchEquipment);
   await expect(page.getByText(/UP-固溶→HT-01|UP-淬火→HT-02/)).toBeVisible();
 
   await page.getByRole("button", { name: "启动执行" }).click();

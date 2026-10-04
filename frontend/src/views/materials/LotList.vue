@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-title">
-      <h2>{{ $t("物料批次谱系") }}</h2>
+      <h2>{{ $t("物料批次谱系") }}<PageGuideButton guide-key="materialLots" /></h2>
       <div>
         <el-button type="primary" @click="openCreate">{{ $t("登记来料批") }}</el-button>
       </div>

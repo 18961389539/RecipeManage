@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Domain.Batches;
@@ -60,7 +60,7 @@ public sealed class BatchQueryService
     {
         take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
         skip = Math.Max(0, skip);
-        var like = NormalizeLike(q);
+        var like = SearchLike.Normalize(q);
 
         var joined =
             from b in _db.Batches.AsNoTracking()
@@ -153,10 +153,6 @@ public sealed class BatchQueryService
                 b.CreatedAt, b.StartedAt, pendingFinal.Contains(b.Id));
         }).ToList());
     }
-
-    /// <summary>搜索词：空串视为不过滤；LIKE 的通配符要转义，否则用户输入 % 就等于"匹配所有"。</summary>
-    private static string? NormalizeLike(string? q) =>
-        string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
 
     public async Task<BatchDetailDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -358,6 +354,9 @@ public sealed class BatchQueryService
 
     public async Task<BatchRecordDto> RecordAsync(Guid id, CancellationToken ct)
     {
+        // 批记录是归档凭据（含签名与检验数据）：第一道门是控制器策略，服务层再自保一层——
+        // 导出 PDF 走的就是这个方法，堵在这里两条路径同时受控。
+        _user.EnsureCan(Capabilities.BatchRecordView, "批记录仅主管、质量与管理员可查看。");
         var detail = await GetAsync(id, ct);
         var handshake = await AllHandshakeLogAsync(id, ct);
         // 归档件用全量样本与全量报警：eBR 是法定记录，不能拿趋势图那套抽稀结果去签。
@@ -374,16 +373,22 @@ public sealed class BatchQueryService
         var materials = await _lots.UsesForBatchAsync(id, ct);
         var labs = await _lots.SamplesForBatchAsync(id, ct);
         var entityId = id.ToString();
-        var esigns = (await _db.SignatureRecords.AsNoTracking()
+        var signatures = await _db.SignatureRecords.AsNoTracking()
                 .Where(s => s.EntityType == "ProductionBatch" && s.EntityId == entityId)
                 .OrderBy(s => s.SignedAt)
-                .ToListAsync(ct))
-            .Select(MapEsign)
-            .ToList();
-        return new BatchRecordDto(
+                .ThenBy(s => s.Id)
+                .ToListAsync(ct);
+        var record = new BatchRecordDto(
             detail.Id, detail.BatchNo, detail.Status, detail.SnapshotIntegrity, detail.Snapshot,
             detail.StepExecutions, handshake, samples, drift, approvals, alarms, DateTimeOffset.UtcNow,
-            detail.WritePlan, detail.ReleasedBy, detail.ReleasedAt, detail.ReleaseComment, materials, labs, esigns);
+            detail.WritePlan, detail.ReleasedBy, detail.ReleasedAt, detail.ReleaseComment, materials, labs, []);
+        var evidenceHash = BatchRecordEvidenceHash.Compute(record);
+        return record with
+        {
+            EvidenceHashVersion = BatchRecordEvidenceHash.CurrentVersion,
+            EvidenceHash = evidenceHash,
+            Esigns = signatures.Select(s => MapEsign(s, evidenceHash, detail.Snapshot)).ToList()
+        };
     }
 
     public async Task<byte[]> ExportPdfAsync(Guid id, CancellationToken ct)
@@ -411,7 +416,7 @@ public sealed class BatchQueryService
     {
         take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
         skip = Math.Max(0, skip);
-        var like = NormalizeLike(q);
+        var like = SearchLike.Normalize(q);
         var query = _db.ProcessAlarms.AsNoTracking();
         if (batchId is Guid id) query = query.Where(a => a.BatchId == id);
         if (onlyOpen) query = query.Where(a => a.AcknowledgedAt == null);
@@ -455,8 +460,19 @@ public sealed class BatchQueryService
     internal static ProcessAlarmDto MapAlarm(ProcessAlarm a) =>
         new(a.Id, a.BatchId, a.BatchNo, a.StepCode, a.Code, a.Severity, a.Message, a.RaisedAt, a.AcknowledgedAt, a.AcknowledgedBy);
 
-    private static BatchEsignDto MapEsign(SignatureRecord s) =>
-        new(s.Action, s.Meaning, s.SignerName, s.SignedAt, s.Detail);
+    private static BatchEsignDto MapEsign(
+        SignatureRecord s, string currentEvidenceHash, ControlRecipeSnapshot snapshot)
+    {
+        var isDisposition = s.Action is "batch.release.esign" or "batch.reject.esign";
+        var integrity = isDisposition
+            ? BatchRecordEvidenceHash.Integrity(s.ContentHashVersion, s.ContentHash, currentEvidenceHash)
+            : BatchActionSignatureContent.Supports(s.Action)
+                ? BatchActionSignatureContent.Integrity(s, snapshot)
+                : null;
+        return new BatchEsignDto(
+            s.Action, s.Meaning, s.SignerName, s.SignedAt, s.Detail,
+            s.ContentHashVersion, s.ContentHash, integrity);
+    }
 
     private static string? IntentReason(IEnumerable<SchedulerIntent> intents, string kind) =>
         intents.FirstOrDefault(i => i.Kind == kind)?.Reason;

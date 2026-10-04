@@ -19,14 +19,26 @@ export function reloadRealtimeNow(): void {
 
 export function usePolling(task: () => unknown, intervalMs = POLL_INTERVAL_MS) {
   let timer: number | undefined;
+  let running = false;
+
+  /** 上一拍还没回来就跳过这一拍：慢请求（大批次详情、现场弱网）时不再叠罗汉。 */
+  async function tick() {
+    if (running) return;
+    running = true;
+    try {
+      await task();
+    } finally {
+      running = false;
+    }
+  }
 
   function start() {
-    live.add(task);
-    timer ??= window.setInterval(() => void task(), intervalMs);
+    live.add(tick);
+    timer ??= window.setInterval(() => void tick(), intervalMs);
   }
 
   function stop() {
-    live.delete(task);
+    live.delete(tick);
     if (timer !== undefined) window.clearInterval(timer);
     timer = undefined;
   }

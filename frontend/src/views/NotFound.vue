@@ -1,5 +1,8 @@
 <template>
-  <el-result icon="warning" :title="$t('页面不存在')">
+  <el-result icon="warning">
+    <template #title>
+      {{ $t("页面不存在") }}<PageGuideButton guide-key="notFound" />
+    </template>
     <template #sub-title>
       <p>{{ $t("没有找到地址") }} <code>{{ path }}</code> {{ $t("对应的页面，可能是链接已过时或地址输入有误。") }}</p>
     </template>

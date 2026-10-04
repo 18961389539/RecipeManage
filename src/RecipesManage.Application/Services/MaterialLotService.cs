@@ -123,19 +123,56 @@ public sealed class MaterialLotService
         return MapLot(child);
     }
 
+    /// <summary>
+    /// 谱系：祖先链 + 子树 + 相关批次的使用记录。
+    ///
+    /// 不整表加载：物料批随运行年份线性增长，以前"打开谱系页"就是每开一次把全部物料批读进内存。
+    /// 现在祖先沿 ParentLotId 逐层取（一次一个节点），后代每层一条 IN 查询；
+    /// 顺序语义（祖先远→近、后代子批按批号前序展开）仍由 <see cref="MaterialGenealogy"/> 决定。
+    /// </summary>
     public async Task<LotGenealogyDto> GenealogyAsync(Guid id, CancellationToken ct)
     {
-        var all = await _db.MaterialLots.AsNoTracking().ToListAsync(ct);
-        var lot = all.FirstOrDefault(l => l.Id == id)
+        var lot = await _db.MaterialLots.AsNoTracking().FirstOrDefaultAsync(l => l.Id == id, ct)
                   ?? throw new DomainException("NOT_FOUND", "物料批次不存在。");
-        var byId = all.ToDictionary(l => l.Id);
-        var ancestors = MaterialGenealogy.Ancestors(lot, byId);
-        var descendants = MaterialGenealogy.Descendants(lot.Id, all);
+        var ancestors = await AncestorsAsync(lot, ct);
+        var descendants = await DescendantsAsync(lot.Id, ct);
         var relatedIds = new HashSet<Guid> { lot.Id };
         foreach (var row in ancestors.Concat(descendants))
             relatedIds.Add(row.Id);
         var uses = await UsesForLotsAsync(relatedIds, ct);
         return new LotGenealogyDto(MapLot(lot), ancestors.Select(MapLot).ToList(), descendants.Select(MapLot).ToList(), uses);
+    }
+
+    private async Task<IReadOnlyList<MaterialLot>> AncestorsAsync(MaterialLot lot, CancellationToken ct)
+    {
+        var byId = new Dictionary<Guid, MaterialLot>();
+        var parentId = lot.ParentLotId;
+        while (parentId is Guid pid && !byId.ContainsKey(pid))
+        {
+            var parent = await _db.MaterialLots.AsNoTracking().FirstOrDefaultAsync(l => l.Id == pid, ct);
+            if (parent is null) break;
+            byId[parent.Id] = parent;
+            parentId = parent.ParentLotId;
+        }
+        return MaterialGenealogy.Ancestors(lot, byId);
+    }
+
+    private async Task<IReadOnlyList<MaterialLot>> DescendantsAsync(Guid rootId, CancellationToken ct)
+    {
+        var all = new List<MaterialLot>();
+        var seen = new HashSet<Guid> { rootId };
+        var frontier = new List<Guid> { rootId };
+        while (frontier.Count > 0)
+        {
+            var children = await _db.MaterialLots.AsNoTracking()
+                .Where(l => l.ParentLotId != null && frontier.Contains(l.ParentLotId.Value))
+                .ToListAsync(ct);
+            var fresh = children.Where(c => seen.Add(c.Id)).ToList();
+            if (fresh.Count == 0) break;
+            all.AddRange(fresh);
+            frontier = fresh.Select(c => c.Id).ToList();
+        }
+        return MaterialGenealogy.Descendants(rootId, all);
     }
 
     public async Task BindSnapshotLotsAsync(ProductionBatch batch, string productCode, string productName, string? lotNumber, IReadOnlyList<Guid>? chargeLotIds, CancellationToken ct)
@@ -158,13 +195,23 @@ public sealed class MaterialLotService
 
         if (chargeLotIds is { Count: > 0 })
         {
-            foreach (var lotId in chargeLotIds.Distinct())
+            // 一次取齐再逐条校验：以前每个投料批两次往返（取批 + 查重），大单投料时是 2N 次。
+            var ids = chargeLotIds.Distinct().ToList();
+            var charges = await _db.MaterialLots.AsNoTracking()
+                .Where(l => ids.Contains(l.Id))
+                .ToDictionaryAsync(l => l.Id, ct);
+            var existing = (await _db.BatchMaterialUses.AsNoTracking()
+                    .Where(u => u.BatchId == batch.Id && u.Role == MaterialUseRole.Charge && ids.Contains(u.MaterialLotId))
+                    .Select(u => u.MaterialLotId)
+                    .ToListAsync(ct))
+                .ToHashSet();
+            foreach (var lotId in ids)
             {
-                var charge = await _db.MaterialLots.FirstOrDefaultAsync(l => l.Id == lotId, ct)
-                             ?? throw new DomainException("NOT_FOUND", "投料批次不存在。");
+                if (!charges.TryGetValue(lotId, out var charge))
+                    throw new DomainException("NOT_FOUND", "投料批次不存在。");
                 if (charge.Status is not MaterialLotStatus.Open and not MaterialLotStatus.Released)
                     throw new DomainException("LOT_STATUS", $"投料批次 {charge.LotNumber} 状态 {charge.Status} 不能投料。");
-                if (!await _db.BatchMaterialUses.AnyAsync(u => u.BatchId == batch.Id && u.MaterialLotId == charge.Id && u.Role == MaterialUseRole.Charge, ct))
+                if (existing.Add(charge.Id))
                     _db.BatchMaterialUses.Add(new BatchMaterialUse(batch.Id, charge.Id, MaterialUseRole.Charge, charge.Quantity));
             }
         }
@@ -203,7 +250,26 @@ public sealed class MaterialLotService
         var rows = await _db.LabSamples.AsNoTracking().Where(s => s.BatchId == batchId).ToListAsync(ct);
         var lotIds = rows.Select(s => s.MaterialLotId).OfType<Guid>().Distinct().ToList();
         var lots = await _db.MaterialLots.AsNoTracking().Where(l => lotIds.Contains(l.Id)).ToDictionaryAsync(l => l.Id, ct);
-        return rows.OrderBy(s => s.TakenAt).Select(s => MapSample(s, s.MaterialLotId is Guid id && lots.TryGetValue(id, out var lot) ? lot.LotNumber : null)).ToList();
+        var entityIds = rows.Select(s => s.Id.ToString()).ToList();
+        var signatures = entityIds.Count == 0
+            ? []
+            : await _db.SignatureRecords.AsNoTracking()
+                .Where(s => s.EntityType == "LabSample" &&
+                            s.Action == "lab.sample.dispose.esign" &&
+                            entityIds.Contains(s.EntityId))
+                .OrderBy(s => s.SignedAt)
+                .ToListAsync(ct);
+        var signatureBySample = signatures
+            .GroupBy(s => s.EntityId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+        return rows.OrderBy(s => s.TakenAt).Select(s =>
+        {
+            signatureBySample.TryGetValue(s.Id.ToString(), out var signature);
+            var lotNumber = s.MaterialLotId is Guid id && lots.TryGetValue(id, out var lot)
+                ? lot.LotNumber
+                : null;
+            return MapSample(s, lotNumber, MapDispositionSignature(s, signature));
+        }).ToList();
     }
 
     public async Task<LabSampleDto> CreateSampleAsync(Guid batchId, CreateLabSampleRequest request, CancellationToken ct)
@@ -213,11 +279,23 @@ public sealed class MaterialLotService
             ?? throw new DomainException("NOT_FOUND", "批次不存在。");
         if (await _db.LabSamples.AnyAsync(s => s.SampleCode == request.SampleCode.Trim(), ct))
             throw new DomainException("DUP_SAMPLE", "样品编号已存在。");
-        if (request.MaterialLotId is Guid lotId && !await _db.MaterialLots.AnyAsync(l => l.Id == lotId, ct))
+        var materialLotId = request.MaterialLotId;
+        if (materialLotId is null)
+        {
+            // 取样入口不只有批记录页（操作员在监控页取样）：未显式给物料批时默认绑本批产出批，
+            // 否则 LIMS 样品会丢掉与产品批的谱系链接，看起来"取了个没有来源的样"。
+            materialLotId = await _db.BatchMaterialUses.AsNoTracking()
+                .Where(u => u.BatchId == batchId && u.Role == MaterialUseRole.Produced)
+                .Select(u => (Guid?)u.MaterialLotId)
+                .FirstOrDefaultAsync(ct);
+        }
+        else if (!await _db.MaterialLots.AnyAsync(l => l.Id == materialLotId, ct))
+        {
             throw new DomainException("NOT_FOUND", "物料批次不存在。");
+        }
         var sample = new LabSample(
             request.SampleCode, batchId, request.SampleType, _user.DisplayName ?? _user.UserName, DateTimeOffset.UtcNow,
-            request.MaterialLotId, request.ParentSampleId, request.StepId, request.ResultsJson);
+            materialLotId, request.ParentSampleId, request.StepId, request.ResultsJson);
         _db.LabSamples.Add(sample);
         _db.AuditLogs.Add(new AuditLog(_user.UserId, _user.UserName, "lab.sample.create", "LabSample", sample.Id.ToString(),
             $"batch={batchId} {sample.SampleCode}"));
@@ -237,9 +315,16 @@ public sealed class MaterialLotService
         _esign.Record(
             "lab.sample.dispose.esign", "LabSample", sample.Id.ToString(),
             ElectronicSignature.Batch("lab.sample.dispose.esign"),
-            $"batch={sample.BatchId} {sample.SampleCode}:{sample.Disposition}");
+            $"batch={sample.BatchId} {sample.SampleCode}:{sample.Disposition}",
+            contentHashVersion: LabSampleSignatureContent.CurrentVersion,
+            contentHash: LabSampleSignatureContent.ComputeHash(sample));
         await _db.SaveChangesAsync(ct);
-        return MapSample(sample, null);
+        var signature = await _db.SignatureRecords.AsNoTracking()
+            .Where(s => s.EntityType == "LabSample" && s.EntityId == sample.Id.ToString() &&
+                        s.Action == "lab.sample.dispose.esign")
+            .OrderByDescending(s => s.SignedAt)
+            .FirstOrDefaultAsync(ct);
+        return MapSample(sample, null, MapDispositionSignature(sample, signature));
     }
 
     public Task<int> PendingFinalCountAsync(CancellationToken ct) =>
@@ -273,10 +358,31 @@ public sealed class MaterialLotService
         new(lot.Id, lot.LotNumber, lot.MaterialCode, lot.MaterialName, lot.ParentLotId, lot.Source, lot.Status,
             lot.Quantity, lot.Uom, lot.ProducedBatchId, lot.CreatedAt);
 
-    private static LabSampleDto MapSample(LabSample sample, string? lotNumber) =>
+    private static LabSampleDispositionSignatureDto? MapDispositionSignature(
+        LabSample sample, SignatureRecord? signature)
+    {
+        if (signature is null)
+            return null;
+
+        var integrity = signature.ContentHashVersion is null && signature.ContentHash is null
+            ? "Unbound"
+            : signature.ContentHashVersion is not int version || string.IsNullOrWhiteSpace(signature.ContentHash)
+                ? "Mismatch"
+                : version != LabSampleSignatureContent.CurrentVersion
+                    ? "Unsupported"
+                    : LabSampleSignatureContent.Matches(sample, version, signature.ContentHash)
+                        ? "Verified"
+                        : "Mismatch";
+        return new LabSampleDispositionSignatureDto(
+            signature.SignerName, signature.SignedAt, signature.Meaning, signature.Detail,
+            signature.ContentHashVersion, signature.ContentHash, integrity);
+    }
+
+    private static LabSampleDto MapSample(
+        LabSample sample, string? lotNumber, LabSampleDispositionSignatureDto? dispositionSignature = null) =>
         new(sample.Id, sample.SampleCode, sample.BatchId, sample.MaterialLotId, lotNumber, sample.ParentSampleId,
             sample.StepId, sample.SampleType, sample.Disposition, sample.ResultsJson, sample.TakenBy, sample.TakenAt,
-            sample.DispositionBy, sample.DisposedAt, sample.Comment);
+            sample.DispositionBy, sample.DisposedAt, sample.Comment, dispositionSignature);
 
     private async Task RequireEsignAsync(string password, CancellationToken ct) =>
         await _esign.RequireAsync(password, ct);

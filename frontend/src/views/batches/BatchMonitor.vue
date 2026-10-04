@@ -6,7 +6,7 @@
       type="error"
       show-icon
       :closable="false"
-      :title="`批次详情加载失败：${error}`"
+      :title="$t('批次详情加载失败：{0}', [error])"
       :description="$t('请确认该批次是否存在，或返回批次列表重试。')"
     />
     <el-skeleton v-else :rows="8" animated />
@@ -14,18 +14,24 @@
   <div v-if="batch">
     <div class="page-title sticky-actions">
       <div>
-        <h2>{{ batch.batchNo }} · {{ batch.snapshot.recipeName }} v{{ batch.snapshot.versionNumber }}</h2>
-        <span>{{ batch.equipmentName }} · {{ batchStatusLabel(batch.status) }} · {{ summaryText }}{{ livePlcLabel }} · {{ $t("快照：{0}", [integrityLabel]) }}{{ scaleLabel }}</span>
+        <h2>{{ batch.batchNo }} · {{ batch.snapshot.recipeName }} v{{ batch.snapshot.versionNumber }}<PageGuideButton guide-key="batchMonitor" /></h2>
+        <div class="batch-meta">
+          <span class="batch-meta-item">{{ batch.equipmentName }}</span>
+          <span class="batch-meta-item">{{ batchStatusLabel(batch.status) }}</span>
+          <span class="batch-meta-item">{{ summaryText }}{{ livePlcLabel }}</span>
+          <span class="batch-meta-item">{{ $t("快照：{0}", [integrityLabel]) }}</span>
+          <span v-if="scaleLabel" class="batch-meta-item">{{ scaleLabel }}</span>
+        </div>
       </div>
-      <div>
+      <div class="batch-actions">
         <HelpTip v-if="canConfirm && batch.status === 'Running' && awaitingConfirm" term="人工确认" chord="ctrl+enter" allow-in-input plain placement="bottom">
           <el-button type="primary" :loading="busyAction === 'confirm'" @click="confirmStep">{{ $t("人工确认") }}</el-button>
         </HelpTip>
         <HelpTip v-if="canOperate && (batch.status === 'Created' || batch.status === 'Faulted')" :term="batch.status === 'Faulted' ? '故障后重新排队' : '启动执行'" chord="ctrl+enter" allow-in-input plain placement="bottom">
-          <el-button type="primary" :loading="busyAction === 'start'" @click="start">{{ batch.status === 'Faulted' ? '故障后重新排队' : '启动执行' }}</el-button>
+          <el-button type="primary" :loading="busyAction === 'start'" @click="start">{{ $t(batch.status === 'Faulted' ? '故障后重新排队' : '启动执行') }}</el-button>
         </HelpTip>
         <HelpTip v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued')" :term="batch.pendingHoldReason ? '待保持' : '保持'" :chord="batch.pendingHoldReason ? '' : 'f8'" plain placement="bottom">
-          <el-button :loading="busyAction === 'hold'" :disabled="!!batch.pendingHoldReason" @click="hold">{{ batch.pendingHoldReason ? '保持已请求' : '保持' }}</el-button>
+          <el-button :loading="busyAction === 'hold'" :disabled="!!batch.pendingHoldReason" @click="hold">{{ $t(batch.pendingHoldReason ? '保持已请求' : '保持') }}</el-button>
         </HelpTip>
         <HelpTip v-if="canResume && batch.status === 'Held'" term="恢复执行" chord="ctrl+enter" allow-in-input plain placement="bottom">
           <el-button type="primary" :loading="busyAction === 'resume'" @click="resume">{{ $t("恢复执行") }}</el-button>
@@ -43,8 +49,9 @@
         <HelpTip v-if="canOperate && (batch.status === 'Running' || batch.status === 'Queued' || batch.status === 'Held')" term="中止" plain placement="bottom">
           <el-button type="danger" :loading="busyAction === 'abort'" @click="abort">{{ $t("中止") }}</el-button>
         </HelpTip>
+        <el-button v-if="canTakeSample" :loading="busyAction === 'sample'" @click="takeSample">{{ $t("取样") }}</el-button>
         <el-button @click="$router.push('/batches')">{{ $t("返回批次列表") }}</el-button>
-        <el-button @click="$router.push(`/batches/${batch.id}/record`)">{{ $t("电子批记录") }}</el-button>
+        <el-button v-if="canViewRecord" @click="$router.push(`/batches/${batch.id}/record`)">{{ $t("电子批记录") }}</el-button>
       </div>
     </div>
     <el-alert class="gap-after"
@@ -59,14 +66,14 @@
       :closable="false"
       type="success"
       show-icon
-      :title="`质量已放行${batch.releasedBy ? ` · ${batch.releasedBy}` : ''}${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
+      :title="`${$t('质量已放行')}${batch.releasedBy ? ` · ${batch.releasedBy}` : ''}${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
     />
     <el-alert class="gap-after"
       v-if="batch.status === 'DispositionRejected'"
       :closable="false"
       type="error"
       show-icon
-      :title="`质量拒收${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
+      :title="`${$t('质量拒收')}${batch.releaseComment ? ` · ${batch.releaseComment}` : ''}`"
     />
 
     <HandshakeStepsBar :steps="progress.steps" :text="statusText" :faulted="progress.faulted" />
@@ -83,17 +90,17 @@
     </div>
     <LaneSignalsCard v-if="selectedLane" class="gap-before" :lane="selectedLane" :signals="laneSignals" />
     <el-alert class="gap-before" v-if="awaitingConfirm && batch.status === 'Running' && !batch.pendingConfirmComment" type="info" :closable="false" :title="$t('等待人工确认')" :description="$t('本工步禁止写 PLC。操作员 / 质量电子签名确认后才进入下一步。')" />
-    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingHoldReason" type="warning" :closable="false" :title="`保持已请求：${batch.pendingHoldReason}`" :description="$t('批次仍在运行。调度会写 Host_Hold，待 PLC_Held 后再暂停；刷新或重启不会丢掉这条已签名指令。')" />
-    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingSkipReason" type="info" :closable="false" :title="`跳步已请求：${batch.pendingSkipReason}`" :description="$t('等待当前工步回到可跳相位后执行，重启后仍会继续。')" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingHoldReason" type="warning" :closable="false" :title="$t('保持已请求：{0}', [batch.pendingHoldReason])" :description="$t('批次仍在运行。调度会写 Host_Hold，待 PLC_Held 后再暂停；刷新或重启不会丢掉这条已签名指令。')" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingSkipReason" type="info" :closable="false" :title="$t('跳步已请求：{0}', [batch.pendingSkipReason])" :description="$t('等待当前工步回到可跳相位后执行，重启后仍会继续。')" />
     <el-alert class="gap-before-sm" v-if="batch.status === 'Running' && batch.pendingConfirmComment" type="info" :closable="false" :title="$t('人工确认已提交')" :description="batch.pendingConfirmComment" />
-    <el-alert class="gap-before-sm" v-if="batch.status === 'Held'" type="warning" :closable="false" :title="batch.faultMessage || '批次保持'" :description="heldHint" />
+    <el-alert class="gap-before-sm" v-if="batch.status === 'Held'" type="warning" :closable="false" :title="batch.faultMessage || $t('批次保持')" :description="heldHint" />
     <el-alert class="gap-before-sm" v-else-if="batch.faultMessage" type="error" :closable="false" :title="batch.faultMessage" :description="faultHint" />
     <el-alert
       v-if="unackedAlarms.length"
       class="gap-before-sm"
       type="error"
       :closable="false"
-      :title="`本批 ${unackedAlarms.length} 条未确认过程报警`"
+      :title="$t('本批 {0} 条未确认过程报警', [unackedAlarms.length])"
     >
       <el-button size="small" type="danger" plain @click="monitorPane = 'alarm'">{{ $t("查看报警") }}</el-button>
     </el-alert>
@@ -275,9 +282,11 @@ import { t } from "../../i18n";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import http from "../../api/http";
 import { acknowledgeAlarm, esignBatchAction } from "../../api/batches";
 import type { ExecutionEvent, ProcessAlarmDto, SnapshotDriftDto } from "../../api/types";
 import { useAuthStore } from "../../stores/auth";
+import { useAlarmBadgeStore } from "../../stores/alarms";
 import { useExecutionHub } from "../../realtime/executionHub";
 import ProcedureFlow from "../../components/ProcedureFlow.vue";
 import SetpointMatrix from "../../components/SetpointMatrix.vue";
@@ -307,6 +316,7 @@ import { usePageShortcuts } from "../../shortcuts/registry";
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const alarmBadge = useAlarmBadgeStore();
 const pickedStep = ref<string | null>(null);
 const charts = ref<InstanceType<typeof BatchTrendCharts> | null>(null);
 
@@ -402,7 +412,9 @@ const skipAllowed = computed(() => {
   if (batch.value.status === "Held" || batch.value.status === "Faulted") return true;
   return batch.value.status === "Running" && skipReady.value;
 });
-const skipBlockedReason = "当前握手阶段不可跳过：等到等待 PLC 就绪、保持、人工确认或主控等待后再试。";
+const skipBlockedReason = computed(() =>
+  t("当前握手阶段不可跳过：等到等待 PLC 就绪、保持、人工确认或主控等待后再试。")
+);
 
 const awaitingConfirm = computed(() => {
   const currentId = selectedLane.value?.stepId || batch.value?.currentStepId;
@@ -415,11 +427,11 @@ const awaitingConfirm = computed(() => {
 const heldHint = computed(() => {
   const msg = batch.value?.faultMessage ?? "";
   if (msg.includes("质检超差"))
-    return "归档实测超出规格，已保持批次且禁止写下一步。质量/主管审核后恢复执行。";
+    return t("归档实测超出规格，已保持批次且禁止写下一步。质量/主管审核后恢复执行。");
   const p = currentPhase.value;
   if (p === "AwaitingConfirm" || awaitingConfirm.value)
-    return "人工确认等待中被保持，未写 PLC。恢复后继续等待电子签名确认。";
-  return "已写 Host_Hold 并收到 PLC_Held。恢复执行将清位并继续剩余工步时长，禁止盲写下一步。";
+    return t("人工确认等待中被保持，未写 PLC。恢复后继续等待电子签名确认。");
+  return t("已写 Host_Hold 并收到 PLC_Held。恢复执行将清位并继续剩余工步时长，禁止盲写下一步。");
 });
 
 const canOperate = computed(() => auth.can("Operator", "Supervisor"));
@@ -427,6 +439,11 @@ const canSkip = computed(() => auth.can("Supervisor"));
 const canConfirm = computed(() => auth.can("Operator", "Supervisor", "Quality"));
 const canResume = computed(() => auth.can("Operator", "Supervisor"));
 const canAckAlarm = computed(() => auth.can("Operator", "Supervisor", "Quality"));
+// 批记录（归档凭据）按角色收敛：主管 / 质量 / 管理员；操作员在监控页看实时执行。
+const canViewRecord = computed(() => auth.can("Admin", "Supervisor", "Quality"));
+// 取样（lims 登记）与批记录查看是两件事：操作员保留取样入口——归档件不再对车间开放后，
+// 监控页的取样按钮就是 lot.handle 里"登记样品"在界面上的落点。
+const canTakeSample = computed(() => auth.can("Operator", "Quality", "Supervisor"));
 const unackedAlarms = computed(() => alarms.value.filter((a) => !a.acknowledgedAt));
 const hasDrift = computed(() => drifts.value.some((d) => d.drifted));
 function driftRowClass({ row }: { row: SnapshotDriftDto }) {
@@ -436,17 +453,17 @@ function driftRowClass({ row }: { row: SnapshotDriftDto }) {
 const faultHint = computed(() => {
   const code = batch.value?.faultCode ?? "";
   const map: Record<string, string> = {
-    PlcReadyTimeout: "等待 PLC_Ready 超时：检查握手位与通讯，确认 PLC 空闲后再重新排队。",
-    HeartbeatLost: "工步执行中心跳丢失：检查看门狗时间与现场心跳程序。",
-    ExecutionTimeout: "工步看门狗超时：核对设定值与 PLC 程序，必要时延长该工步看门狗。",
-    AckTimeout: "Trigger_Write 后未收到 Step_Running：禁止盲写下一步，先复位握手位。",
-    PlcReportedError: "PLC 报 Step_Error：读取 Error_Code 后按设备手册处理。",
-    BlindWriteRejected: "状态机拒绝跨阶段写参，保持四步握手顺序。",
-    WriteVerifyMismatch: "写参回读与快照不一致：禁止 Trigger_Write，检查点表与 PLC 程序后再重新排队。",
-    HoldAckTimeout: "Host_Hold 后未收到 PLC_Held：禁止盲写下一步，检查保持握手位。",
-    PlcCommLost: "读 PLC 持续失败，超出容忍窗口：先到现场确认设备实际状态（PLC 可能仍在按程序运行），恢复通讯后再重新排队。"
+    PlcReadyTimeout: t("等待 PLC_Ready 超时：检查握手位与通讯，确认 PLC 空闲后再重新排队。"),
+    HeartbeatLost: t("工步执行中心跳丢失：检查看门狗时间与现场心跳程序。"),
+    ExecutionTimeout: t("工步看门狗超时：核对设定值与 PLC 程序，必要时延长该工步看门狗。"),
+    AckTimeout: t("Trigger_Write 后未收到 Step_Running：禁止盲写下一步，先复位握手位。"),
+    PlcReportedError: t("PLC 报 Step_Error：读取 Error_Code 后按设备手册处理。"),
+    BlindWriteRejected: t("状态机拒绝跨阶段写参，保持四步握手顺序。"),
+    WriteVerifyMismatch: t("写参回读与快照不一致：禁止 Trigger_Write，检查点表与 PLC 程序后再重新排队。"),
+    HoldAckTimeout: t("Host_Hold 后未收到 PLC_Held：禁止盲写下一步，检查保持握手位。"),
+    PlcCommLost: t("读 PLC 持续失败，超出容忍窗口：先到现场确认设备实际状态（PLC 可能仍在按程序运行），恢复通讯后再重新排队。")
   };
-  return map[code] ?? "可在故障清除后重新排队，调度将从当前工步索引恢复握手。";
+  return map[code] ?? t("可在故障清除后重新排队，调度将从当前工步索引恢复握手。");
 });
 
 async function esign(title: string, action: string, needReason = false) {
@@ -497,7 +514,7 @@ function hold() {
   return runAction("hold", async (id) => {
     const { password, reason } = await esign("保持批次（写 Host_Hold，等待 PLC_Held，禁止盲写）", "batch.hold.esign", true);
     await esignBatchAction(id, "hold", { password, reason: reason ?? "操作员保持" });
-    ElMessage.success("已请求保持：上位机写 Host_Hold，等待 PLC_Held 后暂停剩余时长。");
+    ElMessage.success(t("已请求保持：上位机写 Host_Hold，等待 PLC_Held 后暂停剩余时长。"));
   });
 }
 
@@ -505,6 +522,19 @@ function resume() {
   return runAction("resume", async (id) => {
     const { password } = await esign("恢复执行", "batch.resume.esign");
     await esignBatchAction(id, "resume", { password });
+  });
+}
+
+/**
+ * 取样走监控页而不是批记录页：批记录（归档凭据）不再对车间开放后，
+ * `lot.handle` 里"登记样品"在界面上的落点就是这里。
+ * 不传物料批：服务端默认绑本批产出批（谱系链接不断），监控页也拿不到产出批 id。
+ */
+function takeSample() {
+  return runAction("sample", async (id) => {
+    const { value: code } = await ElMessageBox.prompt(t("样品编号"), t("实验室取样"));
+    await http.post(`/batches/${id}/lab-samples`, { sampleCode: code, sampleType: "Final" });
+    ElMessage.success(t("已登记样品"));
   });
 }
 
@@ -534,7 +564,7 @@ function confirmStep() {
     const currentId = selectedLane.value?.stepId || batch.value?.currentStepId;
     const { password, reason } = await esign("人工确认本工步（禁止写 PLC）", "batch.confirm.esign", true);
     await esignBatchAction(id, "confirm", { password, reason: reason ?? "操作员确认", stepId: currentId });
-    ElMessage.success("已提交人工确认，调度将完成该工步且不写 PLC。");
+    ElMessage.success(t("已提交人工确认，调度将完成该工步且不写 PLC。"));
   });
 }
 
@@ -544,6 +574,8 @@ async function ackAlarm(row: ProcessAlarmDto) {
   try {
     await acknowledgeAlarm(row.id);
     await load();
+    // 侧栏徽标跟着减：确认完数字还挂着会像没生效。
+    void alarmBadge.refresh();
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
@@ -578,6 +610,8 @@ async function ackAllAlarms() {
     ElMessage.error(t("已确认 {0} 条，其余失败：{1}", ok, (e as Error).message));
   } finally {
     ackingId.value = "";
+    // 成功与部分失败都刷新：批量里已经确认掉的那几条要让侧栏徽标立刻反映。
+    void alarmBadge.refresh();
   }
 }
 
@@ -585,12 +619,12 @@ usePageShortcuts(() => [
   {
     id: "batch.primary",
     chord: "ctrl+enter",
-    group: "批次监控",
+    group: t("批次监控"),
     label: awaitingConfirm.value
-      ? "人工确认"
+      ? t("人工确认")
       : batch.value?.status === "Held"
-        ? "恢复执行"
-        : "启动执行",
+        ? t("恢复执行")
+        : t("启动执行"),
     allowInInput: true,
     when: () => {
       if (!batch.value || busyAction.value) return false;
@@ -609,8 +643,8 @@ usePageShortcuts(() => [
   {
     id: "batch.hold",
     chord: "f8",
-    group: "批次监控",
-    label: "保持",
+    group: t("批次监控"),
+    label: t("保持"),
     when: () =>
       !!batch.value
       && canOperate.value
@@ -622,8 +656,8 @@ usePageShortcuts(() => [
   {
     id: "batch.skip",
     chord: "f9",
-    group: "批次监控",
-    label: "跳过当前工步",
+    group: t("批次监控"),
+    label: t("跳过当前工步"),
     when: () =>
       !!batch.value
       && canSkip.value
@@ -655,6 +689,33 @@ onMounted(async () => {
 <style scoped>
 .step-line { cursor: pointer; }
 .muted { color: var(--muted); font-size: 12px; }
+.batch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin-top: 4px;
+}
+.batch-meta-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.batch-meta-item + .batch-meta-item::before {
+  content: "";
+  width: 3px;
+  height: 3px;
+  flex: none;
+  margin: 0 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.batch-actions { gap: var(--space-2); }
+.batch-actions :deep(.el-button) { min-height: 38px; }
 .trend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
 .monitor-tabs { margin-top: var(--space-3); }
 .monitor-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-3); }
@@ -672,4 +733,13 @@ onMounted(async () => {
 .lane-tab:hover { background: var(--hover); }
 .lane-tab.active { border-color: var(--accent); background: var(--tint); color: var(--accent-bright); }
 :deep(.drift-row) { color: var(--warn); }
+@media (max-width: 768px) {
+  .batch-actions {
+    width: 100%;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .batch-actions :deep(.el-button) { min-height: 40px; }
+  .batch-meta { row-gap: 2px; }
+}
 </style>

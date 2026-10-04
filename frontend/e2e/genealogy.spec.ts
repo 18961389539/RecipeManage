@@ -38,6 +38,18 @@ test("material genealogy split charge binds eBR and lab sample is not a PLC tren
   await labeledInput(split, "子批号").fill(childLot);
   await split.getByRole("button", { name: "拆分" }).click();
   await expect(page.getByRole("heading", { name: new RegExp(`谱系 · ${childLot}`) })).toBeVisible();
+  const lineageColumns = page.locator(".lineage-map .lineage-column");
+  await expect(lineageColumns).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.locator(".lineage-map").evaluate((el) =>
+    getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length
+  )).toBe(1);
+  await expect(page.locator(".mobile-table-hint")).toBeVisible();
+  const useScroll = page.locator(".genealogy-uses-table .el-table__body-wrapper .el-scrollbar__wrap");
+  await expect.poll(() => useScroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  await useScroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+  await expect.poll(() => useScroll.evaluate((el) => el.scrollLeft > 0)).toBe(true);
+  await page.setViewportSize({ width: 994, height: 718 });
 
   await page.goto("/batches");
   await page.getByRole("button", { name: "从已批准配方创建" }).click();
@@ -57,7 +69,15 @@ test("material genealogy split charge binds eBR and lab sample is not a PLC tren
   await page.keyboard.press("Escape");
   await dialog.getByRole("button", { name: "生成快照并创建" }).click();
   await page.waitForURL(/\/batches\/[0-9a-f-]+$/i);
-  await page.getByRole("button", { name: "电子批记录" }).click();
+  const batchId = page.url().match(/\/batches\/([0-9a-f-]+)/i)![1];
+
+  // 操作员在监控页取样（批记录已不对车间开放）：服务端把未指定物料批的样品默认绑到本批产出批。
+  await page.getByRole("button", { name: "取样" }).click();
+  await fillPrompt(page, "实验室取样", sampleCode);
+
+  // 谱系核对换质量打开归档件：物料投料/产出与 LIMS 样品都记在批记录上。
+  await loginAs(page, "质量工程师");
+  await page.goto(`/batches/${batchId}/record`);
   await expect(page.getByRole("heading", { name: /电子批记录/ })).toBeVisible();
   const materialTable = page.locator("section.ebr-block").filter({ has: page.getByRole("heading", { name: "物料投料与产出谱系" }) });
   await expect(materialTable.getByRole("cell", { name: childLot, exact: true })).toBeVisible();
@@ -65,8 +85,6 @@ test("material genealogy split charge binds eBR and lab sample is not a PLC tren
   await expect(materialTable.getByText("投料", { exact: true })).toBeVisible();
   await expect(materialTable.getByText("产出", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "取样" }).click();
-  await fillPrompt(page, "实验室取样", sampleCode);
   await expect(page.getByRole("cell", { name: sampleCode, exact: true })).toBeVisible();
   await expect(page.getByText("终检")).toBeVisible();
 });
