@@ -43,7 +43,9 @@
       :empty-text="emptyText"
       @row-click="(row: RecipeListItemDto) => $router.push(`/recipes/${row.id}`)"
     >
-      <el-table-column prop="code" :label="$t('编码')" width="140" fixed sortable :sort-method="sorters.code" />
+      <!-- 配方编码 15 位定长（14px 字体实测最长 136px），此前 140 减去 .cell 左右 padding 24
+           只剩 116px，几乎每条都折两行、行高被撑到 46px。放宽到 176 并开省略号兜底。 -->
+      <el-table-column prop="code" :label="$t('编码')" width="176" fixed sortable :sort-method="sorters.code" show-overflow-tooltip />
       <el-table-column prop="name" :label="$t('名称')" sortable :sort-method="sorters.name" />
       <el-table-column prop="productName" :label="$t('产品')" sortable :sort-method="sorters.productName" />
       <el-table-column prop="approvedVersion" :label="$t('生效版本')" width="116" sortable :sort-method="sorters.approvedVersion" :sort-orders="DESC_FIRST">

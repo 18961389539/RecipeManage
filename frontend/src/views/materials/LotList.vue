@@ -39,7 +39,9 @@
       @sort-change="onSortChange"
       @row-click="(row: MaterialLotDto) => $router.push(`/lots/${row.id}`)"
     >
-      <el-table-column prop="lotNumber" :label="$t('批次号')" width="180" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <!-- 物料批次号最长形如 INGOT-MUTKZQ5HNYPV-S1（21 字符，实测 154px），
+           此前 180 卡临界、几乎每条折两行；改为省略号 + 悬停看全并放宽到 208。 -->
+      <el-table-column prop="lotNumber" :label="$t('批次号')" width="208" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="materialCode" :label="$t('物料')" width="110" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="materialName" :label="$t('名称')" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="source" :label="$t('来源')" width="112" sortable="custom" :sort-orders="SERVER_ASC_FIRST">

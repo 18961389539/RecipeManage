@@ -195,6 +195,7 @@ const en: Record<string, string> = {
   "从已批准主配方生成控制配方，并跟踪执行到放行。":
     "Generate a control recipe from an approved master recipe and follow it through to release.",
   "从已批准配方创建": "Create from approved recipe",
+  "本页仅供查看；创建批次需要主管或操作员账号。": "This page is read-only; creating batches requires a supervisor or operator account.",
   "搜索批次号 / 配方 / 设备": "Search batch no. / recipe / equipment",
   "已创建": "Created",
   "排队": "Queued",

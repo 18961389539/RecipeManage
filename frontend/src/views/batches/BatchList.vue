@@ -6,7 +6,11 @@
         <span>{{ $t("从已批准主配方生成控制配方，并跟踪执行到放行。") }}</span>
       </div>
       <div>
-        <el-button v-if="auth.can('Operator', 'Supervisor')" type="primary" :loading="openingCreate" @click="openCreate">{{ $t("从已批准配方创建") }}</el-button>
+        <el-button v-if="canCreate" type="primary" :loading="openingCreate" @click="openCreate">{{ $t("从已批准配方创建") }}</el-button>
+        <!-- 创建入口按职责分离只给主管/操作员（见 docs/auth-matrix.md：管理员不碰产线）。
+             但对管理员/质量来说，进来看不到任何按钮且无人解释，容易被当成"页面坏了"或"我权限丢了"。
+             这里给一句说明代替入口，说清"为什么没有"和"该找谁"——只读角色才看到，不打扰能创建的人。 -->
+        <span v-else class="readonly-hint">{{ $t("本页仅供查看；创建批次需要主管或操作员账号。") }}</span>
       </div>
     </div>
     <div class="filter-bar">
@@ -62,7 +66,9 @@
       @sort-change="onSortChange"
       @row-click="(row: BatchListItemDto) => $router.push(`/batches/${row.id}`)"
     >
-      <el-table-column prop="batchNo" :label="$t('批次号')" width="148" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
+      <!-- 批次号 16 位定长（实测 132px）。此前 148 只是勉强够，12px/600 字体回退或
+           C 前缀批次就露出省略号，和报警/物料两页观感不一致；统一到 176。 -->
+      <el-table-column prop="batchNo" :label="$t('批次号')" width="176" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="recipeName" :label="$t('控制配方')" min-width="112" sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="recipeVersion" :label="$t('版本')" width="76" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
@@ -71,7 +77,10 @@
         </template>
       </el-table-column>
       <el-table-column prop="equipmentCode" :label="$t('主设备')" width="96" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
-      <el-table-column prop="status" :label="$t('状态')" width="96" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
+      <!-- 状态列要容纳两种标签的最宽组合：批次状态「已创建」52px + 待检终样 64px + 4px 间隙 = 120px，
+           加 .cell 左右 padding 24 后需 144。此前 width=96 放不下 → flex-wrap 折成两行、格高 48px，
+           全表就这两行比别行高一倍，扫读节奏被打断。加宽到并排可容纳，行高恢复一致。 -->
+      <el-table-column prop="status" :label="$t('状态')" width="144" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">
           <div class="status-pills">
             <el-tag size="small" :type="batchStatusTagType(row.status)" effect="dark">{{ batchStatusLabel(row.status) }}</el-tag>
@@ -209,6 +218,8 @@ const initialLoading = ref(true);
 const loadError = ref("");
 const openingCreate = ref(false);
 const creating = ref(false);
+// 与模板里的创建按钮同一口径：只有主管/操作员能建批次（管理员不碰产线，见 docs/auth-matrix.md）。
+const canCreate = computed(() => auth.can("Operator", "Supervisor"));
 const query = ref("");
 // 轮询也必须走合并窗口：绕过 scheduleReload 会和事件驱动的重拉叠打出重复请求。
 const poll = usePolling(() => scheduleReload());
@@ -539,6 +550,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 只读角色在操作位上看到的说明文字。压 --muted、12px，与页头副标题同档，
+   让它读起来像"页面的补充说明"而不是警告条——这本身不是错误状态。 */
+.readonly-hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .unit-hint { color: var(--muted); font-size: 12px; margin-bottom: var(--space-2); line-height: 1.4; }
 .unit-bind { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .status-pills { display: flex; flex-wrap: wrap; gap: 4px; }

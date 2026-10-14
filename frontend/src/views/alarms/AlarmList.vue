@@ -50,7 +50,10 @@
       <el-table-column prop="raisedAt" :label="$t('时间')" width="180" fixed sortable="custom" :sort-orders="SERVER_DESC_FIRST">
         <template #default="{ row }">{{ formatDateTime(row.raisedAt) }}</template>
       </el-table-column>
-      <el-table-column prop="batchNo" :label="$t('批次')" width="160" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <!-- 批次号是 16 位定长大写串（实测 132px），此前 width=160 且未开省略，
+           内容区被 padding 吃掉 24px 后卡在临界，几乎每条都折成两行、行高不一。
+           统一为省略号 + 悬停看全，宽度按「16 位 + 内边距 + 余量」定死。 -->
+      <el-table-column prop="batchNo" :label="$t('批次')" width="184" sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="stepCode" :label="$t('工步')" width="92" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="code" :label="$t('代码')" width="140" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="severity" :label="$t('级别')" width="104" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
