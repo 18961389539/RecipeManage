@@ -194,10 +194,16 @@ public sealed class EquipmentService
 
         // 待放行的计数与最早创建时刻一趟查询拿齐：磁贴除了数字还要说"最久积压多久"，
         // 34 只会变大，老化时间才知道该不该急。
-        var pendingReleaseCreated = await _db.Batches.AsNoTracking()
+        var pendingRelease = await _db.Batches.AsNoTracking()
             .Where(b => b.Status == Domain.Batches.BatchStatus.Completed)
-            .Select(b => (DateTimeOffset?)b.CreatedAt)
-            .ToListAsync(ct);
+            .GroupBy(_ => true)
+            .Select(group => new
+            {
+                Count = group.Count(),
+                OldestCreatedAt = group.Min(b => b.CreatedAt)
+            })
+            .FirstOrDefaultAsync(ct);
+        var pendingReleaseCount = pendingRelease?.Count ?? 0;
 
         // 时间线只收"值得回头看一眼"的事件：故障/保持/质检/转阶段/跳步/归档/复位/确认。
         // 写参/触发/回读/等待每个工步都来一遍，放进来等于把信号重新埋回噪音里。
@@ -228,12 +234,12 @@ public sealed class EquipmentService
             await _db.ProcessAlarms.CountAsync(a => a.AcknowledgedAt == null, ct),
             items,
             occupancy,
-            pendingReleaseCreated.Count,
+            pendingReleaseCount,
             // 数批次而不是待判样品行：一个批次可能挂 2 个待判终样，磁贴写 2、点进去列表只有 1 条。
             // 谓词与 BatchService.ListAsync 的 onlyLabPending 共用 LabSampleQuery.PendingFinal。
             await _db.Batches.CountAsync(b => _db.LabSamples.PendingFinal().Any(s => s.BatchId == b.Id), ct),
             await _db.Batches.CountAsync(b => b.Status == Domain.Batches.BatchStatus.Held, ct),
-            pendingReleaseCreated.Count == 0 ? null : pendingReleaseCreated.Min(),
+            pendingRelease?.OldestCreatedAt,
             recentEvents);
     }
 

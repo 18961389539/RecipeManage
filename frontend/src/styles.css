@@ -25,13 +25,24 @@
 
   /* 图形与状态辅助色 */
   --accent-bright: #7eb6ff; /* 选中态文字，比 --accent 亮一档以保证小字可读 */
-  --idle: #6d81a6; /* 未激活连线、默认状态点：≥3:1 且能当 11px 小字用 */
+  /* 未激活连线、默认状态点、禁用文字、总览「空闲」行正文。
+     原 #6d81a6 在 --panel 上只有 4.42:1，而它实际当 14px 正文用（「空闲」行单元格），
+     需 ≥4.5:1；换成 --table-zebra 当斑马底后更降到 4.10:1。提亮到 #7b8fb5：
+     在 --panel / --table-zebra / --sunken 三种底色上分别 5.33 / 4.95 / 5.19:1，均达标。 */
+  --idle: #7b8fb5;
   --cool: #6ec8ff; /* 冷却类工步 / 图表次系列 */
   --violet: #c792ea; /* 加压、混合类工步 */
   /* 空格分隔：斜杠透明度写法（rgb(... / .35)）不接受逗号 */
   --accent-rgb: 61 139 253;
   --scrollbar: #2b364f;
   --scrollbar-hover: #3a4767;
+  --drawer-shadow: rgba(0, 0, 0, 0.5);
+  --drawer-mask: rgba(4, 8, 16, 0.6);
+  /* 表格斑马纹行底色。此前直接复用 --sunken(#0e1626) 当偶数行，但 --sunken 比 --panel
+     更暗、是"凹槽"语义，与"浮起一档"的 --raised 冲突；且 #0e1626 vs #121a2b 只有 1.04:1，
+     深色下肉眼等于纯平。改用 --raised 后与 panel / hover 形成 凹/中/亮 三级（各 ~1.07:1），
+     斑马纹可辨、悬停仍有变化，且不新增颜色令牌。 */
+  --table-zebra: #16203a;
 
   /* ===== 间距唯一数据源 =====
      此前同一语义（卡片堆叠、提示条下边距）在 8/10/12/16/18/20px 之间随机取值，
@@ -151,6 +162,110 @@ html.dark {
 
   --el-card-bg-color: var(--panel);
   --el-mask-color: rgba(4, 8, 16, 0.72);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f2f5fa;
+  --panel: #ffffff;
+  --line: #d5deea;
+  --text: #172234;
+  --muted: #56657a;
+  --accent: #245fc5;
+  --ok: #177647;
+  --warn: #965e00;
+  --err: #bd3737;
+
+  --sunken: #eaf0f7;
+  --raised: #f5f8fc;
+  --hover: #e9eff7;
+  --tint: #e2ebfa;
+  --text-body: #34445b;
+  --accent-bright: #1e54a5;
+  --idle: #5c6b82;
+  --cool: #13799b;
+  --violet: #7541a1;
+  --accent-rgb: 36 95 197;
+  --scrollbar: #bdc9d8;
+  --scrollbar-hover: #94a4b8;
+  --drawer-shadow: rgba(15, 23, 42, 0.2);
+  --drawer-mask: rgba(15, 23, 42, 0.28);
+  /* 与深色同构：斑马行在 panel(#ffffff) 与 hover(#e9eff7) 之间取一档，约 1.07:1。 */
+  --table-zebra: #f1f6fb;
+
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--accent) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--accent) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--accent) 30%, white);
+  --el-color-primary-light-8: color-mix(in srgb, var(--accent) 20%, white);
+  --el-color-primary-light-9: color-mix(in srgb, var(--accent) 10%, white);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--accent) 80%, black);
+
+  --el-color-success: var(--ok);
+  --el-color-success-light-3: color-mix(in srgb, var(--ok) 70%, white);
+  --el-color-success-light-5: color-mix(in srgb, var(--ok) 50%, white);
+  --el-color-success-light-7: color-mix(in srgb, var(--ok) 30%, white);
+  --el-color-success-light-8: color-mix(in srgb, var(--ok) 20%, white);
+  --el-color-success-light-9: color-mix(in srgb, var(--ok) 10%, white);
+  --el-color-success-dark-2: color-mix(in srgb, var(--ok) 80%, black);
+
+  --el-color-warning: var(--warn);
+  --el-color-warning-light-3: color-mix(in srgb, var(--warn) 70%, white);
+  --el-color-warning-light-5: color-mix(in srgb, var(--warn) 50%, white);
+  --el-color-warning-light-7: color-mix(in srgb, var(--warn) 30%, white);
+  --el-color-warning-light-8: color-mix(in srgb, var(--warn) 20%, white);
+  --el-color-warning-light-9: color-mix(in srgb, var(--warn) 10%, white);
+  --el-color-warning-dark-2: color-mix(in srgb, var(--warn) 80%, black);
+
+  --el-color-danger: var(--err);
+  --el-color-danger-light-3: color-mix(in srgb, var(--err) 70%, white);
+  --el-color-danger-light-5: color-mix(in srgb, var(--err) 50%, white);
+  --el-color-danger-light-7: color-mix(in srgb, var(--err) 30%, white);
+  --el-color-danger-light-8: color-mix(in srgb, var(--err) 20%, white);
+  --el-color-danger-light-9: color-mix(in srgb, var(--err) 10%, white);
+  --el-color-danger-dark-2: color-mix(in srgb, var(--err) 80%, black);
+  --el-color-error: var(--err);
+  --el-color-error-light-3: var(--el-color-danger-light-3);
+  --el-color-error-light-5: var(--el-color-danger-light-5);
+  --el-color-error-light-7: var(--el-color-danger-light-7);
+  --el-color-error-light-8: var(--el-color-danger-light-8);
+  --el-color-error-light-9: var(--el-color-danger-light-9);
+  --el-color-error-dark-2: var(--el-color-danger-dark-2);
+
+  --el-color-info: var(--muted);
+  --el-color-info-light-3: color-mix(in srgb, var(--muted) 70%, white);
+  --el-color-info-light-5: color-mix(in srgb, var(--muted) 50%, white);
+  --el-color-info-light-7: color-mix(in srgb, var(--muted) 30%, white);
+  --el-color-info-light-8: color-mix(in srgb, var(--muted) 20%, white);
+  --el-color-info-light-9: color-mix(in srgb, var(--muted) 10%, white);
+  --el-color-info-dark-2: color-mix(in srgb, var(--muted) 80%, black);
+
+  --el-bg-color: var(--panel);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--panel);
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-body);
+  --el-text-color-secondary: var(--muted);
+  --el-text-color-placeholder: #68778b;
+  --el-text-color-disabled: var(--idle);
+  --el-border-color: var(--line);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: color-mix(in srgb, var(--line) 72%, white);
+  --el-border-color-extra-light: color-mix(in srgb, var(--line) 48%, white);
+  --el-fill-color: var(--hover);
+  --el-fill-color-light: var(--raised);
+  --el-fill-color-lighter: var(--sunken);
+  --el-fill-color-blank: var(--panel);
+  --el-table-bg-color: var(--panel);
+  --el-table-tr-bg-color: var(--panel);
+  --el-table-header-bg-color: var(--raised);
+  --el-table-header-text-color: var(--text-body);
+  --el-table-text-color: var(--text-body);
+  --el-table-border-color: var(--line);
+  --el-table-row-hover-bg-color: var(--hover);
+  --el-card-bg-color: var(--panel);
+  --el-mask-color: rgba(23, 34, 52, 0.48);
 }
 
 /* 去掉浏览器默认标题外边距，统一垂直节奏（页标题 h2、KPI 数值 h1） */
@@ -416,7 +531,7 @@ body:has(.page-guide-dialog) .el-main { overflow: hidden; }
   white-space: nowrap;
   vertical-align: bottom;
 }
-.el-table__body tr:nth-child(even) > .el-table__cell { background: var(--sunken); }
+.el-table__body tr:nth-child(even) > .el-table__cell { background: var(--table-zebra); }
 /* 斑马纹与 hover 特异性相同，必须在其后显式重写 hover，否则偶数行悬停无反馈 */
 .el-table__body tr:hover > .el-table__cell { background: var(--el-table-row-hover-bg-color); }
 
@@ -436,7 +551,7 @@ body:has(.page-guide-dialog) .el-main { overflow: hidden; }
 ::-webkit-scrollbar-track { background: var(--sunken); }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
-html.dark { scrollbar-color: var(--scrollbar) var(--sunken); }
+html { scrollbar-color: var(--scrollbar) var(--sunken); }
 /* 表头 sticky 时也需要同样的滚动条观感 */
 .el-table__body-wrapper::-webkit-scrollbar { width: 10px; height: 10px; }
 
@@ -461,23 +576,23 @@ html.dark { scrollbar-color: var(--scrollbar) var(--sunken); }
 .help-tip-pop { max-width: 380px; line-height: 1.65; white-space: pre-line; }
 /* Vue Flow 自带 theme-default 是浅底白控件。设计器与只读画布共用这一套，
    避免 RecipeDesigner / ProcedureFlow 各写一遍 :deep。 */
-html.dark .vue-flow { background: var(--sunken); }
-html.dark .vue-flow__edge-path { stroke-width: 1.6; }
-html.dark .vue-flow__controls {
+.vue-flow { background: var(--sunken); }
+.vue-flow__edge-path { stroke-width: 1.6; }
+.vue-flow__controls {
   box-shadow: none;
   border: 1px solid var(--line);
   border-radius: 6px;
   overflow: hidden;
 }
-html.dark .vue-flow__controls-button {
+.vue-flow__controls-button {
   background: var(--raised);
   border-bottom: 1px solid var(--line);
   fill: var(--text-body);
 }
-html.dark .vue-flow__controls-button:last-child { border-bottom: 0; }
-html.dark .vue-flow__controls-button:hover { background: var(--hover); }
-html.dark .vue-flow__minimap { background: var(--panel); }
-html.dark .vue-flow__background { color: var(--line); }
+.vue-flow__controls-button:last-child { border-bottom: 0; }
+.vue-flow__controls-button:hover { background: var(--hover); }
+.vue-flow__minimap { background: var(--panel); }
+.vue-flow__background { color: var(--line); }
 
 .handshake-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); }
 .handshake-card {

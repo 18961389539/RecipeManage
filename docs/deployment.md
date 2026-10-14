@@ -243,3 +243,9 @@ taskkill /im RecipesManage.Api.exe /f             # 4) 一分钟内应被看门�
 
   手工路径保留为最后手段：必须清掉旧的 `-wal` / `-shm`——留着它们，SQLite 会把旧库的日志套到刚恢复的库上，轻则丢数据，重则打不开。
   **没演过的备份不算备份**：用 `-NoStart` 对一份拷贝做一遍也算演练。
+
+## 9. 外部审计锚（独立部署）
+
+审计锚接收端与签名私钥必须部署在 **BRMES 以外的机器与信任域**；BRMES 只上传两条审计流的 Merkle 根，不上传审计明文或数据库。它提供外部签名基线，不等于硬件 WORM，也不能证明首次锚定以前的历史从未被改写。
+
+接收端发布、Windows 服务、TLS、证书与 bearer token provisioning、轮换、恢复和验收步骤见 [`audit-anchor.md`](audit-anchor.md)。这项服务目前不包含在 BRMES 一体化安装程序中，必须单独发布和运维。

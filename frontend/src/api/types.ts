@@ -460,6 +460,25 @@ export interface BackupStatusDto {
   lastError?: string | null;
 }
 
+export interface AuditAnchorRunStatus {
+  enabled: boolean;
+  sourceId: string;
+  endpoint?: string | null;
+  scheduledAtUtc: string;
+  lastAttemptAtUtc?: string | null;
+  lastSuccessAtUtc?: string | null;
+  lastReceiptSequence?: number | null;
+  lastReceiptHash?: string | null;
+  signerKeyId?: string | null;
+  lastError?: string | null;
+}
+
+export interface AuditAnchorReceiptDto {
+  sequence: number;
+  receiptHash: string;
+  snapshotId: string;
+}
+
 /**
  * 一轮 SQLite 维护的结果。skippedReason 非空表示 VACUUM 没做以及为什么——
  * 那是安全判断（批次在跑、或空闲页不值得重写整个文件），不是错误。

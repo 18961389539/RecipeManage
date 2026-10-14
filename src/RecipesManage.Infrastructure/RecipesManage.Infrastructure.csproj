@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\RecipesManage.Application\RecipesManage.Application.csproj" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
@@ -6,7 +6,9 @@
             <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="1.5.377.21" />
     <PackageReference Include="QuestPDF" Version="2025.7.4" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <ProjectReference Include="..\RecipesManage.AuditAnchor.Protocol\RecipesManage.AuditAnchor.Protocol.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

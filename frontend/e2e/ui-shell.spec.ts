@@ -229,6 +229,43 @@ test.describe("界面语言", () => {
   });
 });
 
+test.describe("主题外观", () => {
+  test("支持键盘切换并在刷新后保留主题", async ({ page }) => {
+    await loginAs(page, "管理员");
+    const toggle = page.getByRole("button", { name: "切换主题" });
+    const root = page.locator("html");
+
+    await expect(root).toHaveAttribute("data-theme", "dark");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    const darkBackground = await root.evaluate(el => getComputedStyle(el).getPropertyValue("--bg").trim());
+    await page.getByRole("button", { name: "EN", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(toggle).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(root).toHaveAttribute("data-theme", "light");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    const lightBackground = await root.evaluate(el => getComputedStyle(el).getPropertyValue("--bg").trim());
+    expect(lightBackground).not.toBe(darkBackground);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("brmes.theme"))).toBe("light");
+
+    await page.reload();
+    await expect(root).toHaveAttribute("data-theme", "light");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await toggle.focus();
+    await page.keyboard.press("Space");
+    await expect(root).toHaveAttribute("data-theme", "dark");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("brmes.theme"))).toBe("dark");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const box = await toggle.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThanOrEqual(40);
+    expect(box!.height).toBeGreaterThanOrEqual(40);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  });
+});
+
 test.describe("列表交互约定", () => {
   test.beforeEach(async ({ page }) => { await loginAs(page, "管理员"); });
 
@@ -609,11 +646,38 @@ test.describe("取数口径要写在界面上（只读断言）", () => {
     }
     test.skip(!picked, "开发库当前没有带过程样本的批次");
     await page.goto(`/batches/${picked!.id}`);
-    await page.getByRole("tab", { name: /趋势/ }).click();
+    await page.getByRole("tab").filter({ hasText: "趋势" }).click();
     const note = page.locator(".trend-note");
     await expect(note).toBeVisible({ message: "取数口径必须注明" });
     await expect(note).toContainText(/样本/);
     await expect(note).not.toContainText("{0");
+  });
+
+  test("趋势默认不加载 ECharts，切换后才按需加载", async ({ page }) => {
+    await loginAs(page, "管理员");
+    const rows = await batchRows(page);
+    test.skip(!rows.length, "开发库当前没有可查看的批次");
+
+    const echartsModuleRequests: string[] = [];
+    page.on("request", request => {
+      if (request.url().includes("/utils/echarts.ts"))
+        echartsModuleRequests.push(request.url());
+    });
+
+    await page.goto("/batches");
+    const firstBatch = page.locator(".batch-table .el-table__body tr").first();
+    await expect(firstBatch).toBeVisible();
+    await firstBatch.click();
+    await expect(page.locator(".page-title")).toBeVisible();
+    await page.getByRole("tab").filter({ hasText: "趋势" }).click();
+    await expect(page.locator(".el-radio-button").filter({ hasText: "ECharts" })).toBeVisible();
+    expect(echartsModuleRequests).toHaveLength(0);
+
+    const moduleResponse = page.waitForResponse(response =>
+      response.url().includes("/utils/echarts.ts") && response.status() === 200);
+    await page.locator(".el-radio-button").filter({ hasText: "ECharts" }).click();
+    await moduleResponse;
+    expect(echartsModuleRequests.length).toBeGreaterThan(0);
   });
 
   test("备份卡片报出计划与留存量，缺备份时要喊出来", async ({ page }) => {

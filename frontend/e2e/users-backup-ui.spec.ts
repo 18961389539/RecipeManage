@@ -63,3 +63,44 @@ test("备份进行中禁用互斥操作，避免点击无反馈", async ({ page 
   await expect(card.getByRole("button", { name: "刷新" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "下载 SQLite" })).toBeDisabled();
 });
+
+test("管理员可确认手动外部锚定并看到签名回执", async ({ page }) => {
+  await loginAs(page, "管理员");
+  let posts = 0;
+  const status = {
+    enabled: true,
+    sourceId: "d2a4b3b1-b8aa-49d3-b481-20af4818cb10",
+    endpoint: "https://anchor.test/",
+    scheduledAtUtc: "02:45",
+    lastAttemptAtUtc: null,
+    lastSuccessAtUtc: null,
+    lastReceiptSequence: null,
+    lastReceiptHash: null,
+    signerKeyId: "test-key",
+    lastError: null
+  };
+  await page.route("**/system/audit-anchor", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(status) });
+      return;
+    }
+    posts += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sequence: 7, receiptHash: "a".repeat(64), snapshotId: "snapshot-7" })
+    });
+  });
+
+  await page.goto("/users");
+  const card = page.locator(".audit-anchor-card");
+  const anchorButton = card.getByRole("button", { name: "立即锚定" });
+  await expect(anchorButton).toBeEnabled();
+  await anchorButton.click();
+  const confirmation = page.getByRole("dialog", { name: "立即锚定" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "立即锚定" }).click();
+
+  await expect.poll(() => posts).toBe(1);
+  await expect(page.getByText("外部锚定成功，回执序号：7")).toBeVisible();
+});

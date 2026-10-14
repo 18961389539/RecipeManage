@@ -14,6 +14,7 @@
 const en: Record<string, string> = {
   // ---- 顶栏、侧栏与路由标题（router 是唯一名单，不另建第二份） ----
   "运行总览": "Overview",
+  "软件使用": "User guide",
   "主配方设计": "Master recipes",
   "多级审核": "Approvals",
   "审批链配置": "Approval chains",
@@ -24,6 +25,9 @@ const en: Record<string, string> = {
   "操作审计": "Audit trail",
   "用户与备份": "Users & backup",
   "快捷键": "Shortcuts",
+  "切换主题": "Toggle theme",
+  "切换到浅色主题": "Switch to light theme",
+  "切换到深色主题": "Switch to dark theme",
   "退出": "Sign out",
   "界面语言": "Language",
   "配方设计态": "Recipe design",
@@ -52,6 +56,7 @@ const en: Record<string, string> = {
 
   // ---- 设备表单 / 握手点表 ----
   "实时工艺趋势": "Live process trend",
+  "ECharts 图表加载失败，请检查网络后重试。": "Could not load the ECharts view. Check your connection and retry.",
   "核对地址": "Check addresses",
   "基本与超时": "Basics & timeouts",
   "编码": "Code",
@@ -1316,6 +1321,24 @@ const en: Record<string, string> = {
   // 每日自动备份（DatabaseBackup / DailyBackupHostedService）与备份卡片。
   "数据库每日备份": "Daily database backup",
   "立即备份一份": "Back up now",
+  "外部审计锚": "External audit anchor",
+  "自动锚定": "Automatic anchoring",
+  "外部审计锚定失败。": "External audit anchoring failed.",
+  "立即锚定": "Anchor now",
+  "最近一次外部锚定失败：{0}": "Last external anchoring attempt failed: {0}",
+  "尚未成功锚定；首次锚定仅建立当前数据基线，不证明更早历史未被改写。":
+    "No anchor has succeeded yet. The first anchor establishes a baseline only; it does not prove earlier history was not altered.",
+  "最近尝试": "Last attempt",
+  "最近成功": "Last success",
+  "回执序号": "Receipt sequence",
+  "签名密钥 ID": "Signing key ID",
+  "回执摘要": "Receipt hash",
+  "接收端": "Receiver",
+  "仅上传两条审计流的 Merkle 根，不上传明文；接收端与签名密钥必须部署在独立机器和信任域。":
+    "Only Merkle roots for the two audit streams are uploaded; no plaintext is sent. The receiver and signing key must live on a separate machine and trust domain.",
+  "立即扫描两条完整审计流并提交摘要清单；耗时随数据库大小增长。":
+    "Scan both complete audit streams and submit their digest manifest now. The operation takes longer as the database grows.",
+  "外部锚定成功，回执序号：{0}": "External anchor accepted; receipt sequence: {0}",
   "最近一次备份失败：{0}": "Last backup failed: {0}",
   "还没有落下任何一份备份。定时任务每天 {0} (UTC) 运行，也可以点上面的立即备份。": "No backup has landed yet. The scheduled job runs daily at {0} (UTC), or use \"Back up now\" above.",
   "自动备份": "Automatic backup",

@@ -14,17 +14,19 @@
     <div v-show="hasPoints() && chartKind === 'echarts'" ref="chartEl" class="trend-chart" />
     <div v-show="hasPoints() && chartKind === 'uplot'" ref="uplotEl" class="trend-chart" />
     <p v-if="!hasPoints()" class="none-note">{{ $t("本批次还没有过程样本（启动执行并进入工步后才开始采样）。") }}</p>
+    <p v-if="chartLoadError && chartKind === 'echarts'" class="trend-note">{{ $t("ECharts 图表加载失败，请检查网络后重试。") }}</p>
     <p v-if="note" class="trend-note">{{ note }}</p>
   </el-card>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import echarts, { type EChartsType } from "../utils/echarts";
+import type { EChartsType } from "../utils/echarts";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { signalLabel, signalUnit } from "../utils/labels";
 import { palette } from "../utils/theme";
+import { themeMode } from "../utils/themeMode";
 
 /**
  * 实时工艺趋势。两种渲染器并存是历史包袱也是取舍：ECharts 有 tooltip 与双轴，
@@ -44,6 +46,7 @@ const props = defineProps<{
 const chartEl = ref<HTMLDivElement | null>(null);
 const uplotEl = ref<HTMLDivElement | null>(null);
 const chartKind = ref<"echarts" | "uplot">("uplot");
+const chartLoadError = ref(false);
 /**
  * 有没有样本点。**必须是函数、不能用 computed**：`series` 是普通对象（高频 push 不走 Vue 响应式，
  * 见文件头说明），computed 没有可失效的依赖，会在首帧把 false 缓存住，之后样本到了也不更新。
@@ -54,14 +57,26 @@ function hasPoints(): boolean {
 }
 let chart: EChartsType | null = null;
 let plot: uPlot | null = null;
+let echartsModule: Promise<typeof import("../utils/echarts")> | null = null;
 
-function renderChart() {
+async function renderChart() {
   if (!props.active) return;
   if (chartKind.value === "uplot") {
     renderUplot();
     return;
   }
   if (!chartEl.value) return;
+  echartsModule ??= import("../utils/echarts");
+  let echarts: typeof import("../utils/echarts")["default"];
+  try {
+    ({ default: echarts } = await echartsModule);
+  } catch {
+    echartsModule = null;
+    chartLoadError.value = true;
+    return;
+  }
+  chartLoadError.value = false;
+  if (!props.active || chartKind.value !== "echarts" || !chartEl.value) return;
   chart ??= echarts.init(chartEl.value);
   const entries = Object.entries(props.series);
   // 温度约 530、压力约 1.01，同一条 y 轴上压力会被压成一条直线，必须分左右轴。
@@ -145,6 +160,7 @@ function onResize() {
 }
 
 watch(chartKind, () => refresh());
+watch(themeMode, () => refresh());
 watch(() => props.active, (on) => { if (on) refresh(); });
 onMounted(() => {
   window.addEventListener("resize", onResize);

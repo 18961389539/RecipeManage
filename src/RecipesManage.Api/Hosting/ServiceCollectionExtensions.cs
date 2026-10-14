@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -66,6 +66,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<MaintenanceSettings>()));
         services.AddSingleton<DailyBackupHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<DailyBackupHostedService>());
+        var auditAnchorSettings = AuditAnchorSettings.From(config, env.ContentRootPath, env.IsDevelopment());
+        services.AddSingleton(auditAnchorSettings);
+        services.AddHttpClient("AuditAnchor", client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddSingleton<AuditAnchorHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<AuditAnchorHostedService>());
         services.AddSignalR();
         services.AddBrmesPolicies();
         services.AddSingleton<IExecutionPublisher, SignalRExecutionPublisher>();

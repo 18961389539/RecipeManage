@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
 using RecipesManage.Application.Services;
 using RecipesManage.Domain.Batches;
 using RecipesManage.Domain.Identity;
@@ -117,5 +117,39 @@ public sealed class DashboardCountTests
         Assert.Equal([BatchStatus.Faulted, BatchStatus.Held, BatchStatus.Running],
             dash.LiveBatches.Select(b => b.Status).OrderBy(s => s.ToString(), StringComparer.Ordinal).ToList());
         Assert.DoesNotContain(dash.LiveBatches, b => b.Status == BatchStatus.Released);
+    }
+
+    [Fact]
+    public async Task PendingReleaseTileAggregatesCountAndOldestTimestampInDatabase()
+    {
+        await using var db = ServiceHarness.OpenDb();
+        var now = DateTimeOffset.UtcNow;
+        var pendingA = ServiceHarness.Batch("DREL-A");
+        var pendingB = ServiceHarness.Batch("DREL-B");
+        var released = ServiceHarness.Batch("DREL-C");
+        pendingA.Queue();
+        pendingA.MarkRunning(now);
+        pendingA.Complete(now);
+        pendingB.Queue();
+        pendingB.MarkRunning(now);
+        pendingB.Complete(now);
+        released.Queue();
+        released.MarkRunning(now);
+        released.Complete(now);
+        released.Release("qa", "已放行", now);
+        db.Batches.AddRange(pendingA, pendingB, released);
+        await db.SaveChangesAsync();
+
+        var dash = await Dashboard(db).DashboardAsync(CancellationToken.None);
+
+        Assert.Equal(2, dash.PendingReleaseBatches);
+        Assert.Equal(
+            new[] { pendingA.CreatedAt, pendingB.CreatedAt }.Min(),
+            dash.OldestPendingReleaseAt);
+
+        await using var emptyDb = ServiceHarness.OpenDb();
+        var emptyDash = await Dashboard(emptyDb).DashboardAsync(CancellationToken.None);
+        Assert.Equal(0, emptyDash.PendingReleaseBatches);
+        Assert.Null(emptyDash.OldestPendingReleaseAt);
     }
 }

@@ -1,6 +1,9 @@
-﻿<Solution>
+<Solution>
   <Folder Name="/src/">
     <Project Path="src/RecipesManage.Api/RecipesManage.Api.csproj" />
+    <Project Path="src/RecipesManage.AuditAnchor.Protocol/RecipesManage.AuditAnchor.Protocol.csproj" />
+    <Project Path="src/RecipesManage.AuditAnchor.Server/RecipesManage.AuditAnchor.Server.csproj" />
+    <Project Path="src/RecipesManage.AuditAnchor.Verify/RecipesManage.AuditAnchor.Verify.csproj" />
     <Project Path="src/RecipesManage.Application/RecipesManage.Application.csproj" />
     <Project Path="src/RecipesManage.Domain/RecipesManage.Domain.csproj" />
     <Project Path="src/RecipesManage.Execution/RecipesManage.Execution.csproj" />
@@ -9,6 +12,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RecipesManage.Api.Tests/RecipesManage.Api.Tests.csproj" />
+    <Project Path="tests/RecipesManage.AuditAnchor.Tests/RecipesManage.AuditAnchor.Tests.csproj" />
     <Project Path="tests/RecipesManage.Contracts.Tests/RecipesManage.Contracts.Tests.csproj" />
     <Project Path="tests/RecipesManage.Domain.Tests/RecipesManage.Domain.Tests.csproj" />
     <Project Path="tests/RecipesManage.Execution.Tests/RecipesManage.Execution.Tests.csproj" />

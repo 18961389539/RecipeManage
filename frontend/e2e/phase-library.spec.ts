@@ -83,3 +83,31 @@ test("admin equipment list shows ISA-88 class codes", async ({ page }) => {
   const ua01 = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "UA-01", exact: true }) });
   await expect(ua01.getByRole("cell", { name: "GENERIC", exact: true })).toBeVisible();
 });
+
+test("simulation-fault action is only shown for Simulator equipment", async ({ page }) => {
+  await loginAs(page, "工艺主管");
+  await page.goto("/equipment");
+
+  const simulator = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "HT-01", exact: true }) });
+  const opcUa = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "UA-01", exact: true }) });
+  await expect(simulator.getByRole("button", { name: "仿真故障" })).toBeVisible();
+  await expect(opcUa.getByRole("button", { name: "仿真故障" })).toHaveCount(0);
+});
+
+test("equipment page guide explains point-map and template boundaries in both languages", async ({ page }) => {
+  await loginAs(page, "管理员");
+  await page.goto("/equipment");
+  await page.getByRole("button", { name: "本页说明" }).click();
+
+  const zhGuide = page.getByRole("dialog", { name: "设备与 PLC 驱动说明" });
+  await expect(zhGuide).toContainText("编辑或删除模板不会回写已保存工步");
+  await expect(zhGuide).toContainText("PLC_Ready");
+  await expect(zhGuide).toContainText("开批校验会拦截");
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await page.getByRole("button", { name: "Page guide" }).click();
+  const enGuide = page.getByRole("dialog", { name: "Equipment and PLC guide" });
+  await expect(enGuide).toContainText("do not automatically update saved steps");
+  await expect(enGuide).toContainText("batch-start validation will block it");
+});

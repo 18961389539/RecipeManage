@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 import type { Component } from "vue";
 import { ElMessage } from "element-plus";
-import { Bell, Box, EditPen, List, Monitor, Odometer, SetUp, Stamp, User, View } from "@element-plus/icons-vue";
+import { Bell, Box, EditPen, List, Monitor, Odometer, Reading, SetUp, Stamp, User, View } from "@element-plus/icons-vue";
 import { useAuthStore } from "../stores/auth";
 import type { UserRole } from "../api/types";
 import { userRoleLabel } from "../utils/labels";
@@ -27,6 +27,8 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: "", redirect: "/dashboard" },
       { path: "dashboard", meta: { title: "运行总览", realtime: true, nav: { label: "运行总览", icon: Odometer } }, component: () => import("../views/Dashboard.vue") },
+      { path: "help", meta: { title: "软件使用", nav: { label: "软件使用", icon: Reading } }, component: () => import("../views/HelpCenter.vue") },
+      { path: "help/:articleId", meta: { title: "软件使用" }, component: () => import("../views/HelpCenter.vue") },
       { path: "recipes", meta: { title: "配方设计态", nav: { label: "主配方设计", icon: EditPen } }, component: () => import("../views/recipes/RecipeList.vue") },
       { path: "recipes/:id", meta: { title: "配方设计" }, component: () => import("../views/recipes/RecipeDesigner.vue") },
       {

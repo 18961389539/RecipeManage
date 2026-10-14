@@ -123,6 +123,8 @@
 | PUT | `/api/recipes/{id:guid}/procedure` | `recipe.author` | 工艺工程师 |
 | POST | `/api/recipes/{id:guid}/reopen` | `recipe.author` | 工艺工程师 |
 | POST | `/api/recipes/{id:guid}/submit` | `recipe.author` | 工艺工程师 |
+| GET | `/api/system/audit-anchor` | `admin` | 管理员 |
+| POST | `/api/system/audit-anchor` | `admin` | 管理员 |
 | GET | `/api/system/backups` | `admin` | 管理员 |
 | POST | `/api/system/backups` | `admin` | 管理员 |
 | POST | `/api/system/maintenance` | `admin` | 管理员 |

@@ -7,7 +7,7 @@
       </div>
       <div>
         <!-- 配方包入口在配方列表页：后端 ExportAsync/ImportAsync 都不放行 Admin，在这页点了必然 403。 -->
-        <el-button :loading="busy === 'db'" :disabled="!!busy || backupLoading" @click="downloadDb">{{ $t("下载 SQLite") }}</el-button>
+        <el-button :loading="busy === 'db'" :disabled="!!busy || backupLoading || anchorLoading" @click="downloadDb">{{ $t("下载 SQLite") }}</el-button>
         <el-button type="primary" @click="openCreate">{{ $t("新建用户") }}</el-button>
       </div>
     </div>
@@ -65,9 +65,9 @@
         <div class="backup-head">
           <span>{{ $t("数据库每日备份") }}</span>
           <div>
-            <el-button size="small" :loading="busy === 'backup'" :disabled="!!busy || backupLoading" @click="runBackup">{{ $t("立即备份一份") }}</el-button>
-            <el-button size="small" :loading="busy === 'maint'" :disabled="!!busy || backupLoading" @click="runMaintenance">{{ $t("立即维护") }}</el-button>
-            <el-button size="small" :loading="backupLoading" :disabled="!!busy || backupLoading" @click="loadBackupStatus">{{ $t("刷新") }}</el-button>
+            <el-button size="small" :loading="busy === 'backup'" :disabled="!!busy || backupLoading || anchorLoading" @click="runBackup">{{ $t("立即备份一份") }}</el-button>
+            <el-button size="small" :loading="busy === 'maint'" :disabled="!!busy || backupLoading || anchorLoading" @click="runMaintenance">{{ $t("立即维护") }}</el-button>
+            <el-button size="small" :loading="backupLoading" :disabled="!!busy || backupLoading || anchorLoading" @click="loadBackupStatus">{{ $t("刷新") }}</el-button>
           </div>
         </div>
       </template>
@@ -101,6 +101,39 @@
       <p class="backup-note">{{ $t("备份只留在服务器本机，超出保留份数的旧快照会被删掉；每次成功与失败都写进操作审计。") }}</p>
     </el-card>
 
+    <el-card shadow="never" class="gap-before audit-anchor-card" v-loading="anchorLoading">
+      <template #header>
+        <div class="backup-head">
+          <span>{{ $t("外部审计锚") }}</span>
+          <div>
+            <el-button size="small" :loading="busy === 'anchor'" :disabled="!!busy || backupLoading || anchorLoading || !anchor?.enabled" @click="runAuditAnchor">{{ $t("立即锚定") }}</el-button>
+            <el-button size="small" :loading="anchorLoading" :disabled="!!busy || backupLoading || anchorLoading" @click="loadAuditAnchorStatus">{{ $t("刷新") }}</el-button>
+          </div>
+        </div>
+      </template>
+      <el-alert v-if="anchor?.lastError" class="gap-after" :closable="false" type="error" show-icon
+        :title="$t('最近一次外部锚定失败：{0}', [anchor.lastError])"
+      />
+      <el-alert v-else-if="anchor?.enabled && !anchor.lastSuccessAtUtc" class="gap-after" :closable="false" type="warning" show-icon
+        :title="$t('尚未成功锚定；首次锚定仅建立当前数据基线，不证明更早历史未被改写。')"
+      />
+      <el-descriptions :column="isMobile ? 1 : 2" size="small" border>
+        <el-descriptions-item :label="$t('自动锚定')">
+          <el-tag size="small" :type="anchor?.enabled ? 'success' : 'info'" effect="plain">
+            {{ anchor?.enabled ? $t("已启用") : $t("已停用") }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('每天 (UTC)')">{{ anchor?.scheduledAtUtc ?? "—" }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('最近尝试')">{{ anchor?.lastAttemptAtUtc ? formatDateTime(anchor.lastAttemptAtUtc) : "—" }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('最近成功')">{{ anchor?.lastSuccessAtUtc ? formatDateTime(anchor.lastSuccessAtUtc) : "—" }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('回执序号')">{{ anchor?.lastReceiptSequence ?? "—" }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('签名密钥 ID')"><code>{{ anchor?.signerKeyId ?? "—" }}</code></el-descriptions-item>
+        <el-descriptions-item :label="$t('回执摘要')" :span="2"><code>{{ anchor?.lastReceiptHash ?? "—" }}</code></el-descriptions-item>
+        <el-descriptions-item :label="$t('接收端')" :span="2"><code>{{ anchor?.endpoint ?? "—" }}</code></el-descriptions-item>
+      </el-descriptions>
+      <p class="backup-note">{{ $t("仅上传两条审计流的 Merkle 根，不上传明文；接收端与签名密钥必须部署在独立机器和信任域。") }}</p>
+    </el-card>
+
     <el-dialog v-model="visible" :title="form.id ? $t('编辑用户') : $t('新建用户')" width="460px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px" @submit.prevent="save">
         <el-form-item :label="$t('登录名')" prop="userName"><el-input v-model="form.userName" :disabled="!!form.id" /></el-form-item>
@@ -131,10 +164,10 @@
 <script setup lang="ts">
 import { t } from "../../i18n";
 import { computed, nextTick, onMounted, reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import http from "../../api/http";
-import type { BackupFileDto, BackupStatusDto, MaintenanceResultDto, UserDto, UserRole } from "../../api/types";
+import type { AuditAnchorReceiptDto, AuditAnchorRunStatus, BackupFileDto, BackupStatusDto, MaintenanceResultDto, UserDto, UserRole } from "../../api/types";
 import { userRoleLabel, userRoleOrder, esignMeaning } from "../../utils/labels";
 import { esignPassword } from "../../utils/esign";
 import { formatDateTime, formatFileDate, matchesQuery } from "../../utils/format";
@@ -152,6 +185,8 @@ const { loading, error, run } = useLoad();
 const visible = ref(false);
 const backup = ref<BackupStatusDto | null>(null);
 const backupLoading = ref(false);
+const anchor = ref<AuditAnchorRunStatus | null>(null);
+const anchorLoading = ref(false);
 
 /** 排序口径见 utils/tableSort；角色按新建用户下拉里的次序分组。 */
 const sorters = {
@@ -230,6 +265,44 @@ async function loadBackupStatus() {
     ElMessage.error((e as Error).message);
   } finally {
     backupLoading.value = false;
+  }
+}
+
+async function loadAuditAnchorStatus() {
+  anchorLoading.value = true;
+  try {
+    anchor.value = (await http.get<AuditAnchorRunStatus>("/system/audit-anchor")).data;
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    anchorLoading.value = false;
+  }
+}
+
+async function runAuditAnchor() {
+  if (busy.value || backupLoading.value || anchorLoading.value || !anchor.value?.enabled) return;
+  busy.value = "anchor";
+  try {
+    await ElMessageBox.confirm(
+      t("立即扫描两条完整审计流并提交摘要清单；耗时随数据库大小增长。"),
+      t("立即锚定"),
+      { type: "warning", confirmButtonText: t("立即锚定"), cancelButtonText: t("取消") }
+    );
+  } catch (reason) {
+    busy.value = "";
+    if (reason !== "cancel" && reason !== "close")
+      ElMessage.error((reason as Error)?.message ?? t("外部审计锚定失败。"));
+    return;
+  }
+  try {
+    const { data } = await http.post<AuditAnchorReceiptDto>("/system/audit-anchor");
+    ElMessage.success(t("外部锚定成功，回执序号：{0}", data.sequence));
+    await loadAuditAnchorStatus();
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+    await loadAuditAnchorStatus();
+  } finally {
+    busy.value = "";
   }
 }
 
@@ -365,6 +438,7 @@ async function readError(e: unknown): Promise<string> {
 onMounted(() => {
   void load();
   void loadBackupStatus();
+  void loadAuditAnchorStatus();
 });
 </script>
 
@@ -373,8 +447,9 @@ onMounted(() => {
 .backup-head > div { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .backup-head > div :deep(.el-button + .el-button) { margin-left: 0; }
 .backup-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
-.backup-card :deep(.el-descriptions) { margin-bottom: var(--space-3); }
-.backup-card :deep(.el-descriptions__content), .backup-card :deep(code) { overflow-wrap: anywhere; }
+.backup-card :deep(.el-descriptions), .audit-anchor-card :deep(.el-descriptions) { margin-bottom: var(--space-3); }
+.backup-card :deep(.el-descriptions__content), .backup-card :deep(code),
+.audit-anchor-card :deep(.el-descriptions__content), .audit-anchor-card :deep(code) { overflow-wrap: anywhere; }
 .users-table :deep(.el-tag) { min-width: 42px; justify-content: center; }
 /* 开关旁的后果说明：次要色小字，与表单标签同一行不抢焦点 */
 .form-hint { margin-left: var(--space-2); color: var(--muted); font-size: 12px; }

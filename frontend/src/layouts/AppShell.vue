@@ -66,6 +66,19 @@
               {{ locale === "en" ? "中文" : "EN" }}
             </el-button>
           </HelpTip>
+          <el-button
+            class="theme-toggle"
+            link
+            :aria-label="$t('切换主题')"
+            :aria-pressed="themeMode === 'dark'"
+            :title="$t(themeMode === 'dark' ? '切换到浅色主题' : '切换到深色主题')"
+            @click="toggleTheme"
+          >
+            <el-icon aria-hidden="true">
+              <Sunny v-if="themeMode === 'dark'" />
+              <Moon v-else />
+            </el-icon>
+          </el-button>
           <HelpTip term="快捷键" chord="?" plain placement="bottom-end">
             <el-button link type="primary" @click="shortcutHelpOpen = true">
               {{ $t("快捷键") }} <kbd class="shortcut-key">?</kbd>
@@ -84,6 +97,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
+import { Moon, Sunny } from "@element-plus/icons-vue";
 import { menuItems } from "../router";
 import { currentLocale, setLocale, t } from "../i18n";
 import type { AppLocale } from "../i18n";
@@ -92,6 +106,7 @@ import { useAlarmBadgeStore } from "../stores/alarms";
 import { stopExecutionHub } from "../realtime/executionHub";
 import { userRoleLabel } from "../utils/labels";
 import { useIsMobile } from "../utils/useMedia";
+import { themeMode, toggleTheme } from "../utils/themeMode";
 import { shortcutHelpOpen } from "../shortcuts/state";
 import HelpTip from "../components/HelpTip.vue";
 import RealtimeStatus from "../components/RealtimeStatus.vue";
@@ -252,10 +267,10 @@ async function logout() {
     max-width: 82vw; width: 232px;
     transform: translateX(-100%);
     transition: transform 0.22s ease;
-    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.5);
+    box-shadow: 4px 0 18px var(--drawer-shadow);
   }
   .aside.drawer-open { transform: translateX(0); }
-  .drawer-mask { position: fixed; inset: 0; z-index: 2300; background: rgba(4, 8, 16, 0.6); }
+  .drawer-mask { position: fixed; inset: 0; z-index: 2300; background: var(--drawer-mask); }
   .header { padding: 0 var(--space-3); }
   .menu-btn { font-size: 20px; color: var(--text-body); }
   .user { gap: 6px; }
@@ -268,6 +283,7 @@ async function logout() {
    只改命中范围与对齐，不改字形大小。 */
 .header .el-button.is-link,
 .brand-row .el-button.is-link { min-width: 24px; min-height: 24px; }
+.header .el-button.is-link.theme-toggle { min-width: 40px; min-height: 40px; padding: 0; }
 @media (max-width: 1100px) {
   .user-name { display: none; }
 }

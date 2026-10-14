@@ -227,7 +227,7 @@ const injectModes = computed(() => [
 ]);
 /** 只有环回/仿真驱动能被注入故障，真实 PLC 上这个菜单必须不出现。 */
 function faultInjectable(row: EquipmentDto) {
-  return ["Simulator", "ModbusTcp", "OpcUa", "SiemensS7"].includes(row.protocol);
+  return row.protocol === "Simulator";
 }
 
 // 轮询也必须走合并窗口：绕过 scheduleReload 会和事件驱动的重拉叠打出重复请求。

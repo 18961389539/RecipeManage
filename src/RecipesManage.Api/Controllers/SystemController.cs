@@ -1,8 +1,10 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RecipesManage.Application.Contracts;
 using RecipesManage.Application.Dtos;
 using RecipesManage.Infrastructure.Persistence;
+using RecipesManage.AuditAnchor.Protocol;
 
 namespace RecipesManage.Api.Controllers;
 
@@ -19,10 +21,33 @@ namespace RecipesManage.Api.Controllers;
 public sealed class SystemController(
     DatabaseBackup backup,
     DailyBackupHostedService runner,
+    AuditAnchorHostedService auditAnchor,
     ICurrentUser user) : ControllerBase
 {
     [HttpGet("backups")]
     public BackupStatusDto Status() => Build(DateTimeOffset.UtcNow);
+
+    [HttpGet("audit-anchor")]
+    public AuditAnchorRunStatus AuditAnchorStatus() => auditAnchor.Status();
+
+    /// <summary>立即生成并提交一份完整审计快照，便于首次启用或故障恢复后补锚。</summary>
+    [HttpPost("audit-anchor")]
+    public async Task<ActionResult<AuditAnchorReceipt>> RunAuditAnchorNow(CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await auditAnchor.RunOnceAsync(ct));
+        }
+        catch (InvalidOperationException e)
+        {
+            return Conflict(new { code = "AUDIT_ANCHOR_DISABLED", message = e.Message });
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or CryptographicException or InvalidDataException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { code = "AUDIT_ANCHOR_FAILED", message = e.Message });
+        }
+    }
 
     /// <summary>手工落一份：定时任务没跑起来（或者刚换过磁盘）时，管理员要能当场补一份并看到结果。</summary>
     [HttpPost("backups")]

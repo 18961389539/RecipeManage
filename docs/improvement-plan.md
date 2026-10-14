@@ -267,7 +267,9 @@
 
 随后增加 SQLite `signature_records` 更新 / 删除触发器：应用数据库拒绝改写或移除已落库签名，同时允许追加新签名；迁移回归以原始 SQL 验证拒绝行为。此为纵深防护，不是管理员级不可篡改机制。
 
-**仍未完成**：数据库所有者可直接移除触发器，也可同时改业务数据、摘要和触发器，因此仍需要独立信任域的外部信任锚（例如带签名的定期审计根哈希导出到只追加存储或独立服务），才能覆盖 DBA 威胁模型。
+**软件实现已完成（2026-10-05）**：新增 `RecipesManage.AuditAnchor.Protocol`、异机 `RecipesManage.AuditAnchor.Server` 和离线 `RecipesManage.AuditAnchor.Verify`。BRMES 在同一 SQLite 读事务中分别计算 `audit_logs` / `signature_records` 的全表 Merkle 根，只向异机服务发送摘要清单；接收端在独立证书私钥下签署带序号及前序摘要的回执，并以 SQLite ledger + update/delete 触发器提供追加式写路径。管理员可查看状态、手动提交；离线工具支持多页导出、跨证书轮换验签、链连续性和独立 checkpoint 比对，分页水位 `throughSequence` 防止导出过程中混入新回执。`AuditAnchorTests` 覆盖客户端 SQLite 快照、签名/篡改、幂等/冲突、append-only 触发器、缺页、跨密钥轮换和 checkpoint。
+
+**现场部署仍待完成**：接收端须实际部署到另一台机器，并由独立管理员配置 TLS、回执证书私钥 ACL、bearer token、备份及独立 checkpoint 保管；BRMES 默认仍关闭，部署步骤见 `docs/audit-anchor.md`。SQLite 触发器不是硬件 WORM，接收端数据库管理员仍可替换或回滚 ledger；需通过独立保留的序号/回执摘要发现回滚，若威胁模型包含接收端主机管理员，还应采用独立控制的 WORM/Object Lock 或第三方透明日志。
 
 ---
 

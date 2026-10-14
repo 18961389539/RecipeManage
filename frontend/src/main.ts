@@ -14,9 +14,10 @@ import router from "./router";
 import { i18n, t } from "./i18n";
 import { reportSessionExpired } from "./api/http";
 import { useAuthStore } from "./stores/auth";
+import { applyTheme, themeMode } from "./utils/themeMode";
 import "./styles.css";
 
-document.documentElement.classList.add("dark");
+applyTheme(themeMode.value);
 
 const app = createApp(App);
 app.use(createPinia());
