@@ -9,7 +9,8 @@
       </template>
     </el-table-column>
     <el-table-column prop="materialCode" :label="$t('物料')" width="110" />
-    <el-table-column prop="quantity" :label="$t('数量')" width="90" />
+    <!-- 数值列右对齐，便于纵向比位（与物料批列表同一口径）。 -->
+    <el-table-column prop="quantity" :label="$t('数量')" width="90" align="right" />
   </el-table>
   <p v-else class="none-note">{{ $t("本批次未绑定物料谱系（快照仍可仅有 LotNumber 字符串）。") }}</p>
 </template>

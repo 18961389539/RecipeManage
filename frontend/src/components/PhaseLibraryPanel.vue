@@ -21,7 +21,7 @@
           <el-table-column :label="$t('执行类')" width="88">
             <template #default="{ row }">{{ executionKindLabel(executionKind(row.stepType)) }}</template>
           </el-table-column>
-          <el-table-column :label="$t('程序号')" width="88">
+          <el-table-column :label="$t('程序号')" width="88" align="right">
             <template #header><HelpTip term="程序号" /></template>
             <template #default="{ row }">{{ templateProgram(row) }}</template>
           </el-table-column>
