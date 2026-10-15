@@ -182,6 +182,8 @@ const en: Record<string, string> = {
   "配方、批次、设备与账号的关键操作留痕，可按实体还原一次闭环。":
     "Key operations on recipes, batches, equipment and accounts, reconstructable per entity.",
   "刷新": "Refresh",
+  "重新加载": "Reload",
+  "表单里有未保存的修改，关闭将丢失这些修改。": "This form has unsaved changes; closing will discard them.",
   "搜索用户 / 动作 / 详情": "Search user / action / detail",
   "全部实体": "All entities",
   "主配方": "Master recipe",
@@ -201,6 +203,7 @@ const en: Record<string, string> = {
     "Generate a control recipe from an approved master recipe and follow it through to release.",
   "从已批准配方创建": "Create from approved recipe",
   "本页仅供查看；创建批次需要主管或操作员账号。": "This page is read-only; creating batches requires a supervisor or operator account.",
+  "本页仅供查看；新建与导入配方需要工艺工程师账号。": "This page is read-only; creating and importing recipes requires a process engineer account.",
   "搜索批次号 / 配方 / 设备": "Search batch no. / recipe / equipment",
   "已创建": "Created",
   "排队": "Queued",
@@ -608,6 +611,7 @@ const en: Record<string, string> = {
   "待签署": "Awaiting signature",
   "已通过": "Approved",
   "已驳回": "Rejected",
+  "已电子签名通过": "Approved with e-signature",
   // 报警与样品
   "提示": "Info",
   "警告": "Warning",
@@ -1121,6 +1125,7 @@ const en: Record<string, string> = {
   "物料批次加载失败：{0}": "Failed to load material lots: {0}",
   "没有匹配的物料批": "No matching lots",
   "暂无物料批次": "No material lots yet",
+  "还没有物料批：登记每一批来料后，它才能在「批次执行」里被选作投料并随时拆分。": "No material lots yet: register each incoming lot and it can then be selected for charging (and split at will) under Batches.",
   "物料批次号已存在，请换一个。": "That lot number already exists; use another.",
   "请填写物料批次号。": "Enter the lot number.",
   "请填写物料编码。": "Enter the material code.",
@@ -1140,6 +1145,8 @@ const en: Record<string, string> = {
   "配方列表加载失败：{0}": "Failed to load recipes: {0}",
   "没有匹配的主配方": "No matching master recipes",
   "暂无主配方": "No master recipes yet",
+  "还没有主配方：点右上角「新建配方」建一份，把工步与参数编好、提交审核，批准后才能在「批次执行」创建生产批次。": "No master recipes yet: click New recipe at the top right, build the steps and parameters, then submit for review — only once approved can a production batch be created under Batches.",
+  "还没有主配方。配方由工艺工程师创建并提交审核；批准后你可以在「批次执行」里用它创建生产批次。": "No master recipes yet. Recipes are created and submitted for review by a process engineer; once approved you can use one to create a production batch under Batches.",
   "当前筛选条件下没有配方": "No recipes under the current filter",
   "配方编码已存在，请换一个。": "That recipe code already exists; use another.",
   "请填写配方编码。": "Enter the recipe code.",
@@ -1360,6 +1367,9 @@ const en: Record<string, string> = {
   "数据库维护": "Database maintenance",
   // 手工维护：没做 VACUUM 是安全判断，界面要按这个口径说话。
   "立即维护": "Maintain now",
+  "重算查询统计；空闲页足够多时会重写整个数据库文件，可能耗时较久。有批次在运行／排队／保持时会自动跳过重写，只更新统计。":
+    "Recomputes query statistics; when there are enough free pages it rewrites the whole database file, which can take a while. If a batch is running/queued/held, the rewrite is skipped automatically and only statistics are updated.",
+  "开始维护": "Start maintenance",
   "已更新统计信息，VACUUM 回收 {0}。": "Statistics refreshed; VACUUM reclaimed {0}.",
   "已更新统计信息；本轮未做 VACUUM（{0}）。": "Statistics refreshed; no VACUUM this round ({0}).",
   // 运行总览的失败态：「不知道」必须和"确认是零"长得不一样，文案两侧都得说清这件事。
