@@ -1,4 +1,4 @@
-import { onScopeDispose, ref, watch, type Ref } from "vue";
+import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 import { serverSort } from "./tableSort";
 
 /**
@@ -17,17 +17,23 @@ export function useServerPaging(options: {
   defaultDir?: "asc" | "desc";
   take?: number;
   search?: Ref<string>;
+  /** 上次离开时的排序键与方向（见 useListState）。给了就用它当起点，表格首帧即按它画箭头。 */
+  initialSort?: string;
+  initialOrder?: "asc" | "desc";
 }) {
   const take = options.take ?? 50;
   const dir = options.defaultDir ?? "desc";
   const total = ref(0);
   const page = ref(1);
-  const sort = ref(options.defaultSort);
-  const order = ref<"asc" | "desc">(dir);
-  const defaultSort = {
-    prop: options.defaultSort,
-    order: dir === "asc" ? ("ascending" as const) : ("descending" as const)
-  };
+  const sort = ref(options.initialSort || options.defaultSort);
+  const order = ref<"asc" | "desc">(options.initialOrder || dir);
+  // 必须跟着 sort / order 走，而不是钉在初始值上：列表页恢复上次的排序（见 useListState）时
+  // 会改 sort.value，若这里是静态对象，表格仍按初始列画排序箭头，与数据实际排序不一致——
+  // 表现为「返回后页码回来了、排序却退回默认」。computed 让箭头与实际排序始终同源。
+  const defaultSort = computed(() => ({
+    prop: sort.value,
+    order: (order.value === "asc" ? "ascending" : "descending") as "ascending" | "descending"
+  }));
 
   function onPageChange(next: number) {
     page.value = next;
