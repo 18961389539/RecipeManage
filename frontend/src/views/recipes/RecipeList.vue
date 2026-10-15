@@ -10,6 +10,11 @@
         <el-button v-if="auth.can('ProcessEngineer')" :loading="busy === 'import'" @click="pickImport">{{ $t("导入 JSON") }}</el-button>
         <input ref="importInput" type="file" accept="application/json,.json" hidden @change="importPkg" />
         <el-button v-if="auth.can('ProcessEngineer')" type="primary" @click="openCreate">{{ $t("新建配方") }}</el-button>
+        <!-- 创建/导入只给工艺工程师、导出还要加主管与质量（见 docs/auth-matrix.md 的 recipe.author /
+             recipe.export）。管理员与操作员进这页一个按钮都没有：列表里 50 条配方看着完全正常、
+             点进去也能读，却无人说明"我能做什么"，容易被当成权限丢失或页面没加载完。
+             与批次页同一处理——只读角色看到一句说明，讲清"只能看"和"该找谁"。 -->
+        <span v-else-if="!auth.can('Quality', 'Supervisor')" class="readonly-hint">{{ $t("本页仅供查看；新建与导入配方需要工艺工程师账号。") }}</span>
       </div>
     </div>
     <div class="filter-bar">
@@ -25,14 +30,16 @@
         <el-radio-button value="Rejected">{{ $t("驳回") }}</el-radio-button>
       </el-radio-group>
     </div>
-    <el-alert class="gap-after"
-      v-if="error"
-      :closable="false"
-      type="error"
-      :title="$t('配方列表加载失败：{0}', [error])"
-      show-icon
-     
-    />
+    <!-- 本页没有轮询，取数一旦失败就会一直停在错误态；没这个按钮用户只能刷新整个浏览器
+         （或干脆以为页面坏了）。与审计页同一写法：就地重发当前列表请求。 -->
+    <el-alert class="gap-after" v-if="error" :closable="false" type="error" show-icon>
+      <template #title>
+        <span class="alert-title-row">
+          {{ $t("配方列表加载失败：{0}", [error]) }}
+          <el-button link type="danger" :loading="loading" @click="load">{{ $t("重新加载") }}</el-button>
+        </span>
+      </template>
+    </el-alert>
     <el-table
       ref="tableRef"
       :data="shown"
@@ -72,7 +79,19 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-dialog v-model="createVisible" :title="$t('新建主配方')" width="480px">
+    <!-- 空库时给新装机指路：主配方是整条线的起点——没有配方，批次、工步、设定矩阵都无从谈起。
+         比"暂无主配方"四个字有用得多。取数失败 / 正在筛选时不出现（那时"还没有配方"是假信息）。
+         注意用两个独立调用而不是在调用里做三元选择：覆盖率棘轮只认紧跟左括号的字面量，
+         运行时选键会让两个分支**都进不了统计**（漏译也不报警），实测命中数为零。 -->
+    <div v-if="!loading && !error && !items.length && !query.trim() && filter === 'all'" class="muted gap-before">
+      <template v-if="auth.can('ProcessEngineer')">
+        {{ $t("还没有主配方：点右上角「新建配方」建一份，把工步与参数编好、提交审核，批准后才能在「批次执行」创建生产批次。") }}
+      </template>
+      <template v-else>
+        {{ $t("还没有主配方。配方由工艺工程师创建并提交审核；批准后你可以在「批次执行」里用它创建生产批次。") }}
+      </template>
+    </div>
+    <el-dialog v-model="createVisible" :title="$t('新建主配方')" width="480px" :before-close="guardClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px" @submit.prevent="create">
         <el-form-item :label="$t('编码')" prop="code"><el-input v-model="form.code" :placeholder="$t('如 AL-HT-01')" /></el-form-item>
         <el-form-item :label="$t('名称')" prop="name"><el-input v-model="form.name" /></el-form-item>
@@ -98,7 +117,9 @@ import type { RecipeListItemDto } from "../../api/types";
 import { exportRecipePackage, importRecipePackage } from "../../api/recipesTransfer";
 import { recipeStatusLabel as statusLabel, recipeStatusOrder, recipeStatusTagType } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
+import { useDialogGuard } from "../../utils/useDialogGuard";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
+import { useListState } from "../../utils/useListState";
 import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
 import { useAuthStore } from "../../stores/auth";
 import HelpTip from "../../components/HelpTip.vue";
@@ -116,6 +137,8 @@ const creating = ref(false);
 const busy = ref("");
 const importInput = ref<HTMLInputElement | null>(null);
 const form = reactive({ code: "", name: "", productCode: "", productName: "" });
+/** 新建表单 4 个字段，误按 Esc 全丢；与全站表单同一道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => form);
 const { loading, error, run } = useLoad();
 
 /** 排序口径见 utils/tableSort：中文按拼音、版本号按数值、状态按生命周期次序。 */
@@ -159,6 +182,10 @@ const emptyText = computed(() => {
 // 整行可点，但 EP 渲染的 tr 不可聚焦——键盘用户此前打不开任何配方。
 useKeyboardRows(tableRef, () => shown.value);
 
+// 搜索词在「进配方设计器 → 返回列表」后要还原。本页是客户端过滤，筛选 chips 落在 URL query
+// 上（见上面的 filter computed），所以只需记搜索词；列表数据本身每次都重取，不会看到陈旧配方。
+useListState("/recipes", { query });
+
 const formRef = ref<FormInstance>();
 /** 后端 DUP_CODE 的前置版：编码撞了当场说，不要等一次往返。 */
 function duplicateCode(_rule: unknown, value: unknown, done: (error?: Error) => void) {
@@ -182,6 +209,7 @@ function openCreate() {
   // 很容易把上一条的编码/名称顺手提交出去（编码还有唯一性）。
   Object.assign(form, { code: "", name: "", productCode: "", productName: "" });
   createVisible.value = true;
+  markClean();
   void nextTick(() => formRef.value?.clearValidate());
 }
 

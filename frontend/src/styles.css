@@ -345,6 +345,16 @@ p:last-child { margin-bottom: 0; }
   flex: 0 1 auto;
   max-width: 100%;
 }
+/* 只读角色在操作位（页头右侧）看到的说明文字，替代它们无权使用的按钮。
+   压 --muted、12px，与上面的页头副标题同档，读起来像"页面补充说明"而不是警告条——
+   「我在这页只能看」不是错误状态。批次页与配方页共用，故提到全局而非各自 scoped。 */
+.readonly-hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+/* 加载失败 alert 的标题行：错误文案 + 就地「重新加载」按钮。没有轮询的页面（配方/物料/报警）
+   取数失败后会一直停在错误态，必须给一个可点的出口，否则用户只能刷新整个浏览器。
+   按钮与被压暗的错误文字同色系、link 样式不带按钮底，视觉上仍是一条错误提示而非操作区。 */
+.alert-title-row { display: inline-flex; align-items: center; gap: var(--space-3); }
+.alert-title-row .el-button { flex: none; }
 
 /* 监控/设计器按钮多，滚下去会丢掉保持、确认、保存。钉在主内容滚动顶。 */
 .page-title.sticky-actions {

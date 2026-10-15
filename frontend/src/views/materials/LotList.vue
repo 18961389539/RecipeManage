@@ -19,14 +19,15 @@
       :title="$t('来料批可拆分成子批投料；生产批次号写入控制配方快照（不纳入完整性哈希）。实验室样品与 PLC 测点分开归档。')"
      
     />
-    <el-alert class="gap-after"
-      v-if="error"
-      :closable="false"
-      type="error"
-      :title="$t('物料批次加载失败：{0}', [error])"
-      show-icon
-     
-    />
+    <!-- 本页没有轮询：失败后若无出口，用户只能刷新浏览器。见 RecipeList 同名说明。 -->
+    <el-alert class="gap-after" v-if="error" :closable="false" type="error" show-icon>
+      <template #title>
+        <span class="alert-title-row">
+          {{ $t("物料批次加载失败：{0}", [error]) }}
+          <el-button link type="danger" :loading="loading" @click="load">{{ $t("重新加载") }}</el-button>
+        </span>
+      </template>
+    </el-alert>
     <el-table
       ref="tableRef"
       :data="items"
@@ -61,7 +62,12 @@
     </el-table>
     <el-pagination class="pager" layout="total, prev, pager, next" background small :page-size="take"
       :current-page="page" :total="total" hide-on-single-page @current-change="onPageChange" />
-    <el-dialog v-model="visible" :title="$t('登记来料批')" width="480px">
+    <!-- 空库时给新装机指路：来料批是投料的源头——没有它，生产批次建得出也投不了料。
+         比"暂无物料批次"四个字有用得多。取数失败 / 正在搜索时不出现。 -->
+    <div v-if="!loading && !error && !items.length && !query.trim()" class="muted gap-before">
+      {{ $t("还没有物料批：登记每一批来料后，它才能在「批次执行」里被选作投料并随时拆分。") }}
+    </div>
+    <el-dialog v-model="visible" :title="$t('登记来料批')" width="480px" :before-close="guardClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" @submit.prevent="create">
         <el-form-item :label="$t('批次号')" prop="lotNumber"><el-input v-model="form.lotNumber" /></el-form-item>
         <el-form-item :label="$t('物料编码')" prop="materialCode"><el-input v-model="form.materialCode" /></el-form-item>
@@ -88,8 +94,10 @@ import type { MaterialLotDto, MaterialLotPageDto } from "../../api/types";
 import { lotSourceLabel as sourceLabel, lotStatusLabel as statusLabel, lotStatusTagType } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
+import { useListState, restoreListState, savedSortOrder } from "../../utils/useListState";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
+import { useDialogGuard } from "../../utils/useDialogGuard";
 import { formatDateTime } from "../../utils/format";
 import HelpTip from "../../components/HelpTip.vue";
 
@@ -101,7 +109,12 @@ const visible = ref(false);
 const creating = ref(false);
 const { loading, error, run } = useLoad();
 const form = reactive({ lotNumber: "", materialCode: "AL6061", materialName: "铝合金锭", quantity: 100, uom: "kg" });
-const pg = useServerPaging({ reload: load, defaultSort: "createdAt", search: query });
+/** 登记来料批填一半误关会丢；与全站表单同一道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => form);
+// 搜索词与排序都要在 useServerPaging 之前铺回（原因见 BatchList 同名注释处）。
+const saved = savedSortOrder("/lots");
+restoreListState("/lots", { query });
+const pg = useServerPaging({ reload: load, defaultSort: "createdAt", search: query, initialSort: saved.sort, initialOrder: saved.order });
 const { take, total, page, defaultSort, onSortChange, onPageChange } = pg;
 const countText = computed(() => {
   const n = items.value.length;
@@ -110,6 +123,11 @@ const countText = computed(() => {
 
 // 整行可点，但 EP 渲染的 tr 不可聚焦——键盘用户此前打不开任何物料批。
 useKeyboardRows(tableRef, () => items.value);
+
+// 搜索词 / 页码 / 排序在「进谱系详情 → 返回列表」后还原：本页没有筛选 chips，
+// 缩小范围全靠搜索框，丢一次就得重敲一遍批次号。搜索词的铺回见上面
+// useServerPaging 之前的 restoreListState。
+useListState("/lots", { query, page, sort: pg.sort, order: pg.order });
 
 const formRef = ref<FormInstance>();
 /** 后端 DUP_LOT 的前置版：批号撞了当场说，不要等一次往返。只查已加载的当页，判重以后端为准。 */
@@ -135,6 +153,7 @@ async function load() {
 function openCreate() {
   form.lotNumber = `INGOT-${Date.now().toString(36).toUpperCase()}`;
   visible.value = true;
+  markClean();
   void nextTick(() => formRef.value?.clearValidate());
 }
 

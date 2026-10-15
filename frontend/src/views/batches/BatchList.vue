@@ -108,7 +108,7 @@
     <div v-if="!initialLoading && !loadError && !items.length && !filtered" class="muted gap-before">
       {{ $t("还没有批次：先在「主配方设计」把一份配方提交审核，批准后即可在这里创建生产批次。") }}
     </div>
-    <el-dialog v-model="visible" :title="$t('创建批次 / 生成控制配方快照')" width="640px">
+    <el-dialog v-model="visible" :title="$t('创建批次 / 生成控制配方快照')" width="640px" :before-close="guardClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" @submit.prevent="create">
         <el-form-item :label="$t('批次号')" prop="batchNo"><el-input v-model="form.batchNo" /></el-form-item>
         <el-form-item :label="$t('主配方')" prop="recipeId">
@@ -193,6 +193,8 @@ import { usePolling } from "../../utils/usePolling";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
+import { useDialogGuard } from "../../utils/useDialogGuard";
+import { useListState, restoreListState, savedSortOrder } from "../../utils/useListState";
 import { useAuthStore } from "../../stores/auth";
 import { batchStatusLabel, batchStatusTagType, handshakePhaseLabel, handshakePhaseTip, lotStatusLabel, protocolLabel } from "../../utils/labels";
 import { formatCompactStamp, formatDateTime } from "../../utils/format";
@@ -232,6 +234,8 @@ const form = reactive({
   unitEquipment: {} as Record<string, string>,
   chargeLotIds: [] as string[]
 });
+/** 创建批次要选配方、设备、投料批，填一半误关代价高；与全站表单同一道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => form);
 /** 可投料的来料批：状态筛选交给服务端，客户端过滤当页会漏掉别的 Open/Released 批。 */
 const chargeLotParams = { take: 200, status: "Open,Released" };
 const approvedRecipes = computed(() => recipes.value.filter((r) => r.approvedVersion));
@@ -275,7 +279,11 @@ const filter = computed({
 });
 /** 搜索、筛选、排序、分页全在服务端：客户端只能看当页那 50 条，"共 N 条"会说谎。 */
 const filtered = computed(() => !!query.value.trim() || filter.value !== "all" || labPending.value);
-const pg = useServerPaging({ reload: load, defaultSort: "createdAt", search: query });
+// 搜索词、排序都要在 useServerPaging 之前铺回：前者躲开 300ms 防抖 watcher 造成的重复请求，
+// 后者是因为 el-table 的 default-sort 只在初始化读一次，构造后再改 sort ref 表格箭头不跟着走。
+const saved = savedSortOrder("/batches");
+restoreListState("/batches", { query });
+const pg = useServerPaging({ reload: load, defaultSort: "createdAt", search: query, initialSort: saved.sort, initialOrder: saved.order });
 const { take, total, page, defaultSort, onSortChange, onPageChange } = pg;
 const countText = computed(() => {
   const n = items.value.length;
@@ -447,6 +455,12 @@ async function load() {
 /** 筛选 chips 走的是路由 query，服务端取数就得跟着路由重拉（以前 filter 只是过滤已加载的行）。 */
 watch(() => [route.query.status, route.query.lab], () => pg.onFilterChange());
 
+// 搜索词 / 页码 / 排序在「进批次详情 → 返回列表」后要还原：否则每次看完一条详情回来，
+// 搜索框空了、50 条全回来、还得重搜一遍。状态写在 sessionStorage，不管用户是点页内
+// 「返回批次列表」、按浏览器后退、还是从侧栏点回来都能命中（搜索词的铺回见上面
+// useServerPaging 之前的 restoreListState）。filter（状态 chips）不在这里管——它本来就落在 URL query 上。
+useListState("/batches", { query, page, sort: pg.sort, order: pg.order });
+
 // 握手事件约 100ms 一条，而列表行状态只能靠重拉补齐——合并窗口避免把后端打满。
 const scheduleReload = useCoalescedReload(load);
 
@@ -489,6 +503,7 @@ async function openCreate() {
     );
     syncUnitBindings();
     visible.value = true;
+    markClean();
     // 重开窗口要清掉上一次的红字，否则残留的报错会挂在已经改对的字段上。
     void nextTick(() => formRef.value?.clearValidate());
   } catch (e) {
@@ -550,9 +565,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* 只读角色在操作位上看到的说明文字。压 --muted、12px，与页头副标题同档，
-   让它读起来像"页面的补充说明"而不是警告条——这本身不是错误状态。 */
-.readonly-hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .unit-hint { color: var(--muted); font-size: 12px; margin-bottom: var(--space-2); line-height: 1.4; }
 .unit-bind { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .status-pills { display: flex; flex-wrap: wrap; gap: 4px; }

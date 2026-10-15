@@ -75,7 +75,7 @@
         </el-table-column>
       </el-table>
     </el-card>
-    <el-dialog v-model="splitVisible" :title="$t('拆分子批')" width="440px">
+    <el-dialog v-model="splitVisible" :title="$t('拆分子批')" width="440px" :before-close="guardClose">
       <el-form label-width="100px">
         <el-form-item :label="$t('子批号')"><el-input v-model="split.childLotNumber" /></el-form-item>
         <el-form-item :label="$t('数量')"><el-input-number v-model="split.quantity" :min="0.001" :step="1" /></el-form-item>
@@ -101,6 +101,7 @@ import {
   lotStatusLabel as statusLabel
 } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
+import { useDialogGuard } from "../../utils/useDialogGuard";
 
 const route = useRoute();
 const router = useRouter();
@@ -108,6 +109,7 @@ const tree = ref<LotGenealogyDto | null>(null);
 const splitVisible = ref(false);
 const splitting = ref(false);
 const split = reactive({ childLotNumber: "", quantity: 10 });
+const { markClean, guardClose } = useDialogGuard(() => split);
 const { loading, error, run } = useLoad();
 
 async function load() {
@@ -118,6 +120,7 @@ function openSplit() {
   split.childLotNumber = `${tree.value?.lot.lotNumber}-S${Date.now().toString(36).slice(-4).toUpperCase()}`;
   split.quantity = Math.max(1, Math.floor((tree.value?.lot.quantity ?? 20) / 4));
   splitVisible.value = true;
+  markClean();
 }
 
 async function doSplit() {
