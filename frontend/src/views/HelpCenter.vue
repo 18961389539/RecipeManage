@@ -381,6 +381,12 @@ onUnmounted(() => window.removeEventListener("keydown", onHelpShortcut));
   background: var(--sunken);
   box-shadow: 0 0 0 1px var(--line) inset;
 }
+/* 上面这条与 EP 的 .el-input__wrapper.is-focus 特异性相同、且在其后声明，
+   会把聚焦描边整个抹掉——搜索框点进去毫无反馈。补一条特异性更高的聚焦规则。 */
+.help-search :deep(.el-input__wrapper.is-focus),
+.help-search :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
 .help-search :deep(.el-input__inner) { color: var(--text); }
 .help-shortcut {
   display: inline-grid;

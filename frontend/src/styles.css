@@ -145,6 +145,14 @@ html.dark {
   --el-border-color-lighter: #1e2a44;
   --el-border-color-extra-light: #1a2438;
 
+  /* EP 的 `.el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--el-input-focus-border-color) }`
+     不带兜底值，而这个变量在本构建里没有任何地方定义 → 声明整体无效被丢弃，
+     输入框聚焦时边框纹丝不动（暗色下等同完全没有焦点指示，键盘用户找不到落点）。
+     同理补齐 hover 态：EP 默认取 --el-border-color-hover，项目把它接到了 --idle，
+     聚焦/悬停会撞色，这里显式指向 accent 的柔和版。 */
+  --el-input-focus-border-color: var(--accent);
+  --el-input-hover-border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+
   --el-fill-color: var(--hover);
   --el-fill-color-light: var(--raised);
   --el-fill-color-lighter: #141c2f;
@@ -253,6 +261,10 @@ html[data-theme="light"] {
   --el-border-color-light: var(--line);
   --el-border-color-lighter: color-mix(in srgb, var(--line) 72%, white);
   --el-border-color-extra-light: color-mix(in srgb, var(--line) 48%, white);
+  /* 与暗色主题同理：EP 的 input 聚焦/悬停描边变量在本构建中无人定义，
+     不补会让输入框失去聚焦反馈；色调统一走 accent。 */
+  --el-input-focus-border-color: var(--accent);
+  --el-input-hover-border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
   --el-fill-color: var(--hover);
   --el-fill-color-light: var(--raised);
   --el-fill-color-lighter: var(--sunken);
