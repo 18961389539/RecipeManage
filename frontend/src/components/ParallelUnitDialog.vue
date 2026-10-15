@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="$t('新增并行单元规程')" width="480px">
+  <el-dialog v-model="visible" :title="$t('新增并行单元规程')" width="480px" :before-close="guardClose">
     <p class="muted">{{ $t("新单元与现有工步无前驱连线，可绑定不同 PLC 并行四步握手。编排完后用下方「添加连线」汇合到质检工步。") }}</p>
     <el-form label-width="108px">
       <el-form-item :label="$t('单元规程')"><el-input v-model="form.unit" /></el-form-item>
@@ -37,6 +37,7 @@ import { ElMessage } from "element-plus";
 import { t } from "../i18n";
 import type { EquipmentClassDto } from "../api/types";
 import { templateProgram } from "../utils/phaseTemplate";
+import { useDialogGuard } from "../utils/useDialogGuard";
 import HelpTip from "./HelpTip.vue";
 
 /**
@@ -57,6 +58,7 @@ const emit = defineEmits<{
 }>();
 
 const form = reactive({ unit: "", classId: "", templateId: "" });
+const { markClean, guardClose } = useDialogGuard(() => form);
 const templates = computed(() =>
   props.classes.find((c) => c.id === form.classId)?.templates ?? []);
 
@@ -70,6 +72,7 @@ watch(visible, (open) => {
   form.unit = props.suggestedUnit;
   form.classId = props.defaultClassId || props.classes[0]?.id || "";
   syncTemplate();
+  markClean();
 });
 watch(() => form.classId, syncTemplate);
 

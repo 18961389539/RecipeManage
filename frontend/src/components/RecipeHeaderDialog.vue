@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="$t('主配方抬头')" width="480px">
+  <el-dialog v-model="visible" :title="$t('主配方抬头')" width="480px" :before-close="guardClose">
     <el-form :model="form" label-width="96px">
       <el-form-item :label="$t('名称')"><el-input v-model="form.name" /></el-form-item>
       <el-form-item :label="$t('产品编码')"><el-input v-model="form.productCode" /></el-form-item>
@@ -18,6 +18,7 @@ import { reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { t } from "../i18n";
 import { updateRecipeHeader } from "../api/recipes";
+import { useDialogGuard } from "../utils/useDialogGuard";
 import type { RecipeDetailDto } from "../api/types";
 
 /** 主配方抬头（名称/产品/说明）。不涉及工艺内容，所以不需要电子签名与变更原因。 */
@@ -27,6 +28,7 @@ const emit = defineEmits<{ saved: [] }>();
 
 const saving = ref(false);
 const form = reactive({ name: "", productCode: "", productName: "", description: "" });
+const { markClean, guardClose } = useDialogGuard(() => form);
 
 watch(visible, (open) => {
   if (!open || !props.recipe) return;
@@ -34,6 +36,7 @@ watch(visible, (open) => {
   form.productCode = props.recipe.productCode;
   form.productName = props.recipe.productName;
   form.description = props.recipe.description ?? "";
+  markClean();
 });
 
 async function save() {

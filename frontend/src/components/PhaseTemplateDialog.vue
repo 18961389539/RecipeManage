@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="form.id ? $t('编辑相模板') : $t('新增相模板')" width="900px">
+  <el-dialog v-model="visible" :title="form.id ? $t('编辑相模板') : $t('新增相模板')" width="900px" :before-close="guardClose">
     <p class="muted">{{ cls?.code }} · {{ cls?.name }}。编码全局唯一；同一设备类内程序号不能重复。</p>
     <el-form ref="formRef" :model="form" :rules="rules" label-width="108px" :disabled="!canEdit">
       <el-form-item :label="$t('编码')" prop="code"><el-input v-model="form.code" :disabled="!!form.id" :placeholder="$t('如 PH-SPRAY')" /></el-form-item>
@@ -89,10 +89,13 @@ import { savePhaseTemplate } from "../api/equipment";
 import type { EquipmentClassDto, PhaseParameterDto, PhaseTemplateDto, StepType } from "../api/types";
 import { measuredTagRequired, parameterSemanticLabel, parameterSemanticOptions, stepTypeLabel } from "../utils/labels";
 import { DEFAULT_PROGRAM, PROCESS_TYPES, defaultTemplateParams, programOutOfRange, templateProgram } from "../utils/phaseTemplate";
+import { useDialogGuard } from "../utils/useDialogGuard";
 import HelpTip from "./HelpTip.vue";
 
 /** 相模板编辑对话框。参数槽的增删与"改类型即换缺省槽"的规则都关在这里。 */
 const visible = defineModel<boolean>({ required: true });
+/** 相模板工步参数不少，误关一次就白填；与设备表单同一道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => form);
 const props = withDefaults(defineProps<{
   cls?: EquipmentClassDto | null;
   template?: PhaseTemplateDto | null;
@@ -132,6 +135,7 @@ watch(visible, (open) => {
       watchdogSeconds: 60, operation: "", parameters: defaultTemplateParams("Heat")
     });
   }
+  markClean();
 });
 
 function onType(type: StepType) {

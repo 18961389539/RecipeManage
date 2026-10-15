@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" class="equipment-dialog" :title="form.id ? $t('设备 / 握手点表') : $t('新增设备')" width="720px">
+  <el-dialog v-model="visible" class="equipment-dialog" :title="form.id ? $t('设备 / 握手点表') : $t('新增设备')" width="720px" :before-close="guardClose">
     <p class="param-hint">
       {{ $t("写参槽 {0} … {1}。", [tagMap.params[0] || "—", tagMap.params[PARAM_SLOTS - 1] || "—"]) }}
       <el-button link type="primary" @click="activeTab = 'params'">{{ $t("核对地址") }}</el-button>
@@ -99,6 +99,7 @@ import {
   DEFAULT_WATCHDOG, PARAM_SLOTS, emptyTagMap, parseTagMap, parseWatchdog, serializeTagMap, serializeWatchdog
 } from "../utils/tagMap";
 import type { TagMapForm, WatchdogForm } from "../utils/tagMap";
+import { useDialogGuard } from "../utils/useDialogGuard";
 
 /**
  * 设备与握手点表表单。
@@ -161,6 +162,9 @@ const form = reactive({
 const tagMap = reactive<TagMapForm>(emptyTagMap());
 const watchdog = reactive<WatchdogForm>({ ...DEFAULT_WATCHDOG });
 
+/** 关掉前先问：这份表 24 个字段，误按 Esc / 手滑点遮罩就全没了，全站只有表单还没有这道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => ({ form, tagMap, watchdog }));
+
 watch(visible, (open) => {
   if (!open) return;
   const row = props.equipment;
@@ -177,6 +181,7 @@ watch(visible, (open) => {
   Object.assign(tagMap, row ? parseTagMap(row.tagMapJson) : emptyTagMap());
   Object.assign(watchdog, parseWatchdog(row?.watchdogJson));
   activeTab.value = "basic";
+  markClean();
 });
 
 function addMeasured() {
