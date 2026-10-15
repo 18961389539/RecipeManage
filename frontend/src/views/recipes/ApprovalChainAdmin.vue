@@ -21,7 +21,7 @@
       <el-col class="chain-list-col" :span="24" :lg="9">
         <el-card class="chain-list-card" :header="$t('已有的链')">
           <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
-          <el-table :data="chains" v-loading="loading" highlight-current-row :row-class-name="rowClass"
+          <el-table ref="tableRef" :data="chains" v-loading="loading" highlight-current-row :row-class-name="rowClass"
             class="clickable-rows" :empty-text="$t('还没有审批链')" @row-click="select">
             <el-table-column prop="code" :label="$t('编码')" width="110" fixed />
             <el-table-column :label="$t('链')" min-width="190">
@@ -136,12 +136,14 @@ import { t } from "../../i18n";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import type { TableInstance } from "element-plus";
 import {
   deleteApprovalChain, listApprovalChains, saveApprovalChain
 } from "../../api/approvalChains";
 import type { ApprovalChainDto, ApprovalChainStepRequest, UserRole } from "../../api/types";
 import { userRoleLabel } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
+import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { useIsMobile } from "../../utils/useMedia";
 import { esignPassword } from "../../utils/esign";
 import HelpTip from "../../components/HelpTip.vue";
@@ -158,6 +160,10 @@ const approverRoles: UserRole[] = ["Supervisor", "Quality", "Admin"];
 const isMobile = useIsMobile();
 
 const chains = ref<ApprovalChainDto[]>([]);
+const tableRef = ref<TableInstance>();
+/** 左栏的链是整行可选的（`@row-click="select"`），不接这个 composable 键盘用户就选不中任何一条。
+ *  与主配方、批次等列表页同一处理，见 utils/useKeyboardRows.ts 顶部说明。 */
+useKeyboardRows(tableRef, () => chains.value);
 const draft = reactive<{
   id: string | null; code: string; name: string; isDefault: boolean; enabled: boolean;
   steps: ApprovalChainStepRequest[];

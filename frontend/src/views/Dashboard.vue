@@ -34,8 +34,10 @@
       </el-card>
     </div>
     <!-- 报警卡只说"有事"，这条说"什么事"：点进列表前先知道在报什么，也省一次跳转。
-         数据随取数循环刷新；无报警权限或当前无未确认报警时不占版面。 -->
-    <button v-if="latestAlarm" type="button" class="alarm-strip" @click="$router.push('/alarms')">
+         数据随取数循环刷新；无报警权限或当前无未确认报警时不占版面。
+         点进列表时带上 batchNo：只跳到全量列表的话，用户还得自己在 12 条里找这条，
+         与"去处理"暗示的直达不符。/alarms 会把它填进搜索框并聚焦到该批次。 -->
+    <button v-if="latestAlarm" type="button" class="alarm-strip" @click="$router.push({ path: '/alarms', query: { batch: latestAlarm.batchNo } })">
       <i class="alarm-dot" />
       <span class="alarm-strip-text">{{ $t("最新未确认报警") }} · {{ fmtTime(Date.parse(latestAlarm.raisedAt)) }} · {{ latestAlarm.batchNo }} · {{ latestAlarm.message }}</span>
       <span class="alarm-strip-go">{{ $t("去处理") }}</span>

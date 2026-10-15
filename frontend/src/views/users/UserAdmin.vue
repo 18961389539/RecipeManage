@@ -134,7 +134,7 @@
       <p class="backup-note">{{ $t("仅上传两条审计流的 Merkle 根，不上传明文；接收端与签名密钥必须部署在独立机器和信任域。") }}</p>
     </el-card>
 
-    <el-dialog v-model="visible" :title="form.id ? $t('编辑用户') : $t('新建用户')" width="460px">
+    <el-dialog v-model="visible" :title="form.id ? $t('编辑用户') : $t('新建用户')" width="460px" :before-close="guardClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px" @submit.prevent="save">
         <el-form-item :label="$t('登录名')" prop="userName"><el-input v-model="form.userName" :disabled="!!form.id" /></el-form-item>
         <el-form-item :label="$t('显示名')" prop="displayName"><el-input v-model="form.displayName" /></el-form-item>
@@ -172,6 +172,7 @@ import { userRoleLabel, userRoleOrder, esignMeaning } from "../../utils/labels";
 import { esignPassword } from "../../utils/esign";
 import { formatDateTime, formatFileDate, matchesQuery } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useDialogGuard } from "../../utils/useDialogGuard";
 import { useIsMobile } from "../../utils/useMedia";
 import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
 import HelpTip from "../../components/HelpTip.vue";
@@ -218,6 +219,8 @@ const form = reactive({
   confirmPassword: "",
   isActive: true
 });
+/** 改角色/重置密码这类操作填错后果重，误关一次白填；与全站表单同一道闸。 */
+const { markClean, guardClose } = useDialogGuard(() => form);
 
 const formRef = ref<FormInstance>();
 /** 长度与唯一性照抄后端 AuthService 的口径（登录名≥3、密码≥8、重名报错），改成填的时候就地说。 */
@@ -323,9 +326,22 @@ async function runBackup() {
 /**
  * 手工跑一轮维护。"没做 VACUUM"是正常结果（批次在跑、或空闲页不值得重写整个文件），
  * 所以这里按 vacuumed 分支说话，不能一律报成功，否则用户以为按钮没反应。
+ *
+ * 点之前先确认：这一步真跑起来会重写整个库文件（耗时随库大小增长）。同排的「立即锚定」
+ * 早就会预告耗时，「立即维护」却和「刷新」长得一样，用户无从判断代价——补上同样的预告。
+ * 顺便说明后端已有的安全行为（批次在跑会自动只优化不重写），省得管理员怕影响产线而不敢点。
  */
 async function runMaintenance() {
   if (busy.value || backupLoading.value) return;
+  try {
+    await ElMessageBox.confirm(
+      t("重算查询统计；空闲页足够多时会重写整个数据库文件，可能耗时较久。有批次在运行／排队／保持时会自动跳过重写，只更新统计。"),
+      t("立即维护"),
+      { type: "warning", confirmButtonText: t("开始维护"), cancelButtonText: t("取消") }
+    );
+  } catch {
+    return;
+  }
   busy.value = "maint";
   try {
     const { data } = await http.post<MaintenanceResultDto>("/system/maintenance");
@@ -351,6 +367,7 @@ function formatBytes(bytes: number): string {
 function openCreate() {
   Object.assign(form, { id: "", userName: "", displayName: "", role: "Operator", password: "", newPassword: "", confirmPassword: "", isActive: true });
   visible.value = true;
+  markClean();
   // 重开窗口要清掉上一次的红字，否则残留的报错会挂在已经改对的字段上。
   void nextTick(() => formRef.value?.clearValidate());
 }
@@ -367,6 +384,7 @@ function openEdit(row: UserDto) {
     isActive: row.isActive !== false
   });
   visible.value = true;
+  markClean();
   void nextTick(() => formRef.value?.clearValidate());
 }
 

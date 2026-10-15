@@ -25,14 +25,15 @@
         <el-radio-button value="all">{{ $t("全部") }}</el-radio-button>
       </el-radio-group>
     </div>
-    <el-alert class="gap-after"
-      v-if="error"
-      :closable="false"
-      type="error"
-      :title="$t('报警列表加载失败：{0}', [error])"
-      show-icon
-     
-    />
+    <!-- 本页没有轮询：失败后若无出口，用户只能刷新浏览器。见 RecipeList 同名说明。 -->
+    <el-alert class="gap-after" v-if="error" :closable="false" type="error" show-icon>
+      <template #title>
+        <span class="alert-title-row">
+          {{ $t("报警列表加载失败：{0}", [error]) }}
+          <el-button link type="danger" :loading="loading" @click="load">{{ $t("重新加载") }}</el-button>
+        </span>
+      </template>
+    </el-alert>
     <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
     <el-table
       ref="tableRef"
@@ -80,6 +81,7 @@
 <script setup lang="ts">
 import { t } from "../../i18n";
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { TableInstance } from "element-plus";
 import http from "../../api/http";
@@ -98,11 +100,15 @@ import { useIsMobile } from "../../utils/useMedia";
 import HelpTip from "../../components/HelpTip.vue";
 
 const auth = useAuthStore();
+const route = useRoute();
 const isMobile = useIsMobile();
 const alarmBadge = useAlarmBadgeStore();
 const items = ref<ProcessAlarmDto[]>([]);
 const tableRef = ref<TableInstance>();
-const query = ref("");
+// 运行总览的报警摘要条带 ?batch=<批次号> 跳进来（「去处理」本该直达那条报警）。
+// 预填进搜索框而不是另做一套筛选：搜索框就是本页现成的缩小范围手段，用户看得见、
+// 能一键清掉，也不用再学一个新控件。初次取数（onMounted 的 load）会自动带上它。
+const query = ref(typeof route.query.batch === "string" ? route.query.batch : "");
 const filter = ref<"open" | "all">("open");
 const acking = ref("");
 const { loading, error, run } = useLoad();
