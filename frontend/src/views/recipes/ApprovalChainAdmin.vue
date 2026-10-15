@@ -24,7 +24,10 @@
           <el-table ref="tableRef" :data="chains" v-loading="loading" highlight-current-row :row-class-name="rowClass"
             class="clickable-rows" :empty-text="$t('还没有审批链')" @row-click="select">
             <el-table-column prop="code" :label="$t('编码')" width="110" fixed />
-            <el-table-column :label="$t('链')" min-width="190">
+            <!-- 链列此前 min-width 190，与编码 110 + 状态 126 相加（426）超过左栏表宽（389），
+                 状态列被挤出可视区、标签截断，需横向滚动才看得到「已启用/默认」。
+                 链列改弹性（min-width 130，药丸本就会 wrap），状态列收窄到 100、两个标签竖排。 -->
+            <el-table-column :label="$t('链')" min-width="130">
               <template #default="{ row }">
                 <button class="chain-select" type="button" @click.stop="select(row)">
                   <span class="chain-name">{{ row.name }}</span>
@@ -44,9 +47,10 @@
                 </button>
               </template>
             </el-table-column>
-            <el-table-column :label="$t('状态')" width="126">
+            <el-table-column :label="$t('状态')" width="100">
               <template #default="{ row }">
-                <div class="chain-status">
+                <!-- 竖排：两个标签并排会超 100px，换行后正好两行，状态一眼可辨。 -->
+                <div class="chain-status chain-status-col">
                   <el-tag v-if="row.isDefault" size="small" type="success" effect="dark">{{ $t("默认") }}</el-tag>
                   <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
                     {{ row.enabled ? $t("已启用") : $t("停用") }}
@@ -398,6 +402,8 @@ h4 { margin: var(--space-4) 0 var(--space-2); font-size: 14px; }
 .chain-flow-arrow { color: var(--muted); font-size: 12px; }
 .chain-flow-empty { padding: 2px 0; }
 .chain-status { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+/* 状态列收窄到 100 后，两个标签并排会溢出——改为竖排两行，状态仍一眼可辨。 */
+.chain-status-col { flex-direction: column; align-items: flex-start; }
 .chain-empty {
   display: flex;
   min-height: 220px;

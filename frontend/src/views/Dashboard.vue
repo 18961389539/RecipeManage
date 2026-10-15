@@ -121,7 +121,8 @@
           @row-click="openOccupant"
         >
           <el-table-column prop="code" :label="$t('设备')" width="90" fixed />
-          <el-table-column prop="name" :label="$t('名称')" />
+          <!-- 半宽卡片里的 flex 列，宽视口够、窄视口被压折行；只读浏览场景省略号 + 悬停看全即可。 -->
+          <el-table-column prop="name" :label="$t('名称')" min-width="120" show-overflow-tooltip />
           <el-table-column prop="protocol" :label="$t('协议')" width="120">
             <template #default="{ row }">{{ protocolLabel(row.protocol) }}</template>
           </el-table-column>
@@ -175,7 +176,8 @@
               <span v-else>{{ $t("第 {0} 步", [row.currentStepIndex + 1]) }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('时长')" width="110">
+          <!-- 时长是数值列（1h 20m / 45m），右对齐便于纵向比时长。 -->
+          <el-table-column :label="$t('时长')" width="110" align="right">
             <template #default="{ row }">
               <!-- 运行中=已运行；排队/已创建=已等待（从创建起算）。多久看得出卡没卡，不用点进详情。 -->
               {{ formatDuration(row) }}

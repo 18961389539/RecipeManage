@@ -8,7 +8,9 @@
       <template #default="{ row }">{{ formatDateTime(row.at) }}</template>
     </el-table-column>
     <el-table-column prop="meaning" :label="$t('签署含义')" min-width="240" />
-    <el-table-column prop="extra" :label="$t('意见')" />
+    <!-- extra 常是自由意见，但保持/中止动作会写入批次号（16 位 = 132px 文本）。
+         此前无定宽被挤到 114px，批次号折成两行；min-width 保底 + 省略号兜底。 -->
+    <el-table-column prop="extra" :label="$t('意见')" min-width="160" show-overflow-tooltip />
     <el-table-column :label="$t('证据摘要校验')" min-width="180">
       <template #default="{ row }">
         <template v-if="row.integrity">

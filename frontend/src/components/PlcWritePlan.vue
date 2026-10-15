@@ -13,7 +13,9 @@
       <template #header><HelpTip term="Step_ID" /></template>
       <template #default="{ row }">{{ row.writeToPlc ? row.plcStepId : "—" }}</template>
     </el-table-column>
-    <el-table-column :label="$t('写参')">
+    <!-- 写参是多值拼接（Step_Type=1 Param[0]=120 Param[1]=…），窄列会折成两三行撑高整表；
+         改为省略号 + 悬停看全，保持每行等高、密度一致。 -->
+    <el-table-column :label="$t('写参')" min-width="150" show-overflow-tooltip>
       <template #default="{ row }">{{ formatParams(row) }}</template>
     </el-table-column>
     <el-table-column :label="$t('策略')" min-width="200">

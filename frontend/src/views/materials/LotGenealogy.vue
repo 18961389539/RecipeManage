@@ -64,13 +64,16 @@
     <el-card class="gap-before" :header="$t('关联生产批次（投料 / 产出）')">
       <p class="mobile-table-hint">{{ $t("窄屏可左右滑动物料谱系表查看其他字段。") }}</p>
       <el-table class="genealogy-uses-table" :data="tree.uses" :empty-text="$t('本批未关联生产批次')">
-        <el-table-column prop="batchNo" :label="$t('生产批')" width="160" fixed />
+        <!-- 生产批次号 16 位定长（132px 文本 + 24 padding = 156，此前 160 卡在临界值上折行）；
+             放宽到 176 并开省略号兜底。 -->
+        <el-table-column prop="batchNo" :label="$t('生产批')" width="176" fixed show-overflow-tooltip />
         <el-table-column prop="role" :label="$t('角色')" width="100">
           <template #default="{ row }">{{ roleLabel(row.role) }}</template>
         </el-table-column>
-        <el-table-column prop="lotNumber" :label="$t('物料批')" />
+        <el-table-column prop="lotNumber" :label="$t('物料批')" show-overflow-tooltip />
         <el-table-column prop="materialCode" :label="$t('物料')" width="110" />
-        <el-table-column :label="$t('数量')" width="100">
+        <!-- 数值列右对齐（与其他列表同一口径）。 -->
+        <el-table-column :label="$t('数量')" width="100" align="right">
           <template #default="{ row }">{{ row.quantity ?? "—" }}</template>
         </el-table-column>
       </el-table>

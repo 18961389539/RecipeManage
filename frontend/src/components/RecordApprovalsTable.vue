@@ -10,11 +10,15 @@
       <template #default="{ row }">{{ approvalDecisionLabel(row.decision) }}</template>
     </el-table-column>
     <el-table-column prop="reviewerName" :label="$t('签署人')" />
-    <el-table-column :label="$t('时间')">
+    <!-- 日期时间 19 字符实测 131px；无定宽时被前面的固定列挤到 119px、折成两行。
+         与全站日期列统一按 176 定宽。 -->
+    <el-table-column :label="$t('时间')" width="176" show-overflow-tooltip>
       <template #default="{ row }">{{ formatDateTime(row.decidedAt) }}</template>
     </el-table-column>
     <el-table-column prop="meaning" :label="$t('签署含义')" min-width="220" />
-    <el-table-column prop="comment" :label="$t('意见')" />
+    <!-- comment 是自由意见，但操作员常把批次号写进来（16 位 = 132px）。
+         定宽不足时批次号折行；min-width 保底 + 省略号兜底。 -->
+    <el-table-column prop="comment" :label="$t('意见')" min-width="160" show-overflow-tooltip />
   </el-table>
 </template>
 
