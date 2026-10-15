@@ -368,7 +368,7 @@ async function decide(decision: "Approved" | "Rejected") {
       decision === "Rejected"
     );
     await http.post(`/recipes/${detail.value.id}/decide`, { decision, comment, password });
-    ElMessage.success(decision === "Approved" ? "已电子签名通过" : "已驳回");
+    ElMessage.success(decision === "Approved" ? t("已电子签名通过") : t("已驳回"));
     await loadList();
   } catch (e) {
     if ((e as string) !== "cancel") ElMessage.error((e as Error).message ?? String(e));

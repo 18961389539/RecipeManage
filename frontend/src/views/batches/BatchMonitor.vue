@@ -266,7 +266,7 @@
                 <el-table-column prop="frozenSetpoint" :label="$t('快照')" width="80" />
                 <el-table-column prop="masterSetpoint" :label="$t('主配方')" width="80" />
                 <el-table-column :label="$t('漂移')" width="70">
-                  <template #default="{ row }">{{ row.drifted ? "是" : "否" }}</template>
+                  <template #default="{ row }">{{ row.drifted ? $t("是") : $t("否") }}</template>
                 </el-table-column>
               </el-table>
             </el-card>

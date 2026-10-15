@@ -192,4 +192,66 @@ describe("i18n 覆盖率", () => {
       !BACKEND_VALUED_KEYS.includes(k) && !used.has(k) && !all.some(text => text.includes(`"${k}"`) || text.includes(`'${k}'`)));
     expect(dead).toEqual([]);
   });
+
+  /**
+   * 模板插值里不许出现**裸中文**（没包 $t / t / tipOf）。
+   *
+   * 为什么单列一条：其余用例都建立在「字符串出现在 t(...) 调用里」这个前提上（见 KEY_RE）。
+   * 但 `{{ row.drifted ? "是" : "否" }}` 这种字面量压根不在调用里，扫描器**结构上看不见**它，
+   * 棘轮于是全绿、英文界面却露出中文。实测抓到过 BatchMonitor 的漂移列与 Approvals 的成功提示。
+   *
+   * 判定方式：**先把每个 $t(...) / t(...) / tipOf(...) 调用整段抠掉**（按括号配对，能盖住
+   * `$t("编辑 {0}", [draft.code])`、`$t(row.oos ? "超差" : "合格")` 这类带参/嵌套的形式），
+   * 再看剩下有没有中文字面量。剩下还有中文，就说明这处没走 i18n。
+   *
+   * 关键：不能只看「表达式是不是以 t( 开头」——`row.oos ? $t("超差") : $t("合格")` 是**合法**写法，
+   * 以 `row` 开头但两处都已登记；早先的写法就把这类全误报了。
+   */
+  it("模板插值里没有绕过 $t 的裸中文", () => {
+    // 语言切换钮：英文界面下显示「中文」是刻意的，不是漏译。
+    const ALLOW = [/locale\s*===\s*"en"\s*\?\s*"中文"/];
+
+    /** 抠掉所有 t 调用（含 $t / tipOf / 点号前面的 t），返回剩余文本。 */
+    const stripTCalls = (expr: string): string => {
+      const CALL = /(?<![A-Za-z0-9_$])\$?(?:t|tipOf)\s*\(/g;
+      let out = "";
+      let cursor = 0;
+      for (let m = CALL.exec(expr); m; m = CALL.exec(expr)) {
+        out += expr.slice(cursor, m.index);
+        // 从 ( 开始按括号配对找调用末尾；字符串里的括号要跳过。
+        let depth = 0;
+        let i = m.index + m[0].length - 1;
+        let quote: string | null = null;
+        for (; i < expr.length; i++) {
+          const ch = expr[i];
+          if (quote) {
+            if (ch === "\\") { i++; continue; }
+            if (ch === quote) quote = null;
+            continue;
+          }
+          if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+          if (ch === "(") depth++;
+          else if (ch === ")" && --depth === 0) break;
+        }
+        cursor = i + 1; // 跳过整个调用
+        CALL.lastIndex = cursor;
+      }
+      return out + expr.slice(cursor);
+    };
+
+    const offenders: string[] = [];
+    for (const file of sources(SRC)) {
+      if (!file.endsWith(".vue")) continue;
+      const text = stripLineComments(readFileSync(file, "utf8"));
+      for (const m of text.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+        const expr = m[1].trim();
+        if (!CJK.test(expr)) continue;
+        if (ALLOW.some((re) => re.test(expr))) continue;
+        const rest = stripTCalls(expr).replace(/[\s|&?!(){}[\]:;,.]/g, "");
+        if (!CJK.test(rest)) continue; // 剩下的中文全在 t 调用里 → 合法
+        offenders.push(`${path.relative(SRC, file)}: ${expr.replace(/\s+/g, " ").slice(0, 70)}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
