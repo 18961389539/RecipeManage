@@ -194,6 +194,7 @@ import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
 import { useDialogGuard } from "../../utils/useDialogGuard";
+import { useEmptyText } from "../../utils/emptyText";
 import { useListState, restoreListState, savedSortOrder } from "../../utils/useListState";
 import { useAuthStore } from "../../stores/auth";
 import { batchStatusLabel, batchStatusTagType, handshakePhaseLabel, handshakePhaseTip, lotStatusLabel, protocolLabel } from "../../utils/labels";
@@ -289,7 +290,8 @@ const countText = computed(() => {
   const n = items.value.length;
   return filtered.value ? t("{0} / {1} 条", n, total.value) : t("共 {0} 条", total.value);
 });
-const emptyText = computed(() => {
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网首屏会闪「暂无批次」假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(initialLoading, () => {
   if (query.value.trim()) return "没有匹配的批次";
   if (labPending.value) return "没有待检终样的批次";
   return filter.value === "all" ? "暂无批次" : "当前筛选条件下没有批次";

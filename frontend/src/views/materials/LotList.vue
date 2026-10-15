@@ -35,7 +35,7 @@
       class="clickable-rows"
       scrollbar-always-on
       max-height="calc(100vh - 320px)"
-      :empty-text="query.trim() ? $t('没有匹配的物料批') : $t('暂无物料批次')"
+      :empty-text="emptyText"
       :default-sort="defaultSort"
       @sort-change="onSortChange"
       @row-click="(row: MaterialLotDto) => $router.push(`/lots/${row.id}`)"
@@ -44,7 +44,9 @@
            此前 180 卡临界、几乎每条折两行；改为省略号 + 悬停看全并放宽到 208。 -->
       <el-table-column prop="lotNumber" :label="$t('批次号')" width="208" fixed sortable="custom" :sort-orders="SERVER_ASC_FIRST" show-overflow-tooltip />
       <el-table-column prop="materialCode" :label="$t('物料')" width="110" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
-      <el-table-column prop="materialName" :label="$t('名称')" sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
+      <!-- 名称是自由文本列，窄视口（1024/640）被定宽列挤窄后会逐行折两行、整表拉高；
+           省略号 + 悬停看全，保持每行等高。批次号列已定宽，不参与挤压。 -->
+      <el-table-column prop="materialName" :label="$t('名称')" min-width="120" show-overflow-tooltip sortable="custom" :sort-orders="SERVER_ASC_FIRST" />
       <el-table-column prop="source" :label="$t('来源')" width="112" sortable="custom" :sort-orders="SERVER_ASC_FIRST">
         <template #default="{ row }">{{ sourceLabel(row.source) }}</template>
       </el-table-column>
@@ -53,7 +55,9 @@
           <el-tag size="small" :type="lotStatusTagType(row.status)" effect="dark">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="quantity" :label="$t('数量')" width="120" sortable="custom" :sort-orders="SERVER_DESC_FIRST">
+      <!-- 数量是数值列：右对齐才能按个位/小数点纵向比较（此前左对齐时 25kg 与 100kg 的
+           「5」和「0」错开，只能逐个读）。等宽数字由 styles.css 的 .el-table 统一给。 -->
+      <el-table-column prop="quantity" :label="$t('数量')" width="120" align="right" sortable="custom" :sort-orders="SERVER_DESC_FIRST">
         <template #default="{ row }">{{ row.quantity == null ? "—" : `${row.quantity}${row.uom ?? ""}` }}</template>
       </el-table-column>
       <el-table-column prop="createdAt" :label="$t('登记时间')" width="176" sortable="custom" :sort-orders="SERVER_DESC_FIRST" show-overflow-tooltip>
@@ -98,6 +102,7 @@ import { useListState, restoreListState, savedSortOrder } from "../../utils/useL
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
 import { useDialogGuard } from "../../utils/useDialogGuard";
+import { useEmptyText } from "../../utils/emptyText";
 import { formatDateTime } from "../../utils/format";
 import HelpTip from "../../components/HelpTip.vue";
 
@@ -108,6 +113,9 @@ const query = ref("");
 const visible = ref(false);
 const creating = ref(false);
 const { loading, error, run } = useLoad();
+// 加载期间不显示空态：EP 的 :empty-text 只看 data.length、不看 loading，
+// 慢网首屏会先闪「暂无物料批次」的假空态（实测 0.5~1.4s）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => (query.value.trim() ? t("没有匹配的物料批") : t("暂无物料批次")));
 const form = reactive({ lotNumber: "", materialCode: "AL6061", materialName: "铝合金锭", quantity: 100, uom: "kg" });
 /** 登记来料批填一半误关会丢；与全站表单同一道闸。 */
 const { markClean, guardClose } = useDialogGuard(() => form);

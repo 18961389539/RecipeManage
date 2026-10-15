@@ -38,8 +38,9 @@
       v-loading="loading"
       scrollbar-always-on
       :max-height="isMobile ? undefined : 'calc(100vh - 320px)'"
-      :empty-text="query.trim() ? $t('没有匹配的用户') : $t('暂无用户')"
+      :empty-text="emptyText"
       class="users-table"
+      :default-sort="{ prop: 'userName', order: 'ascending' }"
     >
       <el-table-column prop="userName" :label="$t('登录名')" width="152" fixed sortable :sort-method="sorters.userName" />
       <el-table-column prop="displayName" :label="$t('显示名')" min-width="120" sortable :sort-method="sorters.displayName" />
@@ -89,9 +90,10 @@
         <el-descriptions-item :label="$t('备份目录')" :span="2"><code>{{ backup?.directory ?? "—" }}</code></el-descriptions-item>
       </el-descriptions>
       <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
-      <el-table :data="backup?.files ?? []" size="small" class="gap-after backup-files-table" :empty-text="$t('暂无备份文件')">
+      <el-table :data="backup?.files ?? []" size="small" class="gap-after backup-files-table" :empty-text="backupEmptyText">
         <el-table-column prop="name" :label="$t('文件')" min-width="240" show-overflow-tooltip />
-        <el-table-column :label="$t('大小')" width="110">
+        <!-- 文件大小是数值列（2.1 MB / 512.0 KB），右对齐才能纵向比量级。 -->
+        <el-table-column :label="$t('大小')" width="110" align="right">
           <template #default="{ row }">{{ formatBytes(row.bytes) }}</template>
         </el-table-column>
         <el-table-column :label="$t('时间')" width="180">
@@ -172,6 +174,7 @@ import { userRoleLabel, userRoleOrder, esignMeaning } from "../../utils/labels";
 import { esignPassword } from "../../utils/esign";
 import { formatDateTime, formatFileDate, matchesQuery } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { useDialogGuard } from "../../utils/useDialogGuard";
 import { useIsMobile } from "../../utils/useMedia";
 import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
@@ -183,11 +186,15 @@ const saving = ref(false);
 const busy = ref("");
 const isMobile = useIsMobile();
 const { loading, error, run } = useLoad();
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网会闪假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => (query.value.trim() ? t("没有匹配的用户") : t("暂无用户")));
 const visible = ref(false);
 const backup = ref<BackupStatusDto | null>(null);
 const backupLoading = ref(false);
 const anchor = ref<AuditAnchorRunStatus | null>(null);
 const anchorLoading = ref(false);
+// 备份文件是卡片内的子表：卡片自己有 v-loading=backupLoading，同样不能在加载期吐空态。
+const backupEmptyText = useEmptyText(backupLoading, () => t("暂无备份文件"));
 
 /** 排序口径见 utils/tableSort；角色按新建用户下拉里的次序分组。 */
 const sorters = {

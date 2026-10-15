@@ -34,7 +34,7 @@
      
     />
     <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
-    <el-table ref="tableRef" :data="items" size="small" v-loading="loading" :empty-text="$t('暂无符合条件的审计记录')" class="clickable-rows audit-table" scrollbar-always-on max-height="calc(100vh - 280px)" :row-class-name="rowClass" :default-sort="defaultSort" @sort-change="onSortChange" @row-click="openEntity">
+    <el-table ref="tableRef" :data="items" size="small" v-loading="loading" :empty-text="emptyText" class="clickable-rows audit-table" scrollbar-always-on max-height="calc(100vh - 280px)" :row-class-name="rowClass" :default-sort="defaultSort" @sort-change="onSortChange" @row-click="openEntity">
       <el-table-column prop="at" :label="$t('时间')" width="172" fixed sortable="custom" :sort-orders="SERVER_DESC_FIRST">
         <template #default="{ row }">{{ formatDateTime(row.at) }}</template>
       </el-table-column>
@@ -63,6 +63,7 @@ import type { AuditLogDto, AuditLogPageDto } from "../../api/types";
 import { auditActionLabel, auditEntityLabel, auditSearchTokens } from "../../utils/labels";
 import { formatDateTime } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { t } from "../../i18n";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
 import { useServerPaging } from "../../utils/useServerPaging";
@@ -76,6 +77,8 @@ const items = ref<AuditLogDto[]>([]);
 const query = ref("");
 const entityType = ref("");
 const { loading, error, run } = useLoad();
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网会闪假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => t("暂无符合条件的审计记录"));
 const countText = computed(() => {
   const n = items.value.length;
   // 关键词与实体筛选都是服务端全库条件：这里显示的是"命中/总数"。

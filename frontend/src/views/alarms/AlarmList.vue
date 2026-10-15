@@ -92,6 +92,7 @@ import { useExecutionHub } from "../../realtime/executionHub";
 import { alarmSeverityLabel, alarmSeverityTagType } from "../../utils/labels";
 import { formatDateTime } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { useCoalescedReload } from "../../utils/useCoalescedReload";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { SERVER_ASC_FIRST, SERVER_DESC_FIRST } from "../../utils/tableSort";
@@ -125,7 +126,8 @@ const countText = computed(() => {
   const filtered = !!query.value.trim() || filter.value !== "all";
   return filtered ? t("{0} / {1} 条", n, total.value) : t("共 {0} 条", total.value);
 });
-const emptyText = computed(() => {
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网首屏会闪「暂无未确认报警」假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => {
   if (query.value.trim()) return t("没有匹配的报警");
   return filter.value === "open" ? t("暂无未确认报警") : t("暂无过程报警");
 });

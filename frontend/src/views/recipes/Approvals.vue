@@ -31,7 +31,7 @@
             :data="items"
             v-loading="loading"
             class="clickable-rows"
-            :empty-text="query.trim() ? $t('没有匹配的待审配方') : $t('没有待审核配方')"
+            :empty-text="emptyText"
             highlight-current-row
             :row-class-name="rowClass"
             @row-click="(row: RecipeListItemDto) => select(row.id)"
@@ -188,6 +188,7 @@ import { formatDateTime, matchesQuery } from "../../utils/format";
 import { canDecideReview, headPendingNode } from "../../utils/reviewGate";
 import { t } from "../../i18n";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import HelpTip from "../../components/HelpTip.vue";
 import { usePageShortcuts } from "../../shortcuts/registry";
@@ -217,6 +218,8 @@ const diff = ref<RecipeVersionDiffDto | null>(null);
 const diffLoading = ref(false);
 const diffError = ref(false);
 const { loading, error, run } = useLoad();
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网会闪假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => (query.value.trim() ? t("没有匹配的待审配方") : t("没有待审核配方")));
 const detailLoading = ref(false);
 const deciding = ref("");
 let selectionRequestId = 0;

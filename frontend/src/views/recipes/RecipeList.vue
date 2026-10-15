@@ -48,6 +48,7 @@
       scrollbar-always-on
       max-height="calc(100vh - 292px)"
       :empty-text="emptyText"
+      :default-sort="{ prop: 'code', order: 'ascending' }"
       @row-click="(row: RecipeListItemDto) => $router.push(`/recipes/${row.id}`)"
     >
       <!-- 配方编码 15 位定长（14px 字体实测最长 136px），此前 140 减去 .cell 左右 padding 24
@@ -117,6 +118,7 @@ import type { RecipeListItemDto } from "../../api/types";
 import { exportRecipePackage, importRecipePackage } from "../../api/recipesTransfer";
 import { recipeStatusLabel as statusLabel, recipeStatusOrder, recipeStatusTagType } from "../../utils/labels";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { useDialogGuard } from "../../utils/useDialogGuard";
 import { useKeyboardRows } from "../../utils/useKeyboardRows";
 import { useListState } from "../../utils/useListState";
@@ -161,20 +163,28 @@ const filter = computed({
   }
 });
 
-const shown = computed(() => items.value.filter((row) => {
-  if (filter.value === "Approved") {
-    if (!row.approvedVersion) return false;
-  } else if (filter.value !== "all" && row.draftStatus !== filter.value)
-    return false;
-  return matchesQuery(query.value, row.code, row.name, row.productCode, row.productName, ...(row.unitProcedures ?? []));
-}));
+// 默认按编码升序：后端给的是「更新时间倒序」，但表里没有更新时间列，用户看不出是按什么排的
+// （设备/用户页都是编码序，本页与它们对齐）。排序器与表头 default-sort 声明同一列，
+// 箭头才如实反映看到的顺序；否则箭头会指向一个没显示的字段。
+const shown = computed(() =>
+  items.value
+    .filter((row) => {
+      if (filter.value === "Approved") {
+        if (!row.approvedVersion) return false;
+      } else if (filter.value !== "all" && row.draftStatus !== filter.value)
+        return false;
+      return matchesQuery(query.value, row.code, row.name, row.productCode, row.productName, ...(row.unitProcedures ?? []));
+    })
+    .sort(sorters.code)
+);
 const countText = computed(() => {
   const n = shown.value.length;
   const total = items.value.length;
   const filtered = !!query.value.trim() || filter.value !== "all";
   return filtered ? t("{0} / {1} 条", n, total) : t("共 {0} 条", total);
 });
-const emptyText = computed(() => {
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网首屏会闪「暂无主配方」假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => {
   if (query.value.trim()) return t("没有匹配的主配方");
   return filter.value === "all" ? t("暂无主配方") : t("当前筛选条件下没有配方");
 });

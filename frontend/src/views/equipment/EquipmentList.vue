@@ -34,18 +34,26 @@
           <span class="tab-label"><HelpTip term="设备驱动">{{ $t("设备") }}</HelpTip></span>
         </template>
         <p v-if="isMobile" class="mobile-table-hint">{{ $t("窄屏下左右滑动表格查看其余列和行操作。") }}</p>
-        <el-table class="equipment-table" :data="shown" v-loading="loading" scrollbar-always-on max-height="calc(100vh - 340px)" :empty-text="query.trim() ? $t('没有匹配的设备') : $t('暂无设备')">
+        <!-- 后端按编码升序返回（EquipmentService 的 OrderBy(Code)），但此前没声明 default-sort，
+             表头不显示排序箭头——用户在 8 个可排序列里看不出当前是什么顺序。 -->
+        <el-table class="equipment-table" :data="shown" v-loading="loading" scrollbar-always-on max-height="calc(100vh - 340px)" :empty-text="emptyText" :default-sort="{ prop: 'code', order: 'ascending' }">
           <el-table-column prop="code" :label="$t('编码')" width="100" fixed sortable :sort-method="sorters.code" />
-          <el-table-column prop="name" :label="$t('名称')" sortable :sort-method="sorters.name" />
-          <el-table-column prop="protocol" :label="$t('协议')" width="120" sortable :sort-method="sorters.protocol">
+          <!-- 名称是无定宽的 flex 列，此前被 9 个定宽列挤到 80px，「1# 热处理炉」都折两行
+               （全视口复现）。从端口/型号/协议/设备类各挤一点给它（80→72、120→96、120→104、
+               110→100），min-width 保底 140：最长名称「OPC UA 环回从站」按公式需 117px。
+               用户可自由命名，超长时省略号 + 悬停看全。host/占用/操作不动：分别是整条
+               OPC UA 端点、批次号药丸、4 按钮都有硬宽度需求。 -->
+          <el-table-column prop="name" :label="$t('名称')" min-width="140" show-overflow-tooltip sortable :sort-method="sorters.name" />
+          <el-table-column prop="protocol" :label="$t('协议')" width="104" sortable :sort-method="sorters.protocol">
             <template #default="{ row }"><el-tag type="info" effect="plain" size="small">{{ protocolLabel(row.protocol) }}</el-tag></template>
           </el-table-column>
           <!-- OPC UA 的 host 是整条端点（opc.tcp://host:port/路径），不限宽会把端口列挤成三行错位；
                定宽 + 溢出 tooltip，完整地址悬停可见 -->
           <el-table-column prop="host" :label="$t('主机')" width="180" show-overflow-tooltip sortable :sort-method="sorters.host" />
-          <el-table-column prop="port" :label="$t('端口')" width="80" sortable :sort-method="sorters.port" />
-          <el-table-column prop="plcModel" :label="$t('型号')" width="120" />
-          <el-table-column prop="equipmentClassCode" :label="$t('设备类')" width="110" sortable :sort-method="sorters.equipmentClassCode">
+          <!-- 端口是数值列：右对齐便于按位比较（实测左对齐时 102/1502/1102/48410 均从同一 x 起、末端参差）。 -->
+          <el-table-column prop="port" :label="$t('端口')" width="72" align="right" sortable :sort-method="sorters.port" />
+          <el-table-column prop="plcModel" :label="$t('型号')" width="96" />
+          <el-table-column prop="equipmentClassCode" :label="$t('设备类')" width="100" sortable :sort-method="sorters.equipmentClassCode">
             <template #default="{ row }">{{ row.equipmentClassCode || $t("未分类") }}</template>
           </el-table-column>
           <el-table-column prop="enabled" :label="$t('启用')" width="80" sortable :sort-method="sorters.enabled" :sort-orders="DESC_FIRST">
@@ -121,6 +129,7 @@ import { useAuthStore } from "../../stores/auth";
 import { occupancyOrder, protocolLabel } from "../../utils/labels";
 import { matchesQuery } from "../../utils/format";
 import { useLoad } from "../../utils/useLoad";
+import { useEmptyText } from "../../utils/emptyText";
 import { useIsMobile } from "../../utils/useMedia";
 import { DESC_FIRST, byEnum, byNumber, byText } from "../../utils/tableSort";
 import { templateProgram } from "../../utils/phaseTemplate";
@@ -142,6 +151,8 @@ const query = ref("");
 const classes = ref<EquipmentClassDto[]>([]);
 const busy = ref("");
 const { loading, error, runValue } = useLoad();
+// 加载期间不吐空态（EP 的 :empty-text 不看 loading，慢网会闪假空态）。口径见 utils/emptyText.ts。
+const emptyText = useEmptyText(loading, () => (query.value.trim() ? t("没有匹配的设备") : t("暂无设备")));
 const canEditLibrary = computed(() => auth.can("Admin", "ProcessEngineer"));
 const formVisible = ref(false);
 const editing = ref<EquipmentDto | null>(null);
